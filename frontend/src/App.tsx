@@ -8,6 +8,7 @@ import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { SessionDrawer } from "./components/SessionDrawer";
 import { Settings } from "./components/Settings";
 import { PlanModal } from "./components/PlanModal";
+import { LoginButton } from "./components/LoginButton";
 
 function App() {
   const appendLine = useSessionStore((s) => s.appendLine);
@@ -65,6 +66,7 @@ function App() {
           >
             Settings
           </button>
+          <LoginButton />
         </div>
       </header>
       <WorkspaceSwitcher />

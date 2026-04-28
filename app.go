@@ -9,7 +9,10 @@ import (
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
+	gh "github.com/google/go-github/v62/github"
+
 	"prismconductor/internal/eventbus"
+	"prismconductor/internal/githubauth"
 	"prismconductor/internal/notify"
 	"prismconductor/internal/ollama"
 	"prismconductor/internal/orchestrator"
@@ -32,6 +35,10 @@ type App struct {
 	llm     *ollama.Client
 	orch    *orchestrator.Orchestrator
 	wsReg   *workspace.Registry
+	auth    *githubauth.Client
+	cfgDir  string
+
+	pendingDevice *githubauth.DeviceCode
 }
 
 func NewApp() *App { return &App{} }
@@ -40,6 +47,7 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
 	cfgDir, _ := configDir()
+	a.cfgDir = cfgDir
 	bundleDir := filepath.Join(cfgDir, "skills")
 	if _, err := bundle.Extract(bundleDir); err != nil {
 		fmt.Fprintf(os.Stderr, "skill bundle extract: %v\n", err)
@@ -49,6 +57,7 @@ func (a *App) startup(ctx context.Context) {
 	a.pool = workerpool.New(2)
 	a.llm = ollama.New("", "")
 	a.orch = orchestrator.New(a.bus, a.llm)
+	a.auth = githubauth.New("")
 
 	if s, err := store.Open(cfgDir); err != nil {
 		fmt.Fprintf(os.Stderr, "store open: %v\n", err)
@@ -103,6 +112,60 @@ func (a *App) SendInput(id, text string) error { return a.mgr.SendInput(id, text
 
 // Notify shows an OS notification.
 func (a *App) Notify(title, body string) error { return notify.Send(title, body) }
+
+// --- GitHub login (OAuth Device Flow) ---
+
+// GitHubAuthStatus returns the current login status. If a token is cached,
+// the user object is fetched and returned.
+func (a *App) GitHubAuthStatus() (*githubauth.User, error) {
+	t, err := githubauth.LoadToken(a.cfgDir)
+	if err != nil || t == nil {
+		return nil, err
+	}
+	return githubauth.FetchUser(a.ctx, t.AccessToken)
+}
+
+// GitHubLoginStart kicks off device flow and opens the verification URL in the browser.
+// Returns the user_code so the UI can display it. Frontend should then call GitHubLoginPoll.
+func (a *App) GitHubLoginStart() (*githubauth.DeviceCode, error) {
+	dc, err := a.auth.RequestDeviceCode(a.ctx)
+	if err != nil {
+		return nil, err
+	}
+	a.pendingDevice = dc
+	wruntime.BrowserOpenURL(a.ctx, dc.VerificationURI)
+	return dc, nil
+}
+
+// GitHubLoginPoll blocks until the user authorizes (or the code expires).
+// Returns the authenticated user on success.
+func (a *App) GitHubLoginPoll() (*githubauth.User, error) {
+	if a.pendingDevice == nil {
+		return nil, fmt.Errorf("no login in progress; call GitHubLoginStart first")
+	}
+	tok, err := a.auth.PollForToken(a.ctx, a.pendingDevice)
+	a.pendingDevice = nil
+	if err != nil {
+		return nil, err
+	}
+	if err := githubauth.SaveToken(a.cfgDir, tok); err != nil {
+		return nil, err
+	}
+	return githubauth.FetchUser(a.ctx, tok.AccessToken)
+}
+
+// GitHubLogout clears the cached token.
+func (a *App) GitHubLogout() error { return githubauth.ClearToken(a.cfgDir) }
+
+// GitHubListRepos returns repos the authenticated user can access. Used by the
+// "Add Workspace" picker so the user doesn't have to type a path.
+func (a *App) GitHubListRepos() ([]*gh.Repository, error) {
+	t, err := githubauth.LoadToken(a.cfgDir)
+	if err != nil || t == nil {
+		return nil, fmt.Errorf("not logged in")
+	}
+	return githubauth.FetchRepos(a.ctx, t.AccessToken)
+}
 
 func configDir() (string, error) {
 	switch runtime.GOOS {

@@ -841,7 +841,14 @@ This work is **out of scope for the conductor build itself** but is a prerequisi
 
 ### 15.2 GitHub Auth
 
-Use the user's existing `gh auth token` output. Run `gh auth token` once at startup, cache the token, refresh on 401. Do not implement OAuth flows.
+In-app GitHub login via **OAuth Device Flow** (`internal/githubauth/`).
+
+- "Login with GitHub" button surfaces in the header. Click → app calls `POST https://github.com/login/device/code`, opens the verification URL in the user's browser, displays the `user_code` in-app, and polls `POST https://github.com/login/oauth/access_token` until the user enters the code.
+- Token is cached at `<configDir>/github_token.json` (mode 0600). **TODO follow-up**: move to OS keychain (macOS Keychain via `github.com/zalando/go-keyring`).
+- Requires a registered GitHub OAuth App. The `client_id` is hardcoded as `githubauth.DefaultClientID` and overridable via the `PRISMCONDUCTOR_GH_CLIENT_ID` env var. Register at https://github.com/settings/developers (any HTTPS callback URL works — device flow doesn't use it).
+- Scopes requested: `repo,read:org` — enough for issue read/write across owned + collaborator repos.
+- Once logged in, `GitHubListRepos()` returns the user's repos for the Add Workspace picker so the user doesn't type a path.
+- Falls back gracefully: if a workspace's `.git/config` already has a remote and the user happens to have `gh` CLI authenticated for it, that still works for non-API surfaces (commit/push). The conductor's own GitHub API calls always use the device-flow token.
 
 ### 15.3 Process Lifecycle
 
