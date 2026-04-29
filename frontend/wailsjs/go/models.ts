@@ -879,22 +879,6 @@ export namespace main {
 	        this.quiet_end = source["quiet_end"];
 	    }
 	}
-	export class OllamaConfig {
-	    url: string;
-	    model: string;
-	    available: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new OllamaConfig(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.url = source["url"];
-	        this.model = source["model"];
-	        this.available = source["available"];
-	    }
-	}
 	export class ProviderInfo {
 	    kind: string;
 	    display_name: string;
@@ -1252,6 +1236,7 @@ export namespace types {
 	    capacity: number;
 	    enabled: boolean;
 	    api_key?: string;
+	    role: string;
 	    // Go type: time
 	    created_at: any;
 	
@@ -1269,6 +1254,7 @@ export namespace types {
 	        this.capacity = source["capacity"];
 	        this.enabled = source["enabled"];
 	        this.api_key = source["api_key"];
+	        this.role = source["role"];
 	        this.created_at = this.convertValues(source["created_at"], null);
 	    }
 	
@@ -1353,6 +1339,8 @@ export namespace types {
 	    native_close_command: string;
 	    extra_context_files: string[];
 	    auto_apply_labels?: boolean;
+	    preferred_plan_pool_id?: string;
+	    preferred_work_pool_id?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SkillProfile(source);
@@ -1369,6 +1357,8 @@ export namespace types {
 	        this.native_close_command = source["native_close_command"];
 	        this.extra_context_files = source["extra_context_files"];
 	        this.auto_apply_labels = source["auto_apply_labels"];
+	        this.preferred_plan_pool_id = source["preferred_plan_pool_id"];
+	        this.preferred_work_pool_id = source["preferred_work_pool_id"];
 	    }
 	}
 	export class Workspace {

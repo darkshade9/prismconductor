@@ -189,6 +189,8 @@ type SkillProfile struct {
     NativeCloseCommand   string    `json:"native_close_command"`   // e.g. "/check-and-close"
     ExtraContextFiles    []string  `json:"extra_context_files"`    // optional repo-local files to preload
     AutoApplyLabels      *bool     `json:"auto_apply_labels,omitempty"` // nil = enabled (issue #24)
+    PreferredPlanPoolID  string    `json:"preferred_plan_pool_id,omitempty"` // issue #39 — pin plan workers to a specific role=plan pool
+    PreferredWorkPoolID  string    `json:"preferred_work_pool_id,omitempty"` // issue #39 — pin execute workers to a specific role=work pool
 }
 
 type SkillMode string
@@ -376,11 +378,19 @@ type Pool struct {
     Provider  Provider  `json:"provider"`
     Endpoint  string    `json:"endpoint"`   // "" for ProviderClaude
     Model     string    `json:"model"`
-    Capacity  int       `json:"capacity"`
+    Capacity  int       `json:"capacity"`   // ignored when Role==RoleOrchestrator
     Enabled   bool      `json:"enabled"`
     APIKey    string    `json:"api_key,omitempty"` // optional; empty => env-var fallback
+    Role      Role      `json:"role"`        // issue #39
     CreatedAt time.Time `json:"created_at"`
 }
+
+type Role string
+const (
+    RolePlan         Role = "plan"          // serves /conductor-plan workers
+    RoleWork         Role = "work"          // serves /conductor-execute workers
+    RoleOrchestrator Role = "orchestrator"  // serves the rank+deps backlog pass
+)
 
 type Provider string
 const (
@@ -392,13 +402,17 @@ const (
 )
 ```
 
-**Routing is provider-agnostic.** The orchestrator's `PoolRouter` interface (`AcquireFor`, `ReleaseByPool`, `FreeForSpawn`) carries no provider literals; eligibility is decided by the per-provider `Provider.CanSpawn()` predicate, threaded into `workerpool.NewRegistry` at construction. As `harness-v1` lights up OpenAI / LiteLLM / LM Studio / Ollama drivers, those providers flip `CanSpawn` → true and the registry routes to them with no code changes in `internal/orchestrator` or `internal/workerpool`.
+**Routing is provider-agnostic and role-keyed.** The orchestrator's `PoolRouter` interface carries no provider literals; eligibility is decided by the per-provider `Provider.CanSpawn()` predicate, threaded into `workerpool.NewRegistry` at construction. Issue #39 splits the routing seam into role-keyed methods:
 
-Pool **roles** (plan / work / orchestrator) belong to issue #39; this PR adds no `Pool.Role` and no per-pool `provider_compat` allowlist. #39's role assignment is required to remain provider-agnostic.
+- `Registry.AcquireForPlan(ws)` — strict `role=plan` selection (no fallback to work pools).
+- `Registry.AcquireForWork(ws)` — strict `role=work` selection (no fallback to plan pools).
+- `Registry.OrchestratorPool()` — returns the at-most-one enabled `role=orchestrator` pool, or false. Used by the orchestrator's rank pass on each call so UI changes take effect on the next event tick.
 
-`api_key` is plaintext SQLite — same trust model as `~/.claude/.credentials.json`; no keychain integration in this PR. Empty `api_key` falls back to the per-provider env var (`OPENAI_API_KEY`, `LITELLM_API_KEY`).
+Per-workspace pinning lives in `SkillProfile.PreferredPlanPoolID` and `PreferredWorkPoolID`; selection falls back to round-robin among enabled role pools when unset. Roles do not gate providers — saving e.g. an OpenAI `role=plan` pool is allowed; spawn returns `llm.ErrNotSupported` until harness-v1 ships, surfaced as a runtime toast and an "Awaiting harness-v1" pool-row badge.
 
-The legacy single-int `worker_pool_capacity` setting is consumed once on first run to seed a Claude pool; the row is left readable for diagnostics. The Ollama→pool migration is deferred to #39.
+`api_key` is plaintext SQLite — same trust model as `~/.claude/.credentials.json`; no keychain integration. Empty `api_key` falls back to the per-provider env var (`OPENAI_API_KEY`, `LITELLM_API_KEY`, `ANTHROPIC_API_KEY`).
+
+The legacy single-int `worker_pool_capacity` setting is consumed once on first run to seed a Claude `role=work` pool; the legacy `ollama_url` / `ollama_model` settings keys are migrated once into a `role=orchestrator` pool and then deleted (issue #39).
 
 ---
 
@@ -650,14 +664,13 @@ Bundled mode passes `CLAUDE_SKILLS_PATH=~/.prismconductor/skills/` (or the platf
 
 ## 11. Local LLM (Orchestrator) Integration
 
-### 11.1 Ollama Setup
+### 11.1 Orchestrator pool
 
-User must have Ollama installed and running. App detects via `GET http://localhost:11434/api/tags`. If model not present, app prompts user to run `ollama pull qwen2.5:14b-instruct`.
+Issue #39 moves the orchestrator's LLM client into the pool table. The user adds a single `role=orchestrator` row in **Settings → Pools** (no separate Ollama tab). The pool's provider can be Ollama, LM Studio, OpenAI, LiteLLM, or even Claude — the rank+deps call is a one-shot HTTP request through the `Provider.ChatJSON` method, not a tool-using session, so any provider works.
 
-Configurable in Settings:
-- Ollama URL (default `http://localhost:11434`)
-- Model name (default `qwen2.5:14b-instruct`)
-- Temperature (default `0.0` for determinism)
+The orchestrator resolves the pool on every `runRank` call (`Registry.OrchestratorPool()`), so changes via the UI take effect on the next event tick without an app restart. When no enabled `role=orchestrator` pool exists, `runRank` no-ops cleanly — same degraded behavior the user sees today when Ollama is unconfigured. **Strict routing contract (rev2):** there is no plan→work fallback; auto-pull pauses cleanly when no `role=plan` pool is enabled, with the Pools panel showing an informational banner.
+
+Temperature is hardcoded to `0.0` for determinism. The Anthropic Messages call falls back to `claude -p --output-format json` when `ANTHROPIC_API_KEY` is unset, so a developer with only `claude` CLI auth can still run the orchestrator on a Claude pool.
 
 ### 11.2 Rank + Dependency Prompt
 
@@ -802,9 +815,8 @@ Click on IN_PROGRESS card → drawer with live PTY tail (read-only). User can sc
 
 ### 12.5 Settings Panel
 
-- Workspaces (CRUD)
-- Worker pool capacity (1-5)
-- Ollama URL / model
+- Workspaces (CRUD; per-workspace plan / work pool pins live in the Skills sub-pane)
+- Pools (one row per `role` × `provider`; orchestrator role is the single source of truth for the rank+deps LLM)
 - GitHub token (uses `gh auth status` token by default; manual override available)
 - Notification preferences (mute / sound / banner)
 - Polling interval (default 5 min, configurable 1-30)

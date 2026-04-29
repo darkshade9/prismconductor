@@ -37,8 +37,6 @@ export function GetMidRunQuestion(arg1:string,arg2:number,arg3:string):Promise<t
 
 export function GetNotifyPrefs():Promise<main.NotifyPrefs>;
 
-export function GetOllamaConfig():Promise<main.OllamaConfig>;
-
 export function GetPollInterval():Promise<number>;
 
 export function GitHubAuthStatus():Promise<githubauth.User>;
@@ -122,8 +120,6 @@ export function SetGoalStatus(arg1:string,arg2:string):Promise<void>;
 export function SetIssueLabels(arg1:string,arg2:number,arg3:Array<string>):Promise<void>;
 
 export function SetNotifyPrefs(arg1:main.NotifyPrefs):Promise<void>;
-
-export function SetOllamaConfig(arg1:main.OllamaConfig):Promise<void>;
 
 export function SetPollInterval(arg1:number):Promise<void>;
 

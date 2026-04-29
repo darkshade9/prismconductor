@@ -46,3 +46,17 @@ func (o openaiProvider) ListModels(ctx context.Context, p types.Pool) ([]string,
 func (openaiProvider) SpawnArgs(_ types.Pool, _ string) ([]string, error) {
 	return nil, ErrNotSupported
 }
+
+// ChatJSON routes through OpenAI's /v1/chat/completions. APIKey falls back to
+// OPENAI_API_KEY so existing operator setups keep working.
+func (o openaiProvider) ChatJSON(ctx context.Context, p types.Pool, system, user string) (string, error) {
+	endpoint := strings.TrimRight(p.Endpoint, "/")
+	if endpoint == "" {
+		endpoint = defaultOpenAIEndpoint
+	}
+	key := p.APIKey
+	if key == "" {
+		key = os.Getenv("OPENAI_API_KEY")
+	}
+	return openAICompatChat(ctx, o.client, endpoint, key, p.Model, system, user)
+}

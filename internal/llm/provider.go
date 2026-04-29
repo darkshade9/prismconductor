@@ -39,6 +39,16 @@ type Provider interface {
 	// SpawnArgs returns the argv the session manager should pty.Start.
 	// Non-Claude providers return ErrNotSupported until harness-v1 lands.
 	SpawnArgs(p types.Pool, prompt string) ([]string, error)
+
+	// ChatJSON sends a system+user prompt and returns the raw model output.
+	// Used by the orchestrator's rank+deps call (issue #39). Implementations
+	// route through their native chat endpoint:
+	//   - ProviderClaude:                  Anthropic /v1/messages, with a
+	//                                      claude -p fallback if no API key.
+	//   - ProviderOpenAI/LMStudio/LiteLLM: OpenAI-compat /v1/chat/completions.
+	//   - ProviderOllama:                  /v1/chat/completions (ollama serves
+	//                                      OpenAI-compat too).
+	ChatJSON(ctx context.Context, p types.Pool, system, user string) (string, error)
 }
 
 // Registry holds one Provider per kind plus a stable ordering for the UI.

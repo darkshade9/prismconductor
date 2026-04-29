@@ -9,15 +9,48 @@ import (
 	"prismconductor/internal/types"
 )
 
+// ErrInvalidRole is returned by SavePool when the pool's Role isn't one of
+// types.RolePlan / RoleWork / RoleOrchestrator.
+var ErrInvalidRole = errors.New("invalid pool role")
+
+// ErrOrchestratorPoolExists is returned when SavePool would create a second
+// enabled orchestrator pool. At-most-one is enforced in Go (issue #39 q4).
+var ErrOrchestratorPoolExists = errors.New("an enabled orchestrator pool already exists; disable it first")
+
 // ListPools returns every pool row, oldest first.
 func (s *Store) ListPools() ([]types.Pool, error) {
 	if s == nil || s.DB == nil {
 		return nil, errors.New("store unavailable")
 	}
 	rows, err := s.DB.Query(`
-SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, created_at
+SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at
 FROM pools
 ORDER BY created_at ASC, id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []types.Pool
+	for rows.Next() {
+		p, err := scanPool(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ListPoolsByRole returns all pool rows tagged with the given role, oldest first.
+func (s *Store) ListPoolsByRole(role types.Role) ([]types.Pool, error) {
+	if s == nil || s.DB == nil {
+		return nil, errors.New("store unavailable")
+	}
+	rows, err := s.DB.Query(`
+SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at
+FROM pools
+WHERE role = ?
+ORDER BY created_at ASC, id ASC`, string(role))
 	if err != nil {
 		return nil, err
 	}
@@ -39,12 +72,14 @@ func (s *Store) GetPool(id string) (types.Pool, error) {
 		return types.Pool{}, errors.New("store unavailable")
 	}
 	row := s.DB.QueryRow(`
-SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, created_at
+SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at
 FROM pools WHERE id = ?`, id)
 	return scanPool(row)
 }
 
-// SavePool upserts a pool by ID.
+// SavePool upserts a pool by ID. Defaults Role to 'work' for backwards
+// compatibility, validates membership, and refuses a second enabled
+// orchestrator pool.
 func (s *Store) SavePool(p types.Pool) error {
 	if s == nil || s.DB == nil {
 		return errors.New("store unavailable")
@@ -52,16 +87,38 @@ func (s *Store) SavePool(p types.Pool) error {
 	if p.ID == "" {
 		return errors.New("pool ID required")
 	}
+	if p.Role == "" {
+		p.Role = types.RoleWork
+	}
+	if !types.ValidRole(p.Role) {
+		return fmt.Errorf("%w: %q", ErrInvalidRole, string(p.Role))
+	}
 	if p.CreatedAt.IsZero() {
 		p.CreatedAt = time.Now()
+	}
+	if p.Role == types.RoleOrchestrator && p.Enabled {
+		// Refuse a second enabled orchestrator pool. Allowed when this row
+		// is the same one being updated.
+		existing, err := s.ListPoolsByRole(types.RoleOrchestrator)
+		if err != nil {
+			return err
+		}
+		for _, e := range existing {
+			if e.ID == p.ID {
+				continue
+			}
+			if e.Enabled {
+				return ErrOrchestratorPoolExists
+			}
+		}
 	}
 	enabled := 0
 	if p.Enabled {
 		enabled = 1
 	}
 	_, err := s.DB.Exec(`
-INSERT INTO pools (id, name, provider, endpoint, model, capacity, enabled, api_key, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pools (id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     name = excluded.name,
     provider = excluded.provider,
@@ -69,9 +126,10 @@ ON CONFLICT(id) DO UPDATE SET
     model = excluded.model,
     capacity = excluded.capacity,
     enabled = excluded.enabled,
-    api_key = excluded.api_key`,
+    api_key = excluded.api_key,
+    role = excluded.role`,
 		p.ID, p.Name, string(p.Provider), p.Endpoint, p.Model,
-		p.Capacity, enabled, p.APIKey, p.CreatedAt.Unix())
+		p.Capacity, enabled, p.APIKey, string(p.Role), p.CreatedAt.Unix())
 	return err
 }
 
@@ -105,16 +163,21 @@ type rowScanner interface {
 func scanPool(r rowScanner) (types.Pool, error) {
 	var p types.Pool
 	var provider string
+	var role string
 	var enabled int
 	var createdAt int64
 	if err := r.Scan(&p.ID, &p.Name, &provider, &p.Endpoint, &p.Model,
-		&p.Capacity, &enabled, &p.APIKey, &createdAt); err != nil {
+		&p.Capacity, &enabled, &p.APIKey, &role, &createdAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return types.Pool{}, fmt.Errorf("pool not found")
 		}
 		return types.Pool{}, err
 	}
 	p.Provider = types.Provider(provider)
+	p.Role = types.Role(role)
+	if p.Role == "" {
+		p.Role = types.RoleWork
+	}
 	p.Enabled = enabled != 0
 	p.CreatedAt = time.Unix(createdAt, 0)
 	return p, nil

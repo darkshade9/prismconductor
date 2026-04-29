@@ -71,3 +71,11 @@ func (l lmstudioProvider) ListModels(ctx context.Context, p types.Pool) ([]strin
 func (lmstudioProvider) SpawnArgs(_ types.Pool, _ string) ([]string, error) {
 	return nil, ErrNotSupported
 }
+
+func (l lmstudioProvider) ChatJSON(ctx context.Context, p types.Pool, system, user string) (string, error) {
+	endpoint := strings.TrimRight(p.Endpoint, "/")
+	if endpoint == "" {
+		endpoint = defaultLMStudioEndpoint
+	}
+	return openAICompatChat(ctx, l.client, endpoint, p.APIKey, p.Model, system, user)
+}

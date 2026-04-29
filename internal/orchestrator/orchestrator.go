@@ -26,14 +26,22 @@ type Store interface {
 	MoveIssueColumn(workspaceID string, number int, column types.BoardColumn) error
 }
 
-// PoolRouter is the slice of *workerpool.Registry we need (issue #27). The
-// orchestrator never compares against a specific Provider constant; routing
-// eligibility is the registry's concern.
+// PoolRouter is the slice of *workerpool.Registry we need (issue #27,
+// role-keyed in #39). The orchestrator never compares against a specific
+// Provider constant; routing eligibility is the registry's concern. autoPull
+// only ever spawns plan-mode workers, so it asks for plan-role pools
+// exclusively — no fallback to work pools.
 type PoolRouter interface {
-	AcquireFor(ws types.Workspace) (poolID string, ok bool)
+	AcquireForPlan(ws types.Workspace) (poolID string, ok bool)
 	ReleaseByPool(poolID string)
-	FreeForSpawn() int
+	FreePlanSlots() int
 }
+
+// LLMResolver returns the orchestrator-LLM client to use for the next rank
+// pass, or nil when no enabled role=orchestrator pool exists. Resolved on
+// every runRank call so changes via the UI take effect on the next event tick
+// without an app restart.
+type LLMResolver func() LLM
 
 // SpawnPlanFunc lets the orchestrator launch a plan worker without depending
 // on the session package directly. poolID is the pool the registry already
@@ -41,12 +49,18 @@ type PoolRouter interface {
 // and threading the Pool through to the session manager.
 type SpawnPlanFunc func(workspaceID string, issueNumber int, poolID string) error
 
+// WorkspaceLookup returns the full Workspace by ID. Optional — when nil, the
+// orchestrator falls back to a bare-ID Workspace, which means PreferredPlanPoolID
+// pinning is ignored (round-robin only).
+type WorkspaceLookup func(id string) (types.Workspace, bool)
+
 type Orchestrator struct {
-	bus   *eventbus.Bus
-	llm   LLM
-	store Store
-	pool  PoolRouter
-	spawn SpawnPlanFunc
+	bus        *eventbus.Bus
+	resolveLLM LLMResolver
+	store      Store
+	pool       PoolRouter
+	spawn      SpawnPlanFunc
+	lookupWS   WorkspaceLookup
 
 	mu      sync.Mutex
 	running bool
@@ -66,8 +80,11 @@ func (o *Orchestrator) KickAutoPull(reason string) {
 	go o.autoPull(reason)
 }
 
-func New(bus *eventbus.Bus, llm LLM) *Orchestrator {
-	o := &Orchestrator{bus: bus, llm: llm}
+// New builds an Orchestrator. resolver may be nil; runRank no-ops cleanly
+// when no orchestrator pool is configured (matching today's "no Ollama"
+// degraded behavior).
+func New(bus *eventbus.Bus, resolver LLMResolver) *Orchestrator {
+	o := &Orchestrator{bus: bus, resolveLLM: resolver}
 	bus.Subscribe(o.handle)
 	return o
 }
@@ -76,8 +93,10 @@ func New(bus *eventbus.Bus, llm LLM) *Orchestrator {
 // orchestrator before the store is available.)
 func (o *Orchestrator) SetStore(s Store) { o.store = s }
 
-// SetLLM swaps the LLM client. Used when the user changes the Ollama endpoint.
-func (o *Orchestrator) SetLLM(llm LLM) { o.llm = llm }
+// SetLLM swaps the resolver function. The resolver is consulted on every
+// runRank call, so swapping pool membership via the UI takes effect at the
+// next event tick.
+func (o *Orchestrator) SetLLM(resolver LLMResolver) { o.resolveLLM = resolver }
 
 // SetAutoPull wires the pool router + plan-spawn callback. When called, the
 // orchestrator will auto-pull unblocked TODO items into PLAN on slot-freed
@@ -86,6 +105,11 @@ func (o *Orchestrator) SetAutoPull(pool PoolRouter, spawn SpawnPlanFunc) {
 	o.pool = pool
 	o.spawn = spawn
 }
+
+// SetWorkspaceLookup wires a workspace-by-id resolver so AcquireForPlan can
+// honour Workspace.SkillProfile.PreferredPlanPoolID. Optional — auto-pull
+// works without it (round-robin among plan pools).
+func (o *Orchestrator) SetWorkspaceLookup(f WorkspaceLookup) { o.lookupWS = f }
 
 // handle is the per-event router from §8.
 //
@@ -160,13 +184,21 @@ func (o *Orchestrator) autoPull(reason string) {
 	// Order by priority desc, with blocked items last.
 	sortByOrchestratorPriority(candidates)
 
-	for o.pool.FreeForSpawn() > 0 {
+	for o.pool.FreePlanSlots() > 0 {
 		next := pickNextUnblocked(candidates, all)
 		if next == nil {
 			return
 		}
-		// Reserve the slot before spawning.
-		poolID, ok := o.pool.AcquireFor(types.Workspace{ID: next.WorkspaceID})
+		// Reserve a plan slot before spawning. Strict role=plan — no fallback
+		// to role=work (issue #39 rev2). PreferredPlanPoolID comes from the
+		// workspace's SkillProfile when a lookup is wired.
+		ws := types.Workspace{ID: next.WorkspaceID}
+		if o.lookupWS != nil {
+			if got, ok := o.lookupWS(next.WorkspaceID); ok {
+				ws = got
+			}
+		}
+		poolID, ok := o.pool.AcquireForPlan(ws)
 		if !ok {
 			return
 		}
@@ -292,15 +324,21 @@ func (o *Orchestrator) runRank(reason string) error {
 	cached, fresh := o.partitionByCache(*active, candidates)
 
 	var llmResult *RankDepsResult
-	if len(fresh) > 0 && o.llm != nil {
+	var llm LLM
+	if o.resolveLLM != nil {
+		llm = o.resolveLLM()
+	}
+	if len(fresh) > 0 && llm != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		res, err := RankDeps(ctx, o.llm, *active, fresh)
+		res, err := RankDeps(ctx, llm, *active, fresh)
 		if err != nil {
 			log.Printf("orchestrator: rank+deps failed (reason=%s): %v", reason, err)
 			return err
 		}
 		llmResult = res
+	} else if len(fresh) > 0 && llm == nil {
+		log.Printf("orchestrator: no role=orchestrator pool — skipping rank pass (reason=%s)", reason)
 	}
 
 	merged := mergeResults(cached, llmResult, candidates)

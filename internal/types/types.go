@@ -35,6 +35,12 @@ type SkillProfile struct {
 	NativeCloseCommand   string    `json:"native_close_command"`
 	ExtraContextFiles    []string  `json:"extra_context_files"`
 	AutoApplyLabels      *bool     `json:"auto_apply_labels,omitempty"`
+
+	// PreferredPlanPoolID / PreferredWorkPoolID are per-workspace overrides
+	// for role-based pool routing (issue #39). Empty means "use the
+	// registry's default round-robin among role pools".
+	PreferredPlanPoolID string `json:"preferred_plan_pool_id,omitempty"`
+	PreferredWorkPoolID string `json:"preferred_work_pool_id,omitempty"`
 }
 
 // AutoApplyLabelsEnabled returns true when the workspace opts in to auto-apply
@@ -60,7 +66,7 @@ type ConventionHints struct {
 	PackageManager string `json:"package_manager"`
 }
 
-// --- Pool (heterogeneous worker fleets, §6.6 / issue #27) ---
+// --- Pool (heterogeneous worker fleets, §6.6 / issue #27, role added in #39) ---
 
 type Pool struct {
 	ID        string    `json:"id"`
@@ -71,7 +77,27 @@ type Pool struct {
 	Capacity  int       `json:"capacity"`
 	Enabled   bool      `json:"enabled"`
 	APIKey    string    `json:"api_key,omitempty"`
+	Role      Role      `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// Role names which step in the orchestration loop a pool serves (issue #39).
+// Stored as TEXT in the pools table with a CHECK constraint.
+type Role string
+
+const (
+	RolePlan         Role = "plan"
+	RoleWork         Role = "work"
+	RoleOrchestrator Role = "orchestrator"
+)
+
+// ValidRole reports whether r is one of the three known roles.
+func ValidRole(r Role) bool {
+	switch r {
+	case RolePlan, RoleWork, RoleOrchestrator:
+		return true
+	}
+	return false
 }
 
 type Provider string
