@@ -16,6 +16,8 @@ type Store interface {
 	ListIssues(workspaceID string) ([]types.Issue, error)
 	SaveIssue(iss types.Issue) error
 	MarkIssueClosed(workspaceID string, number int) error
+	MarkPRMerged(workspaceID string, number int) error
+	MarkPRClosedUnmerged(workspaceID string, number int) error
 	SaveLabels(workspaceID string, labels []types.Label) error
 }
 
@@ -184,6 +186,40 @@ func (p *Poller) pollOne(ctx context.Context, ws types.Workspace) error {
 		p.publish(eventbus.EvtIssueClosed, ws, old)
 	}
 
+	// PR-state probe (#33). For every REVIEW-column issue with a PR, ask
+	// GitHub whether it merged or closed-without-merge. Bounded by the size
+	// of the REVIEW column (typically ≤10), so well below the 5000/h
+	// authenticated rate limit. Walk `prev` (not `fresh`) since fresh only
+	// contains open issues — a merged PR's issue is already closed and
+	// missing from the open list.
+	for _, iss := range prev {
+		if iss.PRNumber == nil {
+			continue
+		}
+		if iss.Column != types.ColReview {
+			continue
+		}
+		pr, err := p.Client.FetchPRState(ctx, ws, *iss.PRNumber)
+		if err != nil {
+			log.Printf("pr state %s#%d: %v", ws.ID, iss.Number, err)
+			continue
+		}
+		switch {
+		case pr.MergedAt != nil:
+			if err := p.Store.MarkPRMerged(ws.ID, iss.Number); err != nil {
+				log.Printf("mark pr merged %s#%d: %v", ws.ID, iss.Number, err)
+				continue
+			}
+			p.publishPR(eventbus.EvtPRMerged, ws, iss)
+		case pr.ClosedAt != nil:
+			if err := p.Store.MarkPRClosedUnmerged(ws.ID, iss.Number); err != nil {
+				log.Printf("mark pr closed-unmerged %s#%d: %v", ws.ID, iss.Number, err)
+				continue
+			}
+			p.publishPR(eventbus.EvtPRClosedUnmerged, ws, iss)
+		}
+	}
+
 	// Piggy-back label fetch on the same tick. Failures are logged and don't
 	// abort the issue cycle (the cache stays stale until the next tick).
 	if labels, err := p.Client.ListLabels(ctx, ws); err != nil {
@@ -205,6 +241,25 @@ func (p *Poller) publish(t eventbus.EventType, ws types.Workspace, iss types.Iss
 		"number":       iss.Number,
 		"title":        iss.Title,
 	})
+}
+
+// publishPR emits a PR-related event with the same payload shape as
+// app.go's handlePROpened so frontend subscribers can read pr_number / pr_url
+// uniformly across pr_opened / pr_merged / pr_closed_unmerged.
+func (p *Poller) publishPR(t eventbus.EventType, ws types.Workspace, iss types.Issue) {
+	if p.Bus == nil {
+		return
+	}
+	payload := map[string]any{
+		"workspace_id": ws.ID,
+		"issue_number": iss.Number,
+		"title":        iss.Title,
+		"pr_url":       iss.PRURL,
+	}
+	if iss.PRNumber != nil {
+		payload["pr_number"] = *iss.PRNumber
+	}
+	p.Bus.Publish(t, payload)
 }
 
 func sameLabels(a, b []string) bool {

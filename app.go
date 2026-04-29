@@ -168,6 +168,7 @@ func (a *App) startup(ctx context.Context) {
 		a.bus.Subscribe(func(e eventbus.Event) {
 			_ = a.store.LogEvent(string(e.Type), e.Payload)
 			wruntime.EventsEmit(a.ctx, "bus."+string(e.Type), e.Payload)
+			a.notifyOnPRStateChange(e)
 		})
 	}
 
@@ -1074,6 +1075,39 @@ func (a *App) handlePROpened(sess types.Session, prURL string) {
 	})
 	_ = notify.Send(titleForWorkspace(a.wsReg, sess.WorkspaceID),
 		fmt.Sprintf("#%d opened PR #%d", sess.IssueNumber, n))
+}
+
+// notifyOnPRStateChange fires an OS notification when the poller publishes
+// a pr_merged or pr_closed_unmerged event (#33). The poller can't call
+// notify.Send directly without an awkward layering import; the bus.Subscribe
+// callback is the cleanest seam. Honors the same mute/quiet-hours gate as
+// session-state notifications.
+func (a *App) notifyOnPRStateChange(e eventbus.Event) {
+	if e.Type != eventbus.EvtPRMerged && e.Type != eventbus.EvtPRClosedUnmerged {
+		return
+	}
+	if a.notificationsSuppressed() {
+		return
+	}
+	payload, _ := e.Payload.(map[string]any)
+	if payload == nil {
+		return
+	}
+	wsID, _ := payload["workspace_id"].(string)
+	issNumF, _ := payload["issue_number"].(float64)
+	issNum := int(issNumF)
+	if v, ok := payload["issue_number"].(int); ok {
+		issNum = v
+	}
+	title := titleForWorkspace(a.wsReg, wsID)
+	var body string
+	switch e.Type {
+	case eventbus.EvtPRMerged:
+		body = fmt.Sprintf("#%d merged → DONE", issNum)
+	case eventbus.EvtPRClosedUnmerged:
+		body = fmt.Sprintf("#%d PR closed without merge", issNum)
+	}
+	_ = notify.Send(title, body)
 }
 
 // LatestPlan returns the highest-revision plan for an issue.
