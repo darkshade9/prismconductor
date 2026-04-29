@@ -1220,6 +1220,22 @@ export namespace types {
 	        this.description = source["description"];
 	    }
 	}
+	export class MidRunAnswer {
+	    question_id: string;
+	    answer: string;
+	    multi?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new MidRunAnswer(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.question_id = source["question_id"];
+	        this.answer = source["answer"];
+	        this.multi = source["multi"];
+	    }
+	}
 	
 	
 	export class Session {
@@ -1235,6 +1251,7 @@ export namespace types {
 	    pid: number;
 	    last_prompt: string;
 	    blocked_reason?: string;
+	    pending_question_id?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
@@ -1252,6 +1269,7 @@ export namespace types {
 	        this.pid = source["pid"];
 	        this.last_prompt = source["last_prompt"];
 	        this.blocked_reason = source["blocked_reason"];
+	        this.pending_question_id = source["pending_question_id"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

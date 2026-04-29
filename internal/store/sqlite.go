@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     pid INTEGER,
     state TEXT NOT NULL,
     transcript_path TEXT,
+    pending_question_id TEXT,
     json TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS events (
@@ -97,6 +98,13 @@ CREATE TABLE IF NOT EXISTS labels (
 
 	// Idempotent additive column for issue archiving (#34). Unix seconds; NULL = not archived.
 	if _, err := s.DB.Exec(`ALTER TABLE issues ADD COLUMN archived_at INTEGER`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
+	// Idempotent additive column for mid-run question pause (#17). NULL when no
+	// question is in flight; UUID of the pending question otherwise.
+	if _, err := s.DB.Exec(`ALTER TABLE sessions ADD COLUMN pending_question_id TEXT`); err != nil {
 		if !strings.Contains(err.Error(), "duplicate column name") {
 			return err
 		}

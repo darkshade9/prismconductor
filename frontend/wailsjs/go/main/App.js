@@ -46,6 +46,10 @@ export function GetAutoPullPaused() {
   return window['go']['main']['App']['GetAutoPullPaused']();
 }
 
+export function GetMidRunQuestion(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetMidRunQuestion'](arg1, arg2, arg3);
+}
+
 export function GetNotifyPrefs() {
   return window['go']['main']['App']['GetNotifyPrefs']();
 }
@@ -232,6 +236,10 @@ export function SpawnPlanForIssue(arg1, arg2) {
 
 export function SubmitAnswers(arg1) {
   return window['go']['main']['App']['SubmitAnswers'](arg1);
+}
+
+export function SubmitMidRunAnswer(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SubmitMidRunAnswer'](arg1, arg2, arg3);
 }
 
 export function UnarchiveAll(arg1) {

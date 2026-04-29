@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -21,14 +22,15 @@ func (s *Store) SaveSession(sess *types.Session, transcriptPath string) error {
 		return err
 	}
 	_, err = s.DB.Exec(`
-INSERT INTO sessions (id, workspace_id, issue_number, pid, state, transcript_path, json)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO sessions (id, workspace_id, issue_number, pid, state, transcript_path, pending_question_id, json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     pid = excluded.pid,
     state = excluded.state,
     transcript_path = excluded.transcript_path,
+    pending_question_id = excluded.pending_question_id,
     json = excluded.json`,
-		sess.ID, sess.WorkspaceID, sess.IssueNumber, sess.PID, string(sess.State), transcriptPath, string(b))
+		sess.ID, sess.WorkspaceID, sess.IssueNumber, sess.PID, string(sess.State), transcriptPath, nullableString(sess.PendingQuestionID), string(b))
 	return err
 }
 
@@ -41,13 +43,34 @@ func (s *Store) UpdateSessionState(id string, state types.SessionState) error {
 	return err
 }
 
+// UpdateSessionPendingQuestion writes the pending_question_id column without
+// rewriting the JSON blob. Pass an empty string to clear.
+func (s *Store) UpdateSessionPendingQuestion(id, questionID string) error {
+	if s == nil || s.DB == nil {
+		return nil
+	}
+	_, err := s.DB.Exec(`UPDATE sessions SET pending_question_id = ? WHERE id = ?`, nullableString(questionID), id)
+	return err
+}
+
+// nullableString returns nil for empty strings so the SQLite column stores NULL
+// instead of the zero-length string. Keeps `pending_question_id IS NULL` queries
+// honest.
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 // LoadRunningSessions returns sessions that were running at last shutdown.
-// Used for re-attach on startup (§15.3).
+// Used for re-attach on startup (§15.3). Includes paused_for_question rows so
+// the answer-file watcher can pick them up post-restart (#17).
 func (s *Store) LoadRunningSessions() ([]types.Session, string, error) {
 	if s == nil || s.DB == nil {
 		return nil, "", nil
 	}
-	rows, err := s.DB.Query(`SELECT json, transcript_path FROM sessions WHERE state IN ('running','waiting_for_input','blocked')`)
+	rows, err := s.DB.Query(`SELECT json, transcript_path, pending_question_id FROM sessions WHERE state IN ('running','waiting_for_input','blocked','paused_for_question')`)
 	if err != nil {
 		return nil, "", err
 	}
@@ -56,12 +79,20 @@ func (s *Store) LoadRunningSessions() ([]types.Session, string, error) {
 	var firstTranscript string
 	for rows.Next() {
 		var raw, transcript string
-		if err := rows.Scan(&raw, &transcript); err != nil {
+		var pendingQID sql.NullString
+		if err := rows.Scan(&raw, &transcript, &pendingQID); err != nil {
 			return nil, "", err
 		}
 		var sess types.Session
 		if err := json.Unmarshal([]byte(raw), &sess); err != nil {
 			continue
+		}
+		// The pending_question_id column is the source of truth — the JSON blob
+		// may be older than the most recent UpdateSessionPendingQuestion call.
+		if pendingQID.Valid {
+			sess.PendingQuestionID = pendingQID.String
+		} else {
+			sess.PendingQuestionID = ""
 		}
 		out = append(out, sess)
 		if firstTranscript == "" {
@@ -69,6 +100,34 @@ func (s *Store) LoadRunningSessions() ([]types.Session, string, error) {
 		}
 	}
 	return out, firstTranscript, rows.Err()
+}
+
+// ListPausedForQuestionSessions returns every session row whose state is
+// paused_for_question and whose pending_question_id is non-empty (#17). Used
+// by the answer-file watcher to find which session a given answer file unlocks.
+func (s *Store) ListPausedForQuestionSessions() ([]PausedSession, error) {
+	if s == nil || s.DB == nil {
+		return nil, nil
+	}
+	rows, err := s.DB.Query(`
+		SELECT id, workspace_id, issue_number, pending_question_id
+		FROM sessions
+		WHERE state = 'paused_for_question'
+		  AND pending_question_id IS NOT NULL
+		  AND pending_question_id != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PausedSession
+	for rows.Next() {
+		var p PausedSession
+		if err := rows.Scan(&p.SessionID, &p.WorkspaceID, &p.IssueNumber, &p.QuestionID); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 // MostRecentEndedAtForWorktree resolves the most recent terminal-state session
