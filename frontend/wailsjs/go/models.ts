@@ -821,6 +821,22 @@ export namespace main {
 	        this.body = source["body"];
 	    }
 	}
+	export class NotifyPrefs {
+	    muted: boolean;
+	    quiet_start: string;
+	    quiet_end: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new NotifyPrefs(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.muted = source["muted"];
+	        this.quiet_start = source["quiet_start"];
+	        this.quiet_end = source["quiet_end"];
+	    }
+	}
 	export class OllamaConfig {
 	    url: string;
 	    model: string;

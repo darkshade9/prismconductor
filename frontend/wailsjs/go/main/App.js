@@ -26,6 +26,10 @@ export function FilterIssuesByActiveGoal(arg1) {
   return window['go']['main']['App']['FilterIssuesByActiveGoal'](arg1);
 }
 
+export function GetNotifyPrefs() {
+  return window['go']['main']['App']['GetNotifyPrefs']();
+}
+
 export function GetOllamaConfig() {
   return window['go']['main']['App']['GetOllamaConfig']();
 }
@@ -144,6 +148,10 @@ export function SendInput(arg1, arg2) {
 
 export function SetGoalStatus(arg1, arg2) {
   return window['go']['main']['App']['SetGoalStatus'](arg1, arg2);
+}
+
+export function SetNotifyPrefs(arg1) {
+  return window['go']['main']['App']['SetNotifyPrefs'](arg1);
 }
 
 export function SetOllamaConfig(arg1) {

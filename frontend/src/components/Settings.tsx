@@ -3,6 +3,7 @@ import { WorkspacesPanel } from "./WorkspacesPanel";
 import { OllamaPanel } from "./OllamaPanel";
 import { BundledSkillsViewer } from "./BundledSkillsViewer";
 import { WorkerPoolPanel } from "./WorkerPoolPanel";
+import { NotifyPanel } from "./NotifyPanel";
 
 type Tab = "workspaces" | "agents" | "ollama" | "skills" | "notify";
 
@@ -44,7 +45,7 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
             {tab === "agents" && <WorkerPoolPanel />}
             {tab === "ollama" && <OllamaPanel />}
             {tab === "skills" && <BundledSkillsViewer />}
-            {tab === "notify" && <Stub label="Notification preferences — Phase 1 Day 7" />}
+            {tab === "notify" && <NotifyPanel />}
           </div>
         </div>
       </div>

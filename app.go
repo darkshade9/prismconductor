@@ -147,10 +147,88 @@ func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionSta
 		a.lastNotifyAt = now
 		a.notifyMu.Unlock()
 
+		if a.notificationsSuppressed() {
+			return
+		}
+
 		title := titleForWorkspace(a.wsReg, sess.WorkspaceID)
 		body := notifyBody(sess)
 		_ = notify.Send(title, body)
 	}
+}
+
+// notificationsSuppressed returns true when notifications are currently muted
+// or inside the user's quiet-hours window (§15.6).
+func (a *App) notificationsSuppressed() bool {
+	if a.store == nil {
+		return false
+	}
+	if v, _ := a.store.GetSetting("notify_muted"); v == "true" {
+		return true
+	}
+	startStr, _ := a.store.GetSetting("notify_quiet_start")
+	endStr, _ := a.store.GetSetting("notify_quiet_end")
+	if startStr == "" || endStr == "" {
+		return false
+	}
+	start, ok1 := parseHHMM(startStr)
+	end, ok2 := parseHHMM(endStr)
+	if !ok1 || !ok2 || start == end {
+		return false
+	}
+	now := time.Now()
+	curMin := now.Hour()*60 + now.Minute()
+	if start < end {
+		return curMin >= start && curMin < end
+	}
+	// Wraps midnight (e.g., 22:00 → 07:00).
+	return curMin >= start || curMin < end
+}
+
+func parseHHMM(s string) (int, bool) {
+	if len(s) != 5 || s[2] != ':' {
+		return 0, false
+	}
+	h, err1 := strconv.Atoi(s[:2])
+	m, err2 := strconv.Atoi(s[3:])
+	if err1 != nil || err2 != nil || h < 0 || h > 23 || m < 0 || m > 59 {
+		return 0, false
+	}
+	return h*60 + m, true
+}
+
+// NotifyPrefs is the user-visible notification config.
+type NotifyPrefs struct {
+	Muted      bool   `json:"muted"`
+	QuietStart string `json:"quiet_start"` // "HH:MM"
+	QuietEnd   string `json:"quiet_end"`   // "HH:MM"
+}
+
+func (a *App) GetNotifyPrefs() NotifyPrefs {
+	out := NotifyPrefs{}
+	if a.store == nil {
+		return out
+	}
+	if v, _ := a.store.GetSetting("notify_muted"); v == "true" {
+		out.Muted = true
+	}
+	out.QuietStart, _ = a.store.GetSetting("notify_quiet_start")
+	out.QuietEnd, _ = a.store.GetSetting("notify_quiet_end")
+	return out
+}
+
+func (a *App) SetNotifyPrefs(p NotifyPrefs) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	muted := "false"
+	if p.Muted {
+		muted = "true"
+	}
+	_ = a.store.SetSetting("notify_muted", muted)
+	_ = a.store.SetSetting("notify_quiet_start", p.QuietStart)
+	_ = a.store.SetSetting("notify_quiet_end", p.QuietEnd)
+	return nil
 }
 
 func titleForWorkspace(reg *workspace.Registry, id string) string {

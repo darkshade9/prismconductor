@@ -1,13 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { FilterIssuesByActiveGoal } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 import { useGoalStore } from "../stores/goalStore";
+import { useIssueStore } from "../stores/issueStore";
 import { GoalEditor } from "./GoalEditor";
 
 export function GoalPane() {
   const { goals, refresh, activate, setStatus, remove } = useGoalStore();
+  const issues = useIssueStore((s) => s.issues);
   const [editing, setEditing] = useState<types.Goal | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [scopedIssues, setScopedIssues] = useState<types.Issue[] | null>(null);
 
   useEffect(() => {
     refresh();
@@ -16,6 +20,29 @@ export function GoalPane() {
   const active = goals.find((g) => g.status === "active") ?? null;
   const upNext = goals.filter((g) => g.status === "backlog");
   const past = goals.filter((g) => g.status === "achieved" || g.status === "abandoned");
+
+  // Recompute the scoped issue list whenever the issue table or active goal changes.
+  useEffect(() => {
+    if (!active) {
+      setScopedIssues(null);
+      return;
+    }
+    let cancelled = false;
+    FilterIssuesByActiveGoal(issues)
+      .then((scoped) => {
+        if (!cancelled) setScopedIssues(scoped ?? []);
+      })
+      .catch(() => setScopedIssues(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [issues, active?.id]);
+
+  const achievement = useMemo(() => {
+    if (!active || !scopedIssues || scopedIssues.length === 0) return null;
+    const allDone = scopedIssues.every((i) => i.column === "done" || i.state === "closed");
+    return allDone ? { count: scopedIssues.length } : null;
+  }, [active, scopedIssues]);
 
   function newGoal() {
     setEditing(null);
@@ -58,6 +85,34 @@ export function GoalPane() {
           </button>
         </div>
       </div>
+
+      {achievement && active && (
+        <div className="mt-2 px-3 py-2 rounded border border-emerald-700 bg-emerald-950/40 flex items-center justify-between">
+          <span className="text-emerald-300">
+            ✓ All {achievement.count} issues for this goal are done. Mark achieved?
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setStatus(active.id, "achieved")}
+              className="text-xs bg-emerald-700 hover:bg-emerald-600 px-2 py-1 rounded"
+            >
+              Mark achieved
+            </button>
+            {upNext.length > 0 && (
+              <button
+                onClick={async () => {
+                  await setStatus(active.id, "achieved");
+                  await activate(upNext[0].id);
+                }}
+                className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded"
+                title={`Achieved + activate "${upNext[0].title}"`}
+              >
+                Achieve & advance
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {(upNext.length > 0 || historyOpen) && (
         <div className="mt-1 text-xs text-slate-500 space-y-0.5">
