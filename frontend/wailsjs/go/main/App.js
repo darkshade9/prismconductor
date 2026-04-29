@@ -34,6 +34,10 @@ export function GetOllamaConfig() {
   return window['go']['main']['App']['GetOllamaConfig']();
 }
 
+export function GetPollInterval() {
+  return window['go']['main']['App']['GetPollInterval']();
+}
+
 export function GetWorkerPoolStatus() {
   return window['go']['main']['App']['GetWorkerPoolStatus']();
 }
@@ -118,6 +122,10 @@ export function ReadTranscript(arg1) {
   return window['go']['main']['App']['ReadTranscript'](arg1);
 }
 
+export function RefreshIssuesNow() {
+  return window['go']['main']['App']['RefreshIssuesNow']();
+}
+
 export function RejectPlan(arg1, arg2) {
   return window['go']['main']['App']['RejectPlan'](arg1, arg2);
 }
@@ -156,6 +164,10 @@ export function SetNotifyPrefs(arg1) {
 
 export function SetOllamaConfig(arg1) {
   return window['go']['main']['App']['SetOllamaConfig'](arg1);
+}
+
+export function SetPollInterval(arg1) {
+  return window['go']['main']['App']['SetPollInterval'](arg1);
 }
 
 export function SetWorkerPoolCapacity(arg1) {

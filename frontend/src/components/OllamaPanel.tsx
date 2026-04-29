@@ -58,9 +58,11 @@ export function OllamaPanel() {
         {available === null ? (
           <span className="text-slate-500">checking…</span>
         ) : available ? (
-          <span className="text-emerald-400">● {model} available</span>
+          <span className="text-emerald-400">● {model} available at {url}</span>
         ) : (
-          <span className="text-amber-300">● not available — install model with <code>ollama pull {model}</code></span>
+          <span className="text-amber-300">
+            ● not reachable — confirm the endpoint is up and serves the model. Ollama: <code>ollama pull {model}</code>; LM Studio: load it in the server tab.
+          </span>
         )}
       </div>
 

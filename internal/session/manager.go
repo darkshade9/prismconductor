@@ -1,14 +1,12 @@
 package session
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +56,7 @@ type runtimeSession struct {
 	cancel         context.CancelFunc
 	transcriptPath string
 	transcriptFile *os.File
+	parser         *StreamParser
 }
 
 func NewManager(bus *eventbus.Bus, emit LineHandler) *Manager {
@@ -120,7 +119,7 @@ func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.Sessio
 		PID:         cmd.Process.Pid,
 	}
 
-	rs := &runtimeSession{sess: sess, cmd: cmd, pty: f, cancel: cancel}
+	rs := &runtimeSession{sess: sess, cmd: cmd, pty: f, cancel: cancel, parser: NewStreamParser()}
 
 	if m.transcriptDir != "" {
 		_ = os.MkdirAll(m.transcriptDir, 0o755)
@@ -153,22 +152,66 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 			rs.transcriptFile.Close()
 		}
 	}()
-	scanner := bufio.NewScanner(rs.pty)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	for scanner.Scan() {
+	// Byte-streamed tail. bufio.Scanner withholds anything that lacks a
+	// newline; `claude -p` and similar tools may emit partial lines (progress
+	// indicators, spinner frames, the final unterminated chunk). We flush at
+	// each \n / \r, AND flush a pending partial line whenever a Read returns
+	// no further data within the read window.
+	buf := make([]byte, 4096)
+	var pending []byte
+	flush := func(rawLine string) {
+		rawLine = stripANSI(rawLine)
+		if rawLine == "" {
+			return
+		}
+		// stream-json events are line-delimited JSON; pass through the parser
+		// to get role-prefixed display lines + accumulated assistant text.
+		var lines []string
+		if rs.parser != nil {
+			lines = rs.parser.Feed(rawLine)
+		} else {
+			lines = []string{rawLine}
+		}
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			if rs.transcriptFile != nil {
+				fmt.Fprintln(rs.transcriptFile, line)
+			}
+			if m.emit != nil {
+				m.emit(rs.sess.ID, line)
+			}
+			m.matchPatterns(rs, line)
+		}
+	}
+	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		line := scanner.Text()
-		if rs.transcriptFile != nil {
-			fmt.Fprintln(rs.transcriptFile, line)
+		n, err := rs.pty.Read(buf)
+		if n > 0 {
+			for i := 0; i < n; i++ {
+				c := buf[i]
+				if c == '\n' || c == '\r' {
+					if len(pending) > 0 {
+						flush(string(pending))
+						pending = pending[:0]
+					}
+				} else {
+					pending = append(pending, c)
+				}
+			}
 		}
-		if m.emit != nil {
-			m.emit(rs.sess.ID, line)
+		if err != nil {
+			if len(pending) > 0 {
+				flush(string(pending))
+				pending = pending[:0]
+			}
+			break
 		}
-		m.matchPatterns(rs, line)
 	}
 	prev := rs.sess.State
 	if err := rs.cmd.Wait(); err != nil {
@@ -266,26 +309,59 @@ func (m *Manager) Snapshot() []types.Session {
 }
 
 // --- §10.4 dispatch ---
+//
+// `claude` parses positional args as the prompt; with -p (print mode) it runs
+// non-interactively, emits clean line-buffered output, and exits when the
+// prompt completes. That's exactly what plan- and execute-mode workers want
+// per §10.1 / §10.2 — they're one-shot operations.
 
-func buildPlanCommand(ws types.Workspace, issue types.Issue) []string {
-	switch ws.SkillProfile.Mode {
-	case types.SkillModeNative:
-		return []string{"claude", ws.SkillProfile.NativePlanCommand, strconv.Itoa(issue.Number), "--emit-plan-json"}
-	case types.SkillModeHybrid:
-		return []string{"claude", "/conductor-plan", "--native-cmd", ws.SkillProfile.NativePlanCommand, "--issue", strconv.Itoa(issue.Number)}
-	default:
-		return []string{"claude", "/conductor-plan", "--issue", strconv.Itoa(issue.Number), "--repo", ws.RepoPath}
+// claudeArgs are the universal flags every conductor-spawned worker uses:
+//   - -p: non-interactive print mode (one-shot worker)
+//   - --output-format stream-json + --include-partial-messages + --verbose:
+//     emits a JSON event per token / tool call so the UI shows live progress
+//     instead of waiting silently for the final response.
+//   - --permission-mode acceptEdits: the worker writes plan / answer / code
+//     files in the workspace's repo without an interactive approval gate
+//     (which `-p` mode can't answer).
+func claudeArgs(prompt string) []string {
+	return []string{
+		"claude",
+		"-p",
+		"--output-format", "stream-json",
+		"--include-partial-messages",
+		"--verbose",
+		"--permission-mode", "acceptEdits",
+		prompt,
 	}
 }
 
+func buildPlanCommand(ws types.Workspace, issue types.Issue) []string {
+	return claudeArgs(planPrompt(ws, issue))
+}
+
 func buildExecuteCommand(ws types.Workspace, issue types.Issue, plan types.Plan) []string {
+	return claudeArgs(executePrompt(ws, issue, plan))
+}
+
+func planPrompt(ws types.Workspace, issue types.Issue) string {
 	switch ws.SkillProfile.Mode {
 	case types.SkillModeNative:
-		return []string{"claude", ws.SkillProfile.NativeExecuteCommand, strconv.Itoa(issue.Number), "--resume-from-approved-plan", strconv.Itoa(plan.Revision)}
+		return fmt.Sprintf("%s %d --emit-plan-json", ws.SkillProfile.NativePlanCommand, issue.Number)
 	case types.SkillModeHybrid:
-		return []string{"claude", "/conductor-execute", "--native-cmd", ws.SkillProfile.NativeExecuteCommand, "--issue", strconv.Itoa(issue.Number), "--revision", strconv.Itoa(plan.Revision)}
+		return fmt.Sprintf("/conductor-plan --native-cmd %s --issue %d", ws.SkillProfile.NativePlanCommand, issue.Number)
 	default:
-		return []string{"claude", "/conductor-execute", "--issue", strconv.Itoa(issue.Number), "--repo", ws.RepoPath, "--revision", strconv.Itoa(plan.Revision)}
+		return fmt.Sprintf("/conductor-plan --issue %d --repo %s", issue.Number, ws.RepoPath)
+	}
+}
+
+func executePrompt(ws types.Workspace, issue types.Issue, plan types.Plan) string {
+	switch ws.SkillProfile.Mode {
+	case types.SkillModeNative:
+		return fmt.Sprintf("%s %d --resume-from-approved-plan %d", ws.SkillProfile.NativeExecuteCommand, issue.Number, plan.Revision)
+	case types.SkillModeHybrid:
+		return fmt.Sprintf("/conductor-execute --native-cmd %s --issue %d --revision %d", ws.SkillProfile.NativeExecuteCommand, issue.Number, plan.Revision)
+	default:
+		return fmt.Sprintf("/conductor-execute --issue %d --repo %s --revision %d", issue.Number, ws.RepoPath, plan.Revision)
 	}
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { EventsOn } from "../wailsjs/runtime/runtime";
-import { GetWorkerPoolStatus, ListSessions, SpawnDemo, SpawnPlanForIssue } from "../wailsjs/go/main/App";
+import { GetWorkerPoolStatus, ListSessions, RefreshIssuesNow, SpawnDemo, SpawnPlanForIssue } from "../wailsjs/go/main/App";
 import { types } from "../wailsjs/go/models";
 import { useSessionStore } from "./stores/sessionStore";
 import { useWorkspaceStore } from "./stores/workspaceStore";
@@ -67,6 +67,10 @@ function App() {
       },
     );
     const offPlanApproved = EventsOn("bus.plan_approved", () => refreshIssues(selectedWorkspace ?? ""));
+    const offGhPoll = EventsOn("bus.github_poll_done", () => refreshIssues(selectedWorkspace ?? ""));
+    const offGhIssue = EventsOn("bus.issue_added", () => refreshIssues(selectedWorkspace ?? ""));
+    const offGhClosed = EventsOn("bus.issue_closed", () => refreshIssues(selectedWorkspace ?? ""));
+    const offGhLabel = EventsOn("bus.issue_label_changed", () => refreshIssues(selectedWorkspace ?? ""));
     const refreshPool = () => GetWorkerPoolStatus().then(setPoolStatus).catch(() => {});
     refreshPool();
     const offPoolFreed = EventsOn("bus.worker_slot_freed", refreshPool);
@@ -83,6 +87,10 @@ function App() {
       if (typeof offPoolFreed === "function") offPoolFreed();
       if (typeof offPoolChanged === "function") offPoolChanged();
       if (typeof offPoolState === "function") offPoolState();
+      if (typeof offGhPoll === "function") offGhPoll();
+      if (typeof offGhIssue === "function") offGhIssue();
+      if (typeof offGhClosed === "function") offGhClosed();
+      if (typeof offGhLabel === "function") offGhLabel();
     };
   }, [appendLine, setMeta, refreshWorkspaces, refreshGoals, refreshIssues, selectedWorkspace]);
 
@@ -105,15 +113,17 @@ function App() {
   }
 
   async function spawnIssue() {
-    if (!selectedWorkspace) {
-      alert("Pick a workspace first.");
+    const workspaces = useWorkspaceStore.getState().workspaces;
+    const target = selectedWorkspace ?? workspaces[0]?.id;
+    if (!target) {
+      alert("Add a workspace in Settings first.");
       return;
     }
     const num = parseInt(issueInput, 10);
     if (!num) return;
     setBusy(true);
     try {
-      const sess = await SpawnPlanForIssue(selectedWorkspace, num);
+      const sess = await SpawnPlanForIssue(target, num);
       if (sess?.id) {
         setMeta(sess);
         setActive(sess.id);
@@ -132,29 +142,40 @@ function App() {
       <header className="flex items-center justify-between px-4 py-2 border-b border-slate-800">
         <div className="font-semibold">PrismConductor</div>
         <div className="flex items-center gap-2">
-          <input
-            type="number"
-            min={1}
-            value={issueInput}
-            onChange={(e) => setIssueInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && spawnIssue()}
-            placeholder="issue #"
-            className="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs"
-          />
-          <button
-            onClick={spawnIssue}
-            disabled={busy || !selectedWorkspace || !issueInput}
-            className="text-xs bg-sky-700 hover:bg-sky-600 disabled:opacity-40 px-2 py-1 rounded"
-            title={selectedWorkspace ? "" : "select a workspace first"}
-          >
-            Plan issue
-          </button>
+          {selectedWorkspace && (
+            <>
+              <input
+                type="number"
+                min={1}
+                value={issueInput}
+                onChange={(e) => setIssueInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && spawnIssue()}
+                placeholder="issue #"
+                className="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs"
+              />
+              <button
+                onClick={spawnIssue}
+                disabled={busy || !issueInput}
+                className="text-xs bg-sky-700 hover:bg-sky-600 disabled:opacity-40 px-2 py-1 rounded"
+                title={issueInput ? "" : "type an issue number first"}
+              >
+                Plan issue
+              </button>
+            </>
+          )}
           <button
             onClick={spawnDemo}
             disabled={busy}
             className="text-xs bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 px-2 py-1 rounded"
           >
             {busy ? "…" : "Spawn `claude --version`"}
+          </button>
+          <button
+            onClick={() => RefreshIssuesNow().catch((e) => alert(String(e?.message ?? e)))}
+            className="text-xs border border-slate-700 hover:bg-slate-800 px-2 py-1 rounded"
+            title="Re-fetch GitHub issues for every workspace now"
+          >
+            ↻ Refresh
           </button>
           <button
             onClick={() => setDrawerOpen((v) => !v)}

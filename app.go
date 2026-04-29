@@ -16,6 +16,7 @@ import (
 	gh "github.com/google/go-github/v62/github"
 
 	"prismconductor/internal/eventbus"
+	pcgithub "prismconductor/internal/github"
 	"prismconductor/internal/goalfilter"
 	"prismconductor/internal/planio"
 	"prismconductor/internal/githubauth"
@@ -42,6 +43,8 @@ type App struct {
 	orch    *orchestrator.Orchestrator
 	wsReg   *workspace.Registry
 	auth    *githubauth.Client
+	gh      *pcgithub.Client
+	poller  *pcgithub.Poller
 	cfgDir  string
 
 	pendingDevice *githubauth.DeviceCode
@@ -62,6 +65,11 @@ func (a *App) startup(ctx context.Context) {
 	if _, err := bundle.Extract(bundleDir); err != nil {
 		fmt.Fprintf(os.Stderr, "skill bundle extract: %v\n", err)
 	}
+	// Install (and refresh) as user-scoped Claude Code slash commands so the
+	// spawned worker resolves /conductor-plan etc.
+	if err := bundle.InstallAsCommands(); err != nil {
+		fmt.Fprintf(os.Stderr, "skill install as commands: %v\n", err)
+	}
 
 	a.bus = eventbus.New()
 	a.pool = workerpool.New(2)
@@ -74,12 +82,20 @@ func (a *App) startup(ctx context.Context) {
 	} else {
 		a.store = s
 		_ = a.store.EnsureDepCacheTable()
-		// Apply persisted Ollama settings if present.
+		// Apply persisted Ollama settings if present. First-run defaults are
+		// the user's known LAN endpoint; user can override in Settings →
+		// Ollama at any time.
 		if u, _ := a.store.GetSetting("ollama_url"); u != "" {
 			a.llm.URL = u
+		} else {
+			a.llm.URL = "http://192.168.0.101:1234"
+			_ = a.store.SetSetting("ollama_url", a.llm.URL)
 		}
 		if m, _ := a.store.GetSetting("ollama_model"); m != "" {
 			a.llm.Model = m
+		} else {
+			a.llm.Model = "google/gemma-2-27b"
+			_ = a.store.SetSetting("ollama_model", a.llm.Model)
 		}
 		if c, _ := a.store.GetSetting("worker_pool_capacity"); c != "" {
 			if n, err := strconv.Atoi(c); err == nil && n > 0 {
@@ -121,6 +137,24 @@ func (a *App) startup(ctx context.Context) {
 	if a.store != nil {
 		if running, _, err := a.store.LoadRunningSessions(); err == nil {
 			a.mgr.Reattach(running)
+		}
+	}
+
+	// GitHub poller (#2). Uses the existing `gh` CLI auth — no OAuth App
+	// registration required.
+	if a.store != nil && a.wsReg != nil {
+		if c, err := pcgithub.New(); err != nil {
+			fmt.Fprintf(os.Stderr, "github client unavailable: %v\n", err)
+		} else {
+			a.gh = c
+			interval := 5 * time.Minute
+			if v, _ := a.store.GetSetting("poll_interval_seconds"); v != "" {
+				if n, err := strconv.Atoi(v); err == nil && n >= 30 {
+					interval = time.Duration(n) * time.Second
+				}
+			}
+			a.poller = pcgithub.NewPoller(a.bus, a.gh, a.store, a.wsReg, interval)
+			go a.poller.Run(a.ctx)
 		}
 	}
 }
@@ -431,6 +465,42 @@ func (a *App) RemoveIssue(workspaceID string, number int) error {
 		return fmt.Errorf("store unavailable")
 	}
 	return a.store.RemoveIssue(workspaceID, number)
+}
+
+// RefreshIssuesNow asks the poller to fan out a fresh GitHub fetch right now.
+func (a *App) RefreshIssuesNow() error {
+	if a.poller == nil {
+		return fmt.Errorf("github poller not available — is `gh` CLI authenticated?")
+	}
+	a.poller.PokeNow()
+	return nil
+}
+
+// SetPollInterval persists the poll interval (seconds, min 30).
+func (a *App) SetPollInterval(seconds int) error {
+	if seconds < 30 {
+		seconds = 30
+	}
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	return a.store.SetSetting("poll_interval_seconds", strconv.Itoa(seconds))
+}
+
+// GetPollInterval returns the current interval in seconds (default 300).
+func (a *App) GetPollInterval() int {
+	if a.store == nil {
+		return 300
+	}
+	v, _ := a.store.GetSetting("poll_interval_seconds")
+	if v == "" {
+		return 300
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 30 {
+		return 300
+	}
+	return n
 }
 
 // AddManualIssue lets the user create a fake issue card in any column. Used to

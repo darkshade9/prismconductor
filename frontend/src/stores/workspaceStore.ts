@@ -17,8 +17,14 @@ export const useWorkspaceStore = create<State>((set) => ({
   refresh: async () => {
     set({ loading: true });
     try {
-      const ws = await ListWorkspaces();
-      set({ workspaces: ws ?? [], loading: false });
+      const ws = (await ListWorkspaces()) ?? [];
+      set((s) => ({
+        workspaces: ws,
+        loading: false,
+        // Auto-select when there's exactly one workspace and nothing's been
+        // picked yet — saves the user from having to click the chip.
+        selectedID: s.selectedID ?? (ws.length === 1 ? ws[0].id : null),
+      }));
     } catch {
       set({ loading: false });
     }

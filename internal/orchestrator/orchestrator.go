@@ -71,24 +71,27 @@ func (o *Orchestrator) SetAutoPull(pool Pool, spawn SpawnPlanFunc) {
 }
 
 // handle is the per-event router from §8.
+//
+// Note: LLM-driven runRank is intentionally NOT auto-fired on issue_added /
+// issue_closed / issue_label_changed. The GitHub poller (#2) emits a burst
+// of these on every fetch, and the LLM round-trip is too slow to chase those
+// events. The user invokes "Re-rank now" manually when they want a fresh
+// priority pass. autoPull (slot management) still runs on every relevant
+// event because it's purely local — no LLM call.
 func (o *Orchestrator) handle(e eventbus.Event) {
 	switch e.Type {
 	case eventbus.EvtGoalActivated:
+		// One LLM rank pass, then auto-pull.
 		go func() {
 			_ = o.runRank("goal_activated")
 			o.autoPull("goal_activated")
 		}()
-	case eventbus.EvtGoalUpdated:
-		go o.runRank("goal_updated")
-	case eventbus.EvtIssueAdded:
-		go o.runRank("issue_added")
 	case eventbus.EvtIssueClosed:
+		// No LLM. Just prune closed deps locally and try to pull next.
 		go func() {
 			_ = o.recomputeBlocked()
 			o.autoPull("issue_closed")
 		}()
-	case eventbus.EvtIssueLabelChanged:
-		go o.runRank("issue_label_changed")
 	case eventbus.EvtWorkerSlotFreed:
 		if o.pool != nil {
 			o.pool.Release()
@@ -97,7 +100,6 @@ func (o *Orchestrator) handle(e eventbus.Event) {
 	case eventbus.EvtAgentCountChanged:
 		go o.autoPull("agent_count_changed")
 	case eventbus.EvtPlanRejected:
-		// Card returned to TODO and worker slot freed by RejectPlan/Kill.
 		go o.autoPull("plan_rejected")
 	}
 }

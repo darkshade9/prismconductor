@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { ApprovePlan, LatestPlan, RejectPlan, SubmitAnswers } from "../../wailsjs/go/main/App";
 import { main, types } from "../../wailsjs/go/models";
 import { useIssueStore } from "../stores/issueStore";
@@ -206,9 +208,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-// Tiny markdown stand-in: preserves line breaks, no real parser.
 function Markdown({ text }: { text: string }) {
-  return <div className="whitespace-pre-wrap text-slate-200 leading-relaxed">{text}</div>;
+  return (
+    <div className="prose prose-sm prose-invert max-w-none prose-pre:bg-slate-950 prose-pre:border prose-pre:border-slate-800 prose-code:text-amber-200 prose-code:bg-slate-900 prose-code:px-1 prose-code:rounded prose-code:before:content-[''] prose-code:after:content-[''] prose-headings:text-slate-100 prose-strong:text-slate-100 prose-a:text-sky-400">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
+  );
 }
 
 function minutesAgo(iso: any): number | null {

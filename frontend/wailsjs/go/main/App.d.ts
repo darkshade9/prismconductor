@@ -22,6 +22,8 @@ export function GetNotifyPrefs():Promise<main.NotifyPrefs>;
 
 export function GetOllamaConfig():Promise<main.OllamaConfig>;
 
+export function GetPollInterval():Promise<number>;
+
 export function GetWorkerPoolStatus():Promise<main.WorkerPoolStatus>;
 
 export function GitHubAuthStatus():Promise<githubauth.User>;
@@ -64,6 +66,8 @@ export function PickRepoPath():Promise<string>;
 
 export function ReadTranscript(arg1:string):Promise<string>;
 
+export function RefreshIssuesNow():Promise<void>;
+
 export function RejectPlan(arg1:string,arg2:number):Promise<void>;
 
 export function RemoveIssue(arg1:string,arg2:number):Promise<void>;
@@ -83,6 +87,8 @@ export function SetGoalStatus(arg1:string,arg2:string):Promise<void>;
 export function SetNotifyPrefs(arg1:main.NotifyPrefs):Promise<void>;
 
 export function SetOllamaConfig(arg1:main.OllamaConfig):Promise<void>;
+
+export function SetPollInterval(arg1:number):Promise<void>;
 
 export function SetWorkerPoolCapacity(arg1:number):Promise<void>;
 
