@@ -14,6 +14,10 @@ export function AddWorkspace(arg1) {
   return window['go']['main']['App']['AddWorkspace'](arg1);
 }
 
+export function ApprovePlan(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ApprovePlan'](arg1, arg2, arg3);
+}
+
 export function DeleteGoal(arg1) {
   return window['go']['main']['App']['DeleteGoal'](arg1);
 }
@@ -54,12 +58,20 @@ export function KillSession(arg1) {
   return window['go']['main']['App']['KillSession'](arg1);
 }
 
+export function LatestPlan(arg1, arg2) {
+  return window['go']['main']['App']['LatestPlan'](arg1, arg2);
+}
+
 export function ListGoals() {
   return window['go']['main']['App']['ListGoals']();
 }
 
 export function ListIssues(arg1) {
   return window['go']['main']['App']['ListIssues'](arg1);
+}
+
+export function ListPlans(arg1, arg2) {
+  return window['go']['main']['App']['ListPlans'](arg1, arg2);
 }
 
 export function ListSessions() {
@@ -88,6 +100,10 @@ export function PickRepoPath() {
 
 export function ReadTranscript(arg1) {
   return window['go']['main']['App']['ReadTranscript'](arg1);
+}
+
+export function RejectPlan(arg1, arg2) {
+  return window['go']['main']['App']['RejectPlan'](arg1, arg2);
 }
 
 export function RemoveIssue(arg1, arg2) {
@@ -128,6 +144,10 @@ export function SpawnDemo() {
 
 export function SpawnPlanForIssue(arg1, arg2) {
   return window['go']['main']['App']['SpawnPlanForIssue'](arg1, arg2);
+}
+
+export function SubmitAnswers(arg1) {
+  return window['go']['main']['App']['SubmitAnswers'](arg1);
 }
 
 export function UpdateWorkspace(arg1) {

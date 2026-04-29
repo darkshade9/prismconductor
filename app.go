@@ -16,6 +16,7 @@ import (
 
 	"prismconductor/internal/eventbus"
 	"prismconductor/internal/goalfilter"
+	"prismconductor/internal/planio"
 	"prismconductor/internal/githubauth"
 	"prismconductor/internal/notify"
 	"prismconductor/internal/ollama"
@@ -88,6 +89,7 @@ func (a *App) startup(ctx context.Context) {
 
 	a.mgr = session.NewManager(a.bus, a.emitLine)
 	a.mgr.Configure(filepath.Join(cfgDir, "transcripts"), a.store, a.handleSessionStateChange)
+	a.mgr.SetOnPlanReady(a.handlePlanReady)
 
 	// Hook the orchestrator up to the store now that both exist.
 	if a.store != nil {
@@ -364,6 +366,146 @@ func (a *App) AddManualIssue(workspaceID string, number int, title, body string,
 		"number":       number,
 	})
 	return &iss, nil
+}
+
+// --- Plans + Q&A loop (§9, §10) ---
+
+// handlePlanReady reads + persists the plan file when the worker emits the
+// "Plan written" sentinel.
+func (a *App) handlePlanReady(sess types.Session, relPath string) {
+	if a.wsReg == nil || a.store == nil {
+		return
+	}
+	ws, ok := a.wsReg.Get(sess.WorkspaceID)
+	if !ok {
+		return
+	}
+	abs := filepath.Join(ws.RepoPath, relPath)
+	plan, err := planio.ReadPlan(abs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "plan ingest failed: %v\n", err)
+		return
+	}
+	plan.WorkspaceID = sess.WorkspaceID
+	plan.IssueNumber = sess.IssueNumber
+	if err := a.store.SavePlan(*plan); err != nil {
+		fmt.Fprintf(os.Stderr, "plan save failed: %v\n", err)
+		return
+	}
+	a.bus.Publish(eventbus.EvtPlanReady, map[string]any{
+		"workspace_id": sess.WorkspaceID,
+		"issue_number": sess.IssueNumber,
+		"revision":     plan.Revision,
+	})
+	// Move the card to the PLAN column if it isn't there already.
+	_ = a.store.MoveIssueColumn(sess.WorkspaceID, sess.IssueNumber, types.ColPlan)
+	_ = notify.Send(titleForWorkspace(a.wsReg, sess.WorkspaceID),
+		fmt.Sprintf("#%d plan ready (rev %d, %d questions)", sess.IssueNumber, plan.Revision, len(plan.Questions)))
+}
+
+// LatestPlan returns the highest-revision plan for an issue.
+func (a *App) LatestPlan(workspaceID string, issueNumber int) (*types.Plan, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store unavailable")
+	}
+	return a.store.LatestPlan(workspaceID, issueNumber)
+}
+
+// ListPlans returns every revision for an issue, oldest first.
+func (a *App) ListPlans(workspaceID string, issueNumber int) ([]types.Plan, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store unavailable")
+	}
+	return a.store.ListPlans(workspaceID, issueNumber)
+}
+
+// AnswerSubmission is the frontend's payload for the answers form.
+type AnswerSubmission struct {
+	WorkspaceID string              `json:"workspace_id"`
+	IssueNumber int                 `json:"issue_number"`
+	Revision    int                 `json:"revision"`
+	Answers     map[string]string   `json:"answers"`
+	Multi       map[string][]string `json:"multi"`
+}
+
+// SubmitAnswers writes the answers file and re-spawns plan mode for the next
+// revision. Frontend calls this after the user fills the QuestionForm.
+func (a *App) SubmitAnswers(sub AnswerSubmission) error {
+	if a.wsReg == nil || a.store == nil {
+		return fmt.Errorf("registry/store unavailable")
+	}
+	ws, ok := a.wsReg.Get(sub.WorkspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", sub.WorkspaceID)
+	}
+	if err := planio.WriteAnswers(ws.RepoPath, sub.IssueNumber, sub.Revision, planio.AnswerSet{
+		Answers: sub.Answers,
+		Multi:   sub.Multi,
+	}); err != nil {
+		return err
+	}
+	// Re-spawn plan worker; the bundled skill checks for an answers file at the
+	// matching revision and emits rev<N+1>.
+	if _, err := a.mgr.SpawnPlan(ws, types.Issue{Number: sub.IssueNumber, WorkspaceID: sub.WorkspaceID}); err != nil {
+		return err
+	}
+	a.bus.Publish(eventbus.EvtPlanRevised, map[string]any{
+		"workspace_id": sub.WorkspaceID,
+		"issue_number": sub.IssueNumber,
+		"from_revision": sub.Revision,
+	})
+	return nil
+}
+
+// ApprovePlan stamps approved_at on the given revision, moves the card to
+// IN_PROGRESS, and spawns the execute-mode worker.
+func (a *App) ApprovePlan(workspaceID string, issueNumber, revision int) error {
+	if a.wsReg == nil || a.store == nil {
+		return fmt.Errorf("registry/store unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	plan, err := a.store.GetPlan(workspaceID, issueNumber, revision)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	plan.ApprovedAt = &now
+	plan.ReadyToExecute = true
+	if err := a.store.SavePlan(plan); err != nil {
+		return err
+	}
+	if err := a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColInProgress); err != nil {
+		return err
+	}
+	if _, err := a.mgr.SpawnExecute(ws, types.Issue{Number: issueNumber, WorkspaceID: workspaceID}, plan); err != nil {
+		return err
+	}
+	a.bus.Publish(eventbus.EvtPlanApproved, map[string]any{
+		"workspace_id": workspaceID,
+		"issue_number": issueNumber,
+		"revision":     revision,
+	})
+	return nil
+}
+
+// RejectPlan moves the card back to TODO and frees the worker slot.
+// (No worker to kill if plan mode finished — but if a revision is in flight,
+// caller is expected to KillSession first.)
+func (a *App) RejectPlan(workspaceID string, issueNumber int) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColTodo); err != nil {
+		return err
+	}
+	a.bus.Publish(eventbus.EvtPlanRejected, map[string]any{
+		"workspace_id": workspaceID,
+		"issue_number": issueNumber,
+	})
+	return nil
 }
 
 // --- Orchestrator + Ollama ---

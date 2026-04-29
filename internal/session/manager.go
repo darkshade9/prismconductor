@@ -34,12 +34,18 @@ type Persister interface {
 // to fan out OS notifications + Wails events.
 type StateChangeHandler func(sess types.Session, prev types.SessionState)
 
+// PlanReadyHandler is fired when the worker prints the §10.3 "Plan written"
+// sentinel line. The handler is responsible for reading the file off disk and
+// persisting it.
+type PlanReadyHandler func(sess types.Session, planPath string)
+
 type Manager struct {
 	bus           *eventbus.Bus
 	emit          LineHandler
 	transcriptDir string
 	store         Persister
 	onStateChange StateChangeHandler
+	onPlanReady   PlanReadyHandler
 
 	mu       sync.RWMutex
 	sessions map[string]*runtimeSession
@@ -64,6 +70,10 @@ func (m *Manager) Configure(transcriptDir string, store Persister, onChange Stat
 	m.store = store
 	m.onStateChange = onChange
 }
+
+// SetOnPlanReady registers the handler invoked when a worker prints the
+// "Plan written" sentinel.
+func (m *Manager) SetOnPlanReady(h PlanReadyHandler) { m.onPlanReady = h }
 
 // SpawnPlan launches a plan-mode worker per §10.1 / §10.4.
 func (m *Manager) SpawnPlan(ws types.Workspace, issue types.Issue) (*types.Session, error) {
@@ -186,7 +196,17 @@ func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 		rs.sess.State = types.StateWaitingForInput
 		rs.sess.LastPrompt = line
 	case strings.Contains(line, PatternPlanWritten):
-		if m.bus != nil {
+		// Extract the relative path the worker emitted. The sentinel ends with
+		// ".prismconductor/plans/" so we pick up everything from that prefix
+		// to the end of the line — yields ".prismconductor/plans/<num>-rev<N>.json".
+		idx := strings.Index(line, ".prismconductor/plans/")
+		path := strings.TrimSpace(line[idx:])
+		if m.onPlanReady != nil {
+			m.onPlanReady(*rs.sess, path)
+		}
+		// onPlanReady is responsible for publishing EvtPlanReady itself once it
+		// has the plan id; if no handler is wired, publish a generic event.
+		if m.onPlanReady == nil && m.bus != nil {
 			m.bus.Publish(eventbus.EvtPlanReady, rs.sess.ID)
 		}
 	case strings.Contains(line, PatternComplete):

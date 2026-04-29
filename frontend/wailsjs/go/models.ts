@@ -785,6 +785,26 @@ export namespace githubauth {
 
 export namespace main {
 	
+	export class AnswerSubmission {
+	    workspace_id: string;
+	    issue_number: number;
+	    revision: number;
+	    answers: Record<string, string>;
+	    multi: Record<string, Array<string>>;
+	
+	    static createFrom(source: any = {}) {
+	        return new AnswerSubmission(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.workspace_id = source["workspace_id"];
+	        this.issue_number = source["issue_number"];
+	        this.revision = source["revision"];
+	        this.answers = source["answers"];
+	        this.multi = source["multi"];
+	    }
+	}
 	export class OllamaConfig {
 	    url: string;
 	    model: string;

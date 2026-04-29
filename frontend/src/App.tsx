@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { EventsOn } from "../wailsjs/runtime/runtime";
 import { ListSessions, SpawnDemo, SpawnPlanForIssue } from "../wailsjs/go/main/App";
 import { types } from "../wailsjs/go/models";
@@ -15,6 +15,8 @@ import { AddIssueQuick } from "./components/AddIssueQuick";
 import { useIssueStore } from "./stores/issueStore";
 import { useGoalStore } from "./stores/goalStore";
 
+type PlanTarget = { workspace_id: string; number: number } | null;
+
 function App() {
   const appendLine = useSessionStore((s) => s.appendLine);
   const setMeta = useSessionStore((s) => s.setMeta);
@@ -23,9 +25,18 @@ function App() {
   const selectedWorkspace = useWorkspaceStore((s) => s.selectedID);
   const refreshIssues = useIssueStore((s) => s.refresh);
   const refreshGoals = useGoalStore((s) => s.refresh);
+  const issues = useIssueStore((s) => s.issues);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [planOpen, setPlanOpen] = useState(false);
+  const [planTarget, setPlanTarget] = useState<PlanTarget>(null);
+  const planIssue = useMemo(() => {
+    if (!planTarget) return null;
+    return (
+      issues.find(
+        (i) => i.workspace_id === planTarget.workspace_id && i.number === planTarget.number,
+      ) ?? null
+    );
+  }, [issues, planTarget]);
   const [busy, setBusy] = useState(false);
   const [issueInput, setIssueInput] = useState("");
 
@@ -47,12 +58,22 @@ function App() {
     });
     const offGoalUpd = EventsOn("bus.goal_updated", () => refreshGoals());
     const offIssue = EventsOn("bus.issue_added", () => refreshIssues(selectedWorkspace ?? ""));
+    const offPlanReady = EventsOn(
+      "bus.plan_ready",
+      (data: { workspace_id: string; issue_number: number; revision: number }) => {
+        refreshIssues(selectedWorkspace ?? "");
+        setPlanTarget({ workspace_id: data.workspace_id, number: data.issue_number });
+      },
+    );
+    const offPlanApproved = EventsOn("bus.plan_approved", () => refreshIssues(selectedWorkspace ?? ""));
     return () => {
       if (typeof offLine === "function") offLine();
       if (typeof offState === "function") offState();
       if (typeof offGoal === "function") offGoal();
       if (typeof offGoalUpd === "function") offGoalUpd();
       if (typeof offIssue === "function") offIssue();
+      if (typeof offPlanReady === "function") offPlanReady();
+      if (typeof offPlanApproved === "function") offPlanApproved();
     };
   }, [appendLine, setMeta, refreshWorkspaces, refreshGoals, refreshIssues, selectedWorkspace]);
 
@@ -148,7 +169,11 @@ function App() {
         <AddIssueQuick />
       </div>
       <main className="flex-1 overflow-hidden pt-3">
-        <Board onCardClick={() => setPlanOpen(true)} />
+        <Board
+          onCardClick={(iss) =>
+            setPlanTarget({ workspace_id: iss.workspace_id, number: iss.number })
+          }
+        />
       </main>
       <footer className="px-4 py-2 border-t border-slate-800 text-xs text-slate-500">
         Worker pool: 0/2 active
@@ -156,7 +181,11 @@ function App() {
 
       <SessionDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <Settings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      <PlanModal open={planOpen} onClose={() => setPlanOpen(false)} />
+      <PlanModal
+        open={planTarget !== null}
+        onClose={() => setPlanTarget(null)}
+        issue={planIssue}
+      />
     </div>
   );
 }
