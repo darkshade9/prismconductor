@@ -11,6 +11,20 @@ export function emptyAnswers(): AnswerState {
   return { single: {}, multi: {} };
 }
 
+export function initialAnswers(questions: types.Question[]): AnswerState {
+  const state = emptyAnswers();
+  for (const q of questions) {
+    const def = q.default ?? null;
+    if (!def) continue;
+    if (q.type === "multi_choice") {
+      state.multi[q.id] = [def];
+    } else {
+      state.single[q.id] = def;
+    }
+  }
+  return state;
+}
+
 // Many planner outputs cram the prompt + every option into the question text
 // ("A) thing... B) other thing..."), then send `options: ["A","B","C"]` —
 // useless without the prompt. Detect that pattern and pull each option's
@@ -78,6 +92,14 @@ export function QuestionForm({
               <div className="flex-1 prose prose-sm prose-invert max-w-none prose-p:my-0 prose-code:text-amber-200 prose-code:bg-slate-950 prose-code:px-1 prose-code:rounded prose-code:before:content-[''] prose-code:after:content-['']">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{prompt}</ReactMarkdown>
               </div>
+              {q.required && !q.default && (
+                <span
+                  className="text-[10px] uppercase tracking-wide text-amber-400 whitespace-nowrap"
+                  title="Planner did not provide a recommendation for this question"
+                >
+                  ⚠ no recommendation
+                </span>
+              )}
               {q.required && <span className="text-red-400 text-xs">*</span>}
             </div>
 
@@ -88,6 +110,7 @@ export function QuestionForm({
                     q.type === "multi_choice"
                       ? (state.multi[q.id] ?? []).includes(opt.id)
                       : state.single[q.id] === opt.id;
+                  const recommended = q.default === opt.id;
                   return (
                     <label
                       key={opt.id}
@@ -114,9 +137,19 @@ export function QuestionForm({
                         {opt.id !== opt.label && (
                           <span className="text-xs font-mono text-slate-500 mr-2">{opt.id})</span>
                         )}
-                        <span className="text-sm text-slate-200 whitespace-pre-wrap break-words">
+                        <span
+                          className={
+                            "text-sm whitespace-pre-wrap break-words " +
+                            (recommended ? "text-emerald-300 font-bold" : "text-slate-200")
+                          }
+                        >
                           {opt.label}
                         </span>
+                        {recommended && (
+                          <span className="ml-2 text-[10px] uppercase tracking-wide text-emerald-400 whitespace-nowrap">
+                            ★ recommended
+                          </span>
+                        )}
                       </div>
                     </label>
                   );
@@ -125,18 +158,30 @@ export function QuestionForm({
             )}
 
             {q.type === "free_text" && (
-              <textarea
-                value={state.single[q.id] ?? ""}
-                onChange={(e) => setSingle(q.id, e.target.value)}
-                rows={3}
-                className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm text-slate-200 mt-2"
-              />
+              <>
+                <textarea
+                  value={state.single[q.id] ?? ""}
+                  onChange={(e) => setSingle(q.id, e.target.value)}
+                  rows={3}
+                  className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm text-slate-200 mt-2"
+                />
+                {q.default && state.single[q.id] !== q.default && (
+                  <button
+                    type="button"
+                    onClick={() => setSingle(q.id, q.default!)}
+                    className="text-xs text-emerald-400 hover:text-emerald-300 mt-1"
+                  >
+                    ↺ recommendation
+                  </button>
+                )}
+              </>
             )}
 
             {q.type === "yes_no" && (
               <div className="flex gap-2 mt-2">
                 {["yes", "no"].map((v) => {
                   const checked = state.single[q.id] === v;
+                  const recommended = q.default === v;
                   return (
                     <label
                       key={v}
@@ -154,7 +199,10 @@ export function QuestionForm({
                         checked={checked}
                         onChange={() => setSingle(q.id, v)}
                       />
-                      {v}
+                      <span className={recommended ? "text-emerald-300 font-bold" : undefined}>{v}</span>
+                      {recommended && (
+                        <span className="ml-1 text-[10px] uppercase tracking-wide text-emerald-400">★</span>
+                      )}
                     </label>
                   );
                 })}

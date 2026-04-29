@@ -35,6 +35,17 @@ Bundled by PrismConductor. Used in Bundled and Hybrid skill modes (PRISMCONDUCTO
    - Use markdown freely in `prompt` — backticks for code, bold for emphasis, inline links. The UI renders prompts as markdown.
    - Keep each option text under ~280 chars where possible. Long options (a paragraph each) signal the question should split into multiple smaller ones.
    - For yes_no questions, omit `options` (or `[]`) — the UI hardcodes "yes"/"no".
+
+   **Every question MUST set `default` to exactly one recommended answer.**
+
+   - `single_choice`: `default` is the full text of one option string — the safest / most-conventional / best-aligned-with-the-issue-body choice.
+   - `yes_no`: `default` is the literal string `"yes"` or `"no"`.
+   - `multi_choice`: `default` is the full text of **one** option (the single most-likely choice).
+   - `free_text`: `default` is a one-or-two-sentence sample answer the user can edit, accept, or replace. Never an empty string.
+
+   **One recommendation per question — always.** If you find yourself wanting to recommend more than one answer for a single question, the question's scope is too large. Split it into multiple `yes_no` questions (or smaller `single_choice` questions), each with exactly one recommendation. This applies to `multi_choice` in particular: if you'd recommend two or more options, replace the `multi_choice` question with one `yes_no` per option.
+
+   Refusing to recommend ("I'm not sure, you decide") is not allowed. If you genuinely cannot pick, the question should be split into smaller yes_no questions or removed.
 6. Write the plan to `.prismconductor/plans/<issue>-rev1.json` matching §9.1 exactly. Include the
    suggestions as the `suggested_labels` array (omit the field entirely if empty).
 7. Print `Plan written to .prismconductor/plans/<issue>-rev1.json` so the conductor's PTY parser picks it up (§10.3).
