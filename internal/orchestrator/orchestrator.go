@@ -22,12 +22,28 @@ type Store interface {
 	GetGoal(id string) (types.Goal, error)
 	DepCacheGet(workspaceID string, issueNumber int, goalID, bodyHash string) (string, bool, error)
 	DepCachePut(workspaceID string, issueNumber int, goalID, bodyHash string, payload any) error
+	MoveIssueColumn(workspaceID string, number int, column types.BoardColumn) error
 }
+
+// Pool is the slice of *workerpool.Pool we need (decoupled to break import cycles).
+type Pool interface {
+	Capacity() int
+	Active() int
+	Free() int
+	TryAcquire() bool
+	Release()
+}
+
+// SpawnPlanFunc lets the orchestrator launch a plan worker without depending
+// on the session package directly.
+type SpawnPlanFunc func(workspaceID string, issueNumber int) error
 
 type Orchestrator struct {
 	bus   *eventbus.Bus
 	llm   LLM
 	store Store
+	pool  Pool
+	spawn SpawnPlanFunc
 
 	mu      sync.Mutex
 	running bool
@@ -46,19 +62,153 @@ func (o *Orchestrator) SetStore(s Store) { o.store = s }
 // SetLLM swaps the LLM client. Used when the user changes the Ollama endpoint.
 func (o *Orchestrator) SetLLM(llm LLM) { o.llm = llm }
 
+// SetAutoPull wires the worker pool + plan-spawn callback. When called, the
+// orchestrator will auto-pull unblocked TODO items into PLAN on slot-freed
+// and agent-count-changed events (§14 Phase 5).
+func (o *Orchestrator) SetAutoPull(pool Pool, spawn SpawnPlanFunc) {
+	o.pool = pool
+	o.spawn = spawn
+}
+
 // handle is the per-event router from §8.
 func (o *Orchestrator) handle(e eventbus.Event) {
 	switch e.Type {
 	case eventbus.EvtGoalActivated:
-		go o.runRank("goal_activated")
+		go func() {
+			_ = o.runRank("goal_activated")
+			o.autoPull("goal_activated")
+		}()
 	case eventbus.EvtGoalUpdated:
 		go o.runRank("goal_updated")
 	case eventbus.EvtIssueAdded:
 		go o.runRank("issue_added")
 	case eventbus.EvtIssueClosed:
-		go o.recomputeBlocked()
+		go func() {
+			_ = o.recomputeBlocked()
+			o.autoPull("issue_closed")
+		}()
 	case eventbus.EvtIssueLabelChanged:
 		go o.runRank("issue_label_changed")
+	case eventbus.EvtWorkerSlotFreed:
+		if o.pool != nil {
+			o.pool.Release()
+		}
+		go o.autoPull("worker_slot_freed")
+	case eventbus.EvtAgentCountChanged:
+		go o.autoPull("agent_count_changed")
+	case eventbus.EvtPlanRejected:
+		// Card returned to TODO and worker slot freed by RejectPlan/Kill.
+		go o.autoPull("plan_rejected")
+	}
+}
+
+// autoPull pulls the highest-priority unblocked TODO into PLAN until the pool
+// is full. Skips workspaces with no SkillProfile mode set (impossible state,
+// but defensive). Respects manual moves implicitly: a card the user just
+// dragged into PLAN is no longer in TODO so won't be re-pulled.
+func (o *Orchestrator) autoPull(reason string) {
+	if o.pool == nil || o.spawn == nil || o.store == nil {
+		return
+	}
+	// Find the active goal's scope (workspace).
+	goals, err := o.store.ListGoals()
+	if err != nil {
+		return
+	}
+	var active *types.Goal
+	for i := range goals {
+		if goals[i].Status == types.GoalActive {
+			active = &goals[i]
+			break
+		}
+	}
+	if active == nil {
+		// No active goal; auto-pull is goal-driven only (§8 wait-for-active-goal).
+		return
+	}
+
+	scope := active.WorkspaceID
+	all, err := o.store.ListIssues(scope)
+	if err != nil {
+		return
+	}
+	candidates := goalfilter.Apply(active.IssueFilter, openIssues(all))
+	// Order by priority desc, with blocked items last.
+	sortByOrchestratorPriority(candidates)
+
+	for o.pool.Free() > 0 {
+		next := pickNextUnblocked(candidates, all)
+		if next == nil {
+			return
+		}
+		// Reserve the slot before spawning.
+		if !o.pool.TryAcquire() {
+			return
+		}
+		if err := o.store.MoveIssueColumn(next.WorkspaceID, next.Number, types.ColPlan); err != nil {
+			o.pool.Release()
+			return
+		}
+		if err := o.spawn(next.WorkspaceID, next.Number); err != nil {
+			o.pool.Release()
+			log.Printf("orchestrator: auto-pull spawn failed (reason=%s, issue=#%d): %v", reason, next.Number, err)
+			return
+		}
+		// Remove the just-pulled item from the candidate list so the next loop
+		// iteration picks something else.
+		for i, c := range candidates {
+			if c.Number == next.Number && c.WorkspaceID == next.WorkspaceID {
+				candidates = append(candidates[:i], candidates[i+1:]...)
+				break
+			}
+		}
+	}
+}
+
+// pickNextUnblocked returns the first candidate currently in TODO with no
+// open dependencies, or nil. `all` is the full universe used to check whether
+// dependency issues are still open.
+func pickNextUnblocked(candidates []types.Issue, all []types.Issue) *types.Issue {
+	openSet := map[int]bool{}
+	for _, iss := range all {
+		if iss.State == "" || iss.State == "open" {
+			openSet[iss.Number] = true
+		}
+	}
+	for i := range candidates {
+		c := &candidates[i]
+		if c.Column != types.ColTodo {
+			continue
+		}
+		blocked := false
+		for _, dep := range c.Dependencies {
+			if openSet[dep] {
+				blocked = true
+				break
+			}
+		}
+		if blocked {
+			continue
+		}
+		return c
+	}
+	return nil
+}
+
+func sortByOrchestratorPriority(in []types.Issue) {
+	// Stable sort by priority desc, then number asc.
+	for i := 1; i < len(in); i++ {
+		j := i
+		for j > 0 {
+			prev := in[j-1]
+			cur := in[j]
+			if cur.Priority > prev.Priority || (cur.Priority == prev.Priority && cur.Number < prev.Number) {
+				in[j-1], in[j] = in[j], in[j-1]
+				j--
+			} else {
+				break
+			}
+		}
 	}
 }
 

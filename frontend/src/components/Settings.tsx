@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { WorkspacesPanel } from "./WorkspacesPanel";
 import { OllamaPanel } from "./OllamaPanel";
+import { BundledSkillsViewer } from "./BundledSkillsViewer";
+import { WorkerPoolPanel } from "./WorkerPoolPanel";
 
-type Tab = "workspaces" | "agents" | "ollama" | "notify";
+type Tab = "workspaces" | "agents" | "ollama" | "skills" | "notify";
 
 export function Settings({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [tab, setTab] = useState<Tab>("workspaces");
   if (!open) return null;
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-      <div className="w-[680px] max-h-[80vh] bg-slate-900 border border-slate-700 rounded-lg flex flex-col overflow-hidden">
+      <div className="w-[760px] max-h-[80vh] bg-slate-900 border border-slate-700 rounded-lg flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800">
           <div className="text-slate-200">Settings</div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-200">✕</button>
@@ -21,6 +23,7 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
                 ["workspaces", "Workspaces"],
                 ["agents", "Worker pool"],
                 ["ollama", "Ollama"],
+                ["skills", "Bundled skills"],
                 ["notify", "Notifications"],
               ] as [Tab, string][]
             ).map(([k, label]) => (
@@ -38,8 +41,9 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
           </nav>
           <div className="flex-1 p-4 overflow-y-auto">
             {tab === "workspaces" && <WorkspacesPanel />}
-            {tab === "agents" && <Stub label="Worker pool capacity (1-5) — Phase 5" />}
+            {tab === "agents" && <WorkerPoolPanel />}
             {tab === "ollama" && <OllamaPanel />}
+            {tab === "skills" && <BundledSkillsViewer />}
             {tab === "notify" && <Stub label="Notification preferences — Phase 1 Day 7" />}
           </div>
         </div>

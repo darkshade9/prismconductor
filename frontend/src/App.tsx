@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { EventsOn } from "../wailsjs/runtime/runtime";
-import { ListSessions, SpawnDemo, SpawnPlanForIssue } from "../wailsjs/go/main/App";
+import { GetWorkerPoolStatus, ListSessions, SpawnDemo, SpawnPlanForIssue } from "../wailsjs/go/main/App";
 import { types } from "../wailsjs/go/models";
 import { useSessionStore } from "./stores/sessionStore";
 import { useWorkspaceStore } from "./stores/workspaceStore";
@@ -26,6 +26,7 @@ function App() {
   const refreshIssues = useIssueStore((s) => s.refresh);
   const refreshGoals = useGoalStore((s) => s.refresh);
   const issues = useIssueStore((s) => s.issues);
+  const [poolStatus, setPoolStatus] = useState({ active: 0, capacity: 2 });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [planTarget, setPlanTarget] = useState<PlanTarget>(null);
@@ -66,6 +67,11 @@ function App() {
       },
     );
     const offPlanApproved = EventsOn("bus.plan_approved", () => refreshIssues(selectedWorkspace ?? ""));
+    const refreshPool = () => GetWorkerPoolStatus().then(setPoolStatus).catch(() => {});
+    refreshPool();
+    const offPoolFreed = EventsOn("bus.worker_slot_freed", refreshPool);
+    const offPoolChanged = EventsOn("bus.agent_count_changed", refreshPool);
+    const offPoolState = EventsOn("session.state", refreshPool);
     return () => {
       if (typeof offLine === "function") offLine();
       if (typeof offState === "function") offState();
@@ -74,6 +80,9 @@ function App() {
       if (typeof offIssue === "function") offIssue();
       if (typeof offPlanReady === "function") offPlanReady();
       if (typeof offPlanApproved === "function") offPlanApproved();
+      if (typeof offPoolFreed === "function") offPoolFreed();
+      if (typeof offPoolChanged === "function") offPoolChanged();
+      if (typeof offPoolState === "function") offPoolState();
     };
   }, [appendLine, setMeta, refreshWorkspaces, refreshGoals, refreshIssues, selectedWorkspace]);
 
@@ -176,7 +185,7 @@ function App() {
         />
       </main>
       <footer className="px-4 py-2 border-t border-slate-800 text-xs text-slate-500">
-        Worker pool: 0/2 active
+        Worker pool: {poolStatus.active}/{poolStatus.capacity} active
       </footer>
 
       <SessionDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />

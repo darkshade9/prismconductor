@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -80,6 +81,11 @@ func (a *App) startup(ctx context.Context) {
 		if m, _ := a.store.GetSetting("ollama_model"); m != "" {
 			a.llm.Model = m
 		}
+		if c, _ := a.store.GetSetting("worker_pool_capacity"); c != "" {
+			if n, err := strconv.Atoi(c); err == nil && n > 0 {
+				a.pool.SetCapacity(n)
+			}
+		}
 	}
 	if r, err := workspace.New(cfgDir); err != nil {
 		fmt.Fprintf(os.Stderr, "workspace registry: %v\n", err)
@@ -91,9 +97,18 @@ func (a *App) startup(ctx context.Context) {
 	a.mgr.Configure(filepath.Join(cfgDir, "transcripts"), a.store, a.handleSessionStateChange)
 	a.mgr.SetOnPlanReady(a.handlePlanReady)
 
-	// Hook the orchestrator up to the store now that both exist.
+	// Hook the orchestrator up to the store + pool + spawn callback now that
+	// every dependency exists.
 	if a.store != nil {
 		a.orch.SetStore(a.store)
+		a.orch.SetAutoPull(a.pool, func(workspaceID string, issueNumber int) error {
+			ws, ok := a.wsReg.Get(workspaceID)
+			if !ok {
+				return fmt.Errorf("unknown workspace %q", workspaceID)
+			}
+			_, err := a.mgr.SpawnPlan(ws, types.Issue{Number: issueNumber, WorkspaceID: workspaceID})
+			return err
+		})
 
 		// Persist every event for debugging + Phase 7 transcript pattern detector.
 		a.bus.Subscribe(func(e eventbus.Event) {
@@ -366,6 +381,86 @@ func (a *App) AddManualIssue(workspaceID string, number int, title, body string,
 		"number":       number,
 	})
 	return &iss, nil
+}
+
+// --- Worker pool (§14 Phase 5) ---
+
+// WorkerPoolStatus is the user-visible pool state.
+type WorkerPoolStatus struct {
+	Capacity int `json:"capacity"`
+	Active   int `json:"active"`
+}
+
+// GetWorkerPoolStatus returns capacity + currently active worker count.
+func (a *App) GetWorkerPoolStatus() WorkerPoolStatus {
+	return WorkerPoolStatus{
+		Capacity: a.pool.Capacity(),
+		Active:   a.pool.Active(),
+	}
+}
+
+// SetWorkerPoolCapacity updates the pool. Persists across restarts. On
+// increase, publishes EvtAgentCountChanged so the orchestrator can pull more.
+func (a *App) SetWorkerPoolCapacity(n int) error {
+	if n < 1 {
+		n = 1
+	}
+	if n > 10 {
+		n = 10
+	}
+	prev := a.pool.Capacity()
+	a.pool.SetCapacity(n)
+	if a.store != nil {
+		_ = a.store.SetSetting("worker_pool_capacity", strconv.Itoa(n))
+	}
+	a.bus.Publish(eventbus.EvtAgentCountChanged, map[string]any{"prev": prev, "new": n})
+	return nil
+}
+
+// --- Bundled skills (§15.7) ---
+
+// BundledSkill is the read-only view of an extracted skill on disk.
+type BundledSkill struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Body string `json:"body"`
+}
+
+// ListBundledSkills returns the four universal skills extracted on first run.
+// The frontend uses this for the read-only viewer + "Open in editor" link.
+func (a *App) ListBundledSkills() ([]BundledSkill, error) {
+	dir := filepath.Join(a.cfgDir, "skills")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var out []BundledSkill
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".md" {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		b, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		out = append(out, BundledSkill{
+			Name: e.Name()[:len(e.Name())-3],
+			Path: path,
+			Body: string(b),
+		})
+	}
+	return out, nil
+}
+
+// OpenBundledSkill opens the on-disk skill markdown in the user's default editor.
+func (a *App) OpenBundledSkill(name string) error {
+	path := filepath.Join(a.cfgDir, "skills", name+".md")
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	wruntime.BrowserOpenURL(a.ctx, "file://"+path)
+	return nil
 }
 
 // --- Plans + Q&A loop (§9, §10) ---

@@ -30,6 +30,10 @@ export function GetOllamaConfig() {
   return window['go']['main']['App']['GetOllamaConfig']();
 }
 
+export function GetWorkerPoolStatus() {
+  return window['go']['main']['App']['GetWorkerPoolStatus']();
+}
+
 export function GitHubAuthStatus() {
   return window['go']['main']['App']['GitHubAuthStatus']();
 }
@@ -62,6 +66,10 @@ export function LatestPlan(arg1, arg2) {
   return window['go']['main']['App']['LatestPlan'](arg1, arg2);
 }
 
+export function ListBundledSkills() {
+  return window['go']['main']['App']['ListBundledSkills']();
+}
+
 export function ListGoals() {
   return window['go']['main']['App']['ListGoals']();
 }
@@ -92,6 +100,10 @@ export function Notify(arg1, arg2) {
 
 export function OnboardCheck(arg1) {
   return window['go']['main']['App']['OnboardCheck'](arg1);
+}
+
+export function OpenBundledSkill(arg1) {
+  return window['go']['main']['App']['OpenBundledSkill'](arg1);
 }
 
 export function PickRepoPath() {
@@ -136,6 +148,10 @@ export function SetGoalStatus(arg1, arg2) {
 
 export function SetOllamaConfig(arg1) {
   return window['go']['main']['App']['SetOllamaConfig'](arg1);
+}
+
+export function SetWorkerPoolCapacity(arg1) {
+  return window['go']['main']['App']['SetWorkerPoolCapacity'](arg1);
 }
 
 export function SpawnDemo() {

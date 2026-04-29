@@ -805,6 +805,22 @@ export namespace main {
 	        this.multi = source["multi"];
 	    }
 	}
+	export class BundledSkill {
+	    name: string;
+	    path: string;
+	    body: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BundledSkill(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.path = source["path"];
+	        this.body = source["body"];
+	    }
+	}
 	export class OllamaConfig {
 	    url: string;
 	    model: string;
@@ -819,6 +835,20 @@ export namespace main {
 	        this.url = source["url"];
 	        this.model = source["model"];
 	        this.available = source["available"];
+	    }
+	}
+	export class WorkerPoolStatus {
+	    capacity: number;
+	    active: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkerPoolStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.capacity = source["capacity"];
+	        this.active = source["active"];
 	    }
 	}
 
