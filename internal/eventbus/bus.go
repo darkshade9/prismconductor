@@ -27,6 +27,7 @@ const (
 	EvtAgentCountChanged EventType = "agent_count_changed"
 	EvtLabelsUpdated     EventType = "labels_updated"
 	EvtAutoPullPausedChanged EventType = "auto_pull_paused_changed"
+	EvtIssuesArchived        EventType = "issues_archived"
 )
 
 type Event struct {

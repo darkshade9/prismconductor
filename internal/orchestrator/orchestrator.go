@@ -18,7 +18,7 @@ import (
 // Store is the slice of *store.Store we need.
 type Store interface {
 	ListIssues(workspaceID string) ([]types.Issue, error)
-	SaveIssue(iss types.Issue) error
+	SaveIssue(iss types.Issue) (bool, error)
 	ListGoals() ([]types.Goal, error)
 	GetGoal(id string) (types.Goal, error)
 	DepCacheGet(workspaceID string, issueNumber int, goalID, bodyHash string) (string, bool, error)
@@ -461,7 +461,7 @@ func (o *Orchestrator) applyResult(goal types.Goal, candidates []types.Issue, re
 			updated.Dependencies = nil
 			updated.DepRationale = ""
 		}
-		if err := o.store.SaveIssue(updated); err != nil {
+		if _, err := o.store.SaveIssue(updated); err != nil {
 			return err
 		}
 
@@ -505,7 +505,7 @@ func (o *Orchestrator) recomputeBlocked() error {
 		if len(stillOpen) != len(iss.Dependencies) {
 			updated := iss
 			updated.Dependencies = stillOpen
-			_ = o.store.SaveIssue(updated)
+			_, _ = o.store.SaveIssue(updated)
 		}
 	}
 	return nil

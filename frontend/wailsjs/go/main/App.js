@@ -18,6 +18,10 @@ export function ApprovePlan(arg1, arg2, arg3) {
   return window['go']['main']['App']['ApprovePlan'](arg1, arg2, arg3);
 }
 
+export function ArchiveDone(arg1) {
+  return window['go']['main']['App']['ArchiveDone'](arg1);
+}
+
 export function CreateLabel(arg1, arg2) {
   return window['go']['main']['App']['CreateLabel'](arg1, arg2);
 }
@@ -88,6 +92,10 @@ export function KillSession(arg1) {
 
 export function LatestPlan(arg1, arg2) {
   return window['go']['main']['App']['LatestPlan'](arg1, arg2);
+}
+
+export function ListArchivedIssues(arg1) {
+  return window['go']['main']['App']['ListArchivedIssues'](arg1);
 }
 
 export function ListBundledSkills() {
@@ -224,6 +232,14 @@ export function SpawnPlanForIssue(arg1, arg2) {
 
 export function SubmitAnswers(arg1) {
   return window['go']['main']['App']['SubmitAnswers'](arg1);
+}
+
+export function UnarchiveAll(arg1) {
+  return window['go']['main']['App']['UnarchiveAll'](arg1);
+}
+
+export function UnarchiveIssue(arg1, arg2) {
+  return window['go']['main']['App']['UnarchiveIssue'](arg1, arg2);
 }
 
 export function UpdateLabel(arg1, arg2, arg3) {

@@ -1155,6 +1155,8 @@ export namespace types {
 	    last_error?: string;
 	    pr_number?: number;
 	    pr_url?: string;
+	    // Go type: time
+	    archived_at?: any;
 	
 	    static createFrom(source: any = {}) {
 	        return new Issue(source);
@@ -1180,6 +1182,7 @@ export namespace types {
 	        this.last_error = source["last_error"];
 	        this.pr_number = source["pr_number"];
 	        this.pr_url = source["pr_url"];
+	        this.archived_at = this.convertValues(source["archived_at"], null);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

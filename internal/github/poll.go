@@ -14,7 +14,7 @@ import (
 // Store is the slice of *store.Store the poller needs.
 type Store interface {
 	ListIssues(workspaceID string) ([]types.Issue, error)
-	SaveIssue(iss types.Issue) error
+	SaveIssue(iss types.Issue) (bool, error)
 	MarkIssueClosed(workspaceID string, number int) error
 	MarkPRMerged(workspaceID string, number int) error
 	MarkPRClosedUnmerged(workspaceID string, number int) error
@@ -154,9 +154,15 @@ func (p *Poller) pollOne(ctx context.Context, ws types.Workspace) error {
 		old, hadOld := prevByNum[fr.Number]
 		// SaveIssue preserves existing column_name + manual_order — see
 		// internal/store/issues.go. So a poll won't trample a user's drag.
-		if err := p.Store.SaveIssue(fr); err != nil {
+		// unarchived=true when an archived row was just cleared because the
+		// fresh row's state == "open" (#34 q2 auto-unarchive on reopen).
+		unarchived, err := p.Store.SaveIssue(fr)
+		if err != nil {
 			log.Printf("save issue %s#%d: %v", ws.ID, fr.Number, err)
 			continue
+		}
+		if unarchived {
+			p.publish(eventbus.EvtIssuesArchived, ws, fr)
 		}
 		if !hadOld {
 			p.publish(eventbus.EvtIssueAdded, ws, fr)

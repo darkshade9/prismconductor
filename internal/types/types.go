@@ -107,6 +107,7 @@ type Issue struct {
 	LastError    string      `json:"last_error,omitempty"`
 	PRNumber     *int        `json:"pr_number,omitempty"`
 	PRURL        string      `json:"pr_url,omitempty"`
+	ArchivedAt   *time.Time  `json:"archived_at,omitempty"`
 }
 
 type BoardColumn string

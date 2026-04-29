@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { EventsOn } from "../wailsjs/runtime/runtime";
 import {
   GetAutoPullPaused,
   GetWorkerPoolStatus,
+  ListArchivedIssues,
   ListPendingPlans,
   ListSessions,
   RefreshIssuesNow,
@@ -20,8 +21,9 @@ import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { SessionDrawer } from "./components/SessionDrawer";
 import { Settings } from "./components/Settings";
 import { PlanModal } from "./components/PlanModal";
+import { ArchivedDrawer } from "./components/ArchivedDrawer";
 import { AddIssueQuick } from "./components/AddIssueQuick";
-import { useIssueStore } from "./stores/issueStore";
+import { useArchivedStore, useIssueStore } from "./stores/issueStore";
 import { useGoalStore } from "./stores/goalStore";
 import { usePlanReadyStore } from "./stores/planReadyStore";
 import { useLabelsStore } from "./stores/labelsStore";
@@ -54,6 +56,22 @@ function App() {
   }, [issues, planTarget]);
   const [busy, setBusy] = useState(false);
   const [issueInput, setIssueInput] = useState("");
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [archivedCount, setArchivedCount] = useState(0);
+  const refreshArchived = useArchivedStore((s) => s.refresh);
+
+  const refreshArchivedCount = useCallback(async () => {
+    try {
+      const list = await ListArchivedIssues(selectedWorkspace ?? "");
+      setArchivedCount(list?.length ?? 0);
+    } catch {
+      setArchivedCount(0);
+    }
+  }, [selectedWorkspace]);
+
+  useEffect(() => {
+    refreshArchivedCount();
+  }, [refreshArchivedCount]);
 
   useEffect(() => {
     refreshWorkspaces();
@@ -147,6 +165,11 @@ function App() {
       "bus.auto_pull_paused_changed",
       (data: { paused: boolean }) => setAutoPaused(!!data?.paused),
     );
+    const offArchived = EventsOn("bus.issues_archived", () => {
+      refreshIssues(selectedWorkspace ?? "");
+      refreshArchived(selectedWorkspace ?? "");
+      refreshArchivedCount();
+    });
     return () => {
       if (typeof offLine === "function") offLine();
       if (typeof offState === "function") offState();
@@ -169,8 +192,9 @@ function App() {
       if (typeof offGhLabel === "function") offGhLabel();
       if (typeof offLabelsUpdated === "function") offLabelsUpdated();
       if (typeof offPause === "function") offPause();
+      if (typeof offArchived === "function") offArchived();
     };
-  }, [appendLine, setMeta, refreshWorkspaces, refreshGoals, refreshIssues, markPlanReady, clearPlanReady, selectedWorkspace]);
+  }, [appendLine, setMeta, refreshWorkspaces, refreshGoals, refreshIssues, markPlanReady, clearPlanReady, selectedWorkspace, refreshArchived, refreshArchivedCount]);
 
   async function spawnDemo() {
     setBusy(true);
@@ -293,7 +317,10 @@ function App() {
           </button>
         </div>
       </header>
-      <WorkspaceSwitcher />
+      <WorkspaceSwitcher
+        archivedCount={archivedCount}
+        onOpenArchived={() => setArchivedOpen(true)}
+      />
       <GoalPane />
       <div className="px-4 py-1 border-b border-slate-800 flex items-center gap-3">
         <span className="text-xs text-slate-500">+ test issue:</span>
@@ -316,6 +343,11 @@ function App() {
         open={planTarget !== null}
         onClose={() => setPlanTarget(null)}
         issue={planIssue}
+      />
+      <ArchivedDrawer
+        open={archivedOpen}
+        onClose={() => setArchivedOpen(false)}
+        workspaceID={selectedWorkspace ?? ""}
       />
     </div>
   );

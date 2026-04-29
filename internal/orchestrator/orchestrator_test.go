@@ -20,7 +20,7 @@ func (s *stubStore) ListIssues(string) ([]types.Issue, error) {
 	s.listIssuesHits++
 	return s.issues, nil
 }
-func (s *stubStore) SaveIssue(types.Issue) error { return nil }
+func (s *stubStore) SaveIssue(types.Issue) (bool, error) { return false, nil }
 func (s *stubStore) ListGoals() ([]types.Goal, error) {
 	s.listGoalsHits++
 	return s.goals, nil

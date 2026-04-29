@@ -2,7 +2,13 @@ import { useEffect, useState } from "react";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { LabelsModal } from "./LabelsModal";
 
-export function WorkspaceSwitcher() {
+export function WorkspaceSwitcher({
+  archivedCount = 0,
+  onOpenArchived,
+}: {
+  archivedCount?: number;
+  onOpenArchived?: () => void;
+}) {
   const { workspaces, selectedID, setSelected, refresh, loading } = useWorkspaceStore();
   const [labelsOpen, setLabelsOpen] = useState(false);
   const labelsTarget = selectedID ?? workspaces[0]?.id ?? "";
@@ -50,6 +56,21 @@ export function WorkspaceSwitcher() {
           title="Manage labels for the active workspace"
         >
           🏷  Manage labels
+        </button>
+      )}
+      {onOpenArchived && (
+        <button
+          onClick={onOpenArchived}
+          className={
+            "px-2 py-0.5 rounded border text-xs " +
+            (labelsTarget ? "" : "ml-auto ") +
+            (archivedCount > 0
+              ? "border-slate-700 text-slate-300 hover:text-slate-100 hover:border-slate-500"
+              : "border-slate-800 text-slate-600 hover:text-slate-400")
+          }
+          title="Show archived issues"
+        >
+          🗄 Archived ({archivedCount})
         </button>
       )}
       <LabelsModal
