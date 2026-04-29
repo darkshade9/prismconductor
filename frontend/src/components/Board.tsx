@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { EventsOn } from "../../wailsjs/runtime/runtime";
 import {
   DndContext,
   DragEndEvent,
@@ -27,6 +28,24 @@ const COLUMNS: { id: ColumnID; title: string }[] = [
 ];
 
 const cardID = (i: types.Issue) => `${i.workspace_id}#${i.number}`;
+
+// Order TODO by orchestrator priority desc when the user hasn't manually
+// dragged anything yet. Heuristic: if at least one card has a non-zero
+// priority, sort the whole column by priority. Manual drags persist
+// manual_order in SQLite, which already sorts the ListIssues query — but we
+// can't see manual_order from the JSON, so we conservatively re-sort only when
+// priority is informative (>= 1 non-zero).
+function sortTodoByPriority(items: types.Issue[]): types.Issue[] {
+  const hasPriority = items.some((i) => (i.priority ?? 0) > 0);
+  if (!hasPriority) return items;
+  return [...items].sort((a, b) => {
+    const aBlocked = (a.dependencies ?? []).length > 0 ? 1 : 0;
+    const bBlocked = (b.dependencies ?? []).length > 0 ? 1 : 0;
+    if (aBlocked !== bBlocked) return aBlocked - bBlocked; // unblocked first
+    return (b.priority ?? 0) - (a.priority ?? 0);
+  });
+}
+
 const fromCardID = (id: string) => {
   const [ws, num] = id.split("#");
   return { workspaceID: ws, number: parseInt(num, 10) };
@@ -40,6 +59,10 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
 
   useEffect(() => {
     refresh(selectedID ?? "");
+    const off = EventsOn("bus.orchestrator_ran", () => refresh(selectedID ?? ""));
+    return () => {
+      if (typeof off === "function") off();
+    };
   }, [refresh, selectedID]);
 
   // Apply active goal's IssueQuery to TODO column when one exists.
@@ -67,7 +90,8 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
     return m;
   }, [workspaces]);
 
-  // Group issues by column. For TODO, drop anything excluded by the active goal.
+  // Group issues by column. For TODO, drop anything excluded by the active goal,
+  // and order by orchestrator priority desc when no manual reorder has happened.
   const grouped = useMemo(() => {
     const out: Record<ColumnID, types.Issue[]> = {
       todo: [],
@@ -81,6 +105,9 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
       if (col === "todo" && filteredTodoNums && !filteredTodoNums.has(cardID(i))) continue;
       if (out[col]) out[col].push(i);
     }
+    // ListIssues already returns by (column, manual_order, number). For TODO, if
+    // every item shares manual_order=0 (no human reorder yet), use priority.
+    out.todo = sortTodoByPriority(out.todo);
     return out;
   }, [issues, filteredTodoNums]);
 

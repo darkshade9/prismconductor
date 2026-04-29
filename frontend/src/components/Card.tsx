@@ -23,6 +23,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   };
 
   const blocked = (issue.dependencies ?? []).length > 0;
+  const isPrimitive = !blocked && (issue.priority ?? 0) >= 0.7;
 
   return (
     <div
@@ -51,6 +52,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
       </div>
       <div className="text-sm text-slate-100 mt-1 line-clamp-2">{issue.title}</div>
       <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-2">
+        {isPrimitive && <span className="text-emerald-400">🔴 primitive</span>}
         {blocked && (
           <span className="text-amber-300">
             🚫 blocked by {issue.dependencies?.map((n) => `#${n}`).join(", ")}

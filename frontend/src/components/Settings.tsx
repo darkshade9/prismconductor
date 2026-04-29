@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { WorkspacesPanel } from "./WorkspacesPanel";
+import { OllamaPanel } from "./OllamaPanel";
 
 type Tab = "workspaces" | "agents" | "ollama" | "notify";
 
@@ -38,7 +39,7 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
           <div className="flex-1 p-4 overflow-y-auto">
             {tab === "workspaces" && <WorkspacesPanel />}
             {tab === "agents" && <Stub label="Worker pool capacity (1-5) — Phase 5" />}
-            {tab === "ollama" && <Stub label="Ollama URL / model — Phase 3" />}
+            {tab === "ollama" && <OllamaPanel />}
             {tab === "notify" && <Stub label="Notification preferences — Phase 1 Day 7" />}
           </div>
         </div>

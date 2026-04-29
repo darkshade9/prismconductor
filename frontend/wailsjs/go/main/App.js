@@ -22,6 +22,10 @@ export function FilterIssuesByActiveGoal(arg1) {
   return window['go']['main']['App']['FilterIssuesByActiveGoal'](arg1);
 }
 
+export function GetOllamaConfig() {
+  return window['go']['main']['App']['GetOllamaConfig']();
+}
+
 export function GitHubAuthStatus() {
   return window['go']['main']['App']['GitHubAuthStatus']();
 }
@@ -98,6 +102,10 @@ export function ReorderIssues(arg1, arg2, arg3) {
   return window['go']['main']['App']['ReorderIssues'](arg1, arg2, arg3);
 }
 
+export function RunOrchestrator() {
+  return window['go']['main']['App']['RunOrchestrator']();
+}
+
 export function SaveGoal(arg1) {
   return window['go']['main']['App']['SaveGoal'](arg1);
 }
@@ -108,6 +116,10 @@ export function SendInput(arg1, arg2) {
 
 export function SetGoalStatus(arg1, arg2) {
   return window['go']['main']['App']['SetGoalStatus'](arg1, arg2);
+}
+
+export function SetOllamaConfig(arg1) {
+  return window['go']['main']['App']['SetOllamaConfig'](arg1);
 }
 
 export function SpawnDemo() {

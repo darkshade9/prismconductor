@@ -783,6 +783,27 @@ export namespace githubauth {
 
 }
 
+export namespace main {
+	
+	export class OllamaConfig {
+	    url: string;
+	    model: string;
+	    available: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new OllamaConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.url = source["url"];
+	        this.model = source["model"];
+	        this.available = source["available"];
+	    }
+	}
+
+}
+
 export namespace types {
 	
 	export class ConventionHints {

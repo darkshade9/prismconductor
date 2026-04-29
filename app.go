@@ -71,6 +71,14 @@ func (a *App) startup(ctx context.Context) {
 		fmt.Fprintf(os.Stderr, "store open: %v\n", err)
 	} else {
 		a.store = s
+		_ = a.store.EnsureDepCacheTable()
+		// Apply persisted Ollama settings if present.
+		if u, _ := a.store.GetSetting("ollama_url"); u != "" {
+			a.llm.URL = u
+		}
+		if m, _ := a.store.GetSetting("ollama_model"); m != "" {
+			a.llm.Model = m
+		}
 	}
 	if r, err := workspace.New(cfgDir); err != nil {
 		fmt.Fprintf(os.Stderr, "workspace registry: %v\n", err)
@@ -81,8 +89,11 @@ func (a *App) startup(ctx context.Context) {
 	a.mgr = session.NewManager(a.bus, a.emitLine)
 	a.mgr.Configure(filepath.Join(cfgDir, "transcripts"), a.store, a.handleSessionStateChange)
 
-	// Persist every event for debugging + Phase 7 transcript pattern detector.
+	// Hook the orchestrator up to the store now that both exist.
 	if a.store != nil {
+		a.orch.SetStore(a.store)
+
+		// Persist every event for debugging + Phase 7 transcript pattern detector.
 		a.bus.Subscribe(func(e eventbus.Event) {
 			_ = a.store.LogEvent(string(e.Type), e.Payload)
 			wruntime.EventsEmit(a.ctx, "bus."+string(e.Type), e.Payload)
@@ -354,6 +365,46 @@ func (a *App) AddManualIssue(workspaceID string, number int, title, body string,
 	})
 	return &iss, nil
 }
+
+// --- Orchestrator + Ollama ---
+
+// OllamaConfig is the user-visible Ollama settings.
+type OllamaConfig struct {
+	URL       string `json:"url"`
+	Model     string `json:"model"`
+	Available bool   `json:"available"`
+}
+
+// GetOllamaConfig returns the current settings + a presence check against the
+// configured endpoint.
+func (a *App) GetOllamaConfig() OllamaConfig {
+	cfg := OllamaConfig{URL: a.llm.URL, Model: a.llm.Model}
+	if ok, err := a.llm.Available(a.ctx); err == nil {
+		cfg.Available = ok
+	}
+	return cfg
+}
+
+// SetOllamaConfig persists the user's URL/model picks.
+func (a *App) SetOllamaConfig(cfg OllamaConfig) error {
+	if cfg.URL == "" {
+		cfg.URL = ollama.DefaultURL
+	}
+	if cfg.Model == "" {
+		cfg.Model = ollama.DefaultModel
+	}
+	a.llm.URL = cfg.URL
+	a.llm.Model = cfg.Model
+	a.orch.SetLLM(a.llm)
+	if a.store != nil {
+		_ = a.store.SetSetting("ollama_url", cfg.URL)
+		_ = a.store.SetSetting("ollama_model", cfg.Model)
+	}
+	return nil
+}
+
+// RunOrchestrator triggers an immediate rank pass against the active goal.
+func (a *App) RunOrchestrator() error { return a.orch.RunNow() }
 
 // FilterIssuesByActiveGoal applies the active goal's IssueQuery to the given
 // issue list. Returns the unfiltered list if no active goal.
