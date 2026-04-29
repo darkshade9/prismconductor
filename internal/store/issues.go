@@ -21,13 +21,27 @@ func (s *Store) SaveIssue(iss types.Issue) error {
 	}
 
 	// Look up existing column + manual_order so a poll-driven re-save doesn't
-	// nuke the user's drag-and-drop placement.
+	// nuke the user's drag-and-drop placement. Also pull the prior JSON so we
+	// can preserve conductor-managed scalars (pr_number / pr_url) that the
+	// fresh GitHub fetch knows nothing about.
 	var existingCol sql.NullString
 	var existingOrder sql.NullInt64
-	row := s.DB.QueryRow(`SELECT column_name, manual_order FROM issues WHERE workspace_id = ? AND number = ?`, iss.WorkspaceID, iss.Number)
-	_ = row.Scan(&existingCol, &existingOrder)
+	var existingJSON sql.NullString
+	row := s.DB.QueryRow(`SELECT column_name, manual_order, json FROM issues WHERE workspace_id = ? AND number = ?`, iss.WorkspaceID, iss.Number)
+	_ = row.Scan(&existingCol, &existingOrder, &existingJSON)
 	if existingCol.Valid {
 		col = types.BoardColumn(existingCol.String)
+	}
+	if existingJSON.Valid {
+		var prev types.Issue
+		if err := json.Unmarshal([]byte(existingJSON.String), &prev); err == nil {
+			if prev.PRNumber != nil {
+				iss.PRNumber = prev.PRNumber
+			}
+			if prev.PRURL != "" {
+				iss.PRURL = prev.PRURL
+			}
+		}
 	}
 	iss.Column = col
 
@@ -196,6 +210,50 @@ func (s *Store) ReconcileClosedIssues() (int, error) {
 		}
 	}
 	return len(todo), nil
+}
+
+// MarkPROpened persists the PR number + URL on an issue and moves the card
+// to REVIEW (bottom of column). Single transaction; bypasses SaveIssue's
+// column-preservation logic so the IN_PROGRESS→REVIEW jump survives the next
+// poll tick. Modeled on MarkIssueClosed.
+func (s *Store) MarkPROpened(workspaceID string, number int, prNumber int, prURL string) error {
+	if s == nil || s.DB == nil {
+		return errors.New("store unavailable")
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var raw string
+	if err := tx.QueryRow(`SELECT json FROM issues WHERE workspace_id = ? AND number = ?`,
+		workspaceID, number).Scan(&raw); err != nil {
+		return err
+	}
+	var iss types.Issue
+	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+		return err
+	}
+	iss.PRNumber = &prNumber
+	iss.PRURL = prURL
+	iss.Column = types.ColReview
+	b, _ := json.Marshal(iss)
+
+	var maxOrder sql.NullInt64
+	if err := tx.QueryRow(
+		`SELECT COALESCE(MAX(manual_order), -1) FROM issues WHERE workspace_id = ? AND column_name = ?`,
+		workspaceID, string(types.ColReview),
+	).Scan(&maxOrder); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`UPDATE issues SET column_name = ?, manual_order = ?, json = ? WHERE workspace_id = ? AND number = ?`,
+		string(types.ColReview), maxOrder.Int64+1, string(b), workspaceID, number,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // MarkIssueClosed forces state=closed AND column=done in a single transaction,

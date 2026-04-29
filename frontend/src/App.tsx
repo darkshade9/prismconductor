@@ -98,6 +98,12 @@ function App() {
         setPlanTarget({ workspace_id: data.workspace_id, number: data.issue_number });
       },
     );
+    const offPROpened = EventsOn(
+      "bus.pr_opened",
+      (_data: { workspace_id: string; issue_number: number; pr_number: number; pr_url: string }) => {
+        refreshIssues(selectedWorkspace ?? "");
+      },
+    );
     const offPlanApproved = EventsOn(
       "bus.plan_approved",
       (data: { workspace_id: string; issue_number: number }) => {
@@ -136,6 +142,7 @@ function App() {
       if (typeof offGoalUpd === "function") offGoalUpd();
       if (typeof offIssue === "function") offIssue();
       if (typeof offPlanReady === "function") offPlanReady();
+      if (typeof offPROpened === "function") offPROpened();
       if (typeof offPlanApproved === "function") offPlanApproved();
       if (typeof offPlanRejected === "function") offPlanRejected();
       if (typeof offPoolFreed === "function") offPoolFreed();

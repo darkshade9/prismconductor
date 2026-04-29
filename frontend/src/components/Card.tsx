@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
 import { types } from "../../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "../stores/sessionStore";
 import { usePlanReadyStore } from "../stores/planReadyStore";
@@ -101,7 +102,24 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
           #{issue.number}
           <span className="text-slate-500 truncate">{workspaceLabel ?? issue.workspace_id}</span>
         </span>
-        {issue.priority ? <span className="text-slate-500 shrink-0">P{issue.priority.toFixed(2)}</span> : null}
+        <span className="flex items-center gap-1.5 shrink-0">
+          {/* PR chip stays visible across columns/session states (rev4 q3). */}
+          {issue.pr_number != null && issue.pr_url && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                BrowserOpenURL(issue.pr_url!);
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-700/40 text-emerald-200 border border-emerald-700 hover:bg-emerald-700/60"
+              title={`Open ${issue.pr_url}`}
+            >
+              ✓ PR #{issue.pr_number}
+            </button>
+          )}
+          {issue.priority ? <span className="text-slate-500">P{issue.priority.toFixed(2)}</span> : null}
+        </span>
       </div>
       <div className="text-sm text-slate-100 mt-1 line-clamp-2">{issue.title}</div>
 

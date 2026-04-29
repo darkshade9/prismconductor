@@ -266,6 +266,8 @@ type Issue struct {
     Plan           *Plan           `json:"plan,omitempty"`
     SessionID      *string         `json:"session_id,omitempty"`
     LastError      string          `json:"last_error,omitempty"`
+    PRNumber       *int            `json:"pr_number,omitempty"` // set when execute worker emits PR_OPENED:
+    PRURL          string          `json:"pr_url,omitempty"`    // canonical github.com/.../pull/N
 }
 
 type BoardColumn string
