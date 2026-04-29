@@ -28,6 +28,13 @@ Bundled by PrismConductor. Used in Bundled and Hybrid skill modes (PRISMCONDUCTO
    - Detected dependencies (other open issue numbers)
    - Suggested labels (from step 4; empty array if nothing matches)
    - Open questions to ask the user (structured per §6.4 Question schema)
+
+   **Question authoring rules (NON-NEGOTIABLE — the UI rendering depends on these):**
+   - The `prompt` field is the *question only* — one or two sentences. Do NOT inline the answer choices into the prompt text ("A) … B) … C) …"). The prompt should read cleanly without the options.
+   - The `options` array is the FULL TEXT of each choice, not letter shorthand. WRONG: `["A", "B", "C"]`. RIGHT: `["Both: app calls Orchestrator.SetAutoPullPaused() AND publishes EvtAutoPullPausedChanged.", "Direct method only — no event.", "Event only — orchestrator subscribes to EvtAutoPullPausedChanged."]`.
+   - Use markdown freely in `prompt` — backticks for code, bold for emphasis, inline links. The UI renders prompts as markdown.
+   - Keep each option text under ~280 chars where possible. Long options (a paragraph each) signal the question should split into multiple smaller ones.
+   - For yes_no questions, omit `options` (or `[]`) — the UI hardcodes "yes"/"no".
 6. Write the plan to `.prismconductor/plans/<issue>-rev1.json` matching §9.1 exactly. Include the
    suggestions as the `suggested_labels` array (omit the field entirely if empty).
 7. Print `Plan written to .prismconductor/plans/<issue>-rev1.json` so the conductor's PTY parser picks it up (§10.3).

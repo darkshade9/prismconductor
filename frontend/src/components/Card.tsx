@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
+import { Replan } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "../stores/sessionStore";
 import { usePlanReadyStore } from "../stores/planReadyStore";
@@ -215,9 +216,21 @@ function StatusRow({
   }
   if (planReady) {
     return (
-      <div className="text-[11px] mt-1.5 flex items-center gap-1.5">
+      <div className="text-[11px] mt-1.5 flex items-center gap-1.5 flex-wrap">
         <span className="text-amber-300">⏸ Plan ready (rev {planReady.revision})</span>
         <span className="text-slate-500">— click to review</span>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            Replan(workspaceID, issueNumber).catch((err: any) => alert(String(err?.message ?? err)));
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="ml-auto px-1.5 py-0.5 rounded text-[10px] border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500"
+          title="Discard the current plan and start a fresh planning pass"
+        >
+          ↻ Re-plan
+        </button>
       </div>
     );
   }

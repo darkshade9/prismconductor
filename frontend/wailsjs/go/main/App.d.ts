@@ -88,6 +88,8 @@ export function RemoveWorkspace(arg1:string):Promise<void>;
 
 export function ReorderIssues(arg1:string,arg2:string,arg3:Array<number>):Promise<void>;
 
+export function Replan(arg1:string,arg2:number):Promise<void>;
+
 export function RunOrchestrator():Promise<void>;
 
 export function SaveGoal(arg1:types.Goal):Promise<void>;

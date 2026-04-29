@@ -162,6 +162,10 @@ export function ReorderIssues(arg1, arg2, arg3) {
   return window['go']['main']['App']['ReorderIssues'](arg1, arg2, arg3);
 }
 
+export function Replan(arg1, arg2) {
+  return window['go']['main']['App']['Replan'](arg1, arg2);
+}
+
 export function RunOrchestrator() {
   return window['go']['main']['App']['RunOrchestrator']();
 }

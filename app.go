@@ -465,16 +465,23 @@ func (a *App) MoveIssueColumn(workspaceID string, number int, column string) err
 	})
 
 	if types.BoardColumn(column) == types.ColPlan && a.wsReg != nil && a.mgr != nil {
-		// Skip if a plan worker is already in flight for this issue — avoids
-		// double-spawn when the user drags a card out and back in.
+		// Auto-spawn rules:
+		//   - Skip if a plan worker is already in flight (avoid double-spawn).
+		//   - Skip if a plan already exists for this issue. Drag-to-PLAN with a
+		//     prior plan is treated as "I'm just shuffling cards" — the user
+		//     gets a Re-plan button on the card to force a new revision
+		//     explicitly.
+		//   - Otherwise: this is the first plan, spawn immediately.
 		if a.hasActivePlanSession(workspaceID, number) {
 			log.Printf("drag-to-PLAN: #%d already has an active plan session, skipping spawn", number)
+		} else if a.hasExistingPlan(workspaceID, number) {
+			log.Printf("drag-to-PLAN: #%d already has a plan; user must click Re-plan to force a new revision", number)
 		} else {
 			ws, ok := a.wsReg.Get(workspaceID)
 			if !ok {
 				log.Printf("drag-to-PLAN: workspace %q not found", workspaceID)
 			} else {
-				log.Printf("drag-to-PLAN: spawning plan worker for %s#%d", workspaceID, number)
+				log.Printf("drag-to-PLAN: spawning plan worker for %s#%d (no existing plan)", workspaceID, number)
 				sess, err := a.mgr.SpawnPlan(ws, types.Issue{Number: number, WorkspaceID: workspaceID})
 				if err != nil {
 					log.Printf("auto-spawn plan #%d FAILED: %v", number, err)
@@ -484,6 +491,40 @@ func (a *App) MoveIssueColumn(workspaceID string, number int, column string) err
 			}
 		}
 	}
+	return nil
+}
+
+// hasExistingPlan returns true if any plan revision has been written for this
+// issue. Used to gate auto-replan on drag-to-PLAN.
+func (a *App) hasExistingPlan(workspaceID string, number int) bool {
+	if a.store == nil {
+		return false
+	}
+	p, err := a.store.LatestPlan(workspaceID, number)
+	return err == nil && p != nil
+}
+
+// Replan force-spawns a fresh plan worker for an issue regardless of existing
+// plans or active sessions. Frontend calls this from the "Re-plan" button on
+// a card that already has a plan.
+func (a *App) Replan(workspaceID string, number int) error {
+	if a.wsReg == nil || a.mgr == nil {
+		return fmt.Errorf("registry/manager unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	if a.hasActivePlanSession(workspaceID, number) {
+		return fmt.Errorf("plan worker already in flight for #%d", number)
+	}
+	log.Printf("Replan: spawning plan worker for %s#%d", workspaceID, number)
+	sess, err := a.mgr.SpawnPlan(ws, types.Issue{Number: number, WorkspaceID: workspaceID})
+	if err != nil {
+		log.Printf("Replan #%d FAILED: %v", number, err)
+		return err
+	}
+	log.Printf("Replan: spawn ok for #%d, session=%s pid=%d", number, sess.ID[:8], sess.PID)
 	return nil
 }
 
