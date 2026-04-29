@@ -70,7 +70,10 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
       className={cn(
         "w-full text-left rounded-md border bg-slate-800/70 hover:bg-slate-800 px-3 py-2 mb-2",
         "shadow-sm transition-colors cursor-grab active:cursor-grabbing select-none",
-        activeSession && activeSession.mode === "plan"
+        // Blocked beats mode color — failure signal must be unmistakable.
+        activeSession && activeSession.state === "blocked"
+          ? "border-red-500 card-glow-blocked"
+          : activeSession && activeSession.mode === "plan"
           ? "border-sky-500 card-glow-plan"
           : activeSession && activeSession.mode === "execute"
           ? "border-purple-500 card-glow-execute"
@@ -136,21 +139,23 @@ function StatusRow({
 }) {
   if (activeSession) {
     const planMode = activeSession.mode === "plan";
-    const label =
-      activeSession.state === "waiting_for_input"
-        ? planMode
-          ? "needs your answer"
-          : "needs input"
-        : activeSession.state === "blocked"
-        ? "blocked"
-        : planMode
-        ? "planning"
-        : "working";
+    const isBlocked = activeSession.state === "blocked";
+    const label = isBlocked
+      ? "blocked"
+      : activeSession.state === "waiting_for_input"
+      ? planMode
+        ? "needs your answer"
+        : "needs input"
+      : planMode
+      ? "planning"
+      : "working";
+    const dotCls = isBlocked ? "bg-red-400" : planMode ? "bg-sky-400" : "bg-purple-400";
+    const textCls = isBlocked ? "text-red-300" : planMode ? "text-sky-300" : "text-purple-300";
     return (
       <div className="text-[11px] mt-1.5 space-y-0.5">
         <div className="flex items-center gap-1.5">
-          <Pulse className={planMode ? "bg-sky-400" : "bg-purple-400"} />
-          <span className={planMode ? "text-sky-300" : "text-purple-300"}>{label}</span>
+          <Pulse className={dotCls} />
+          <span className={textCls}>{label}</span>
           {activity && activity.tool_count > 0 && (
             <span className="text-slate-500 ml-1">· {activity.tool_count} actions</span>
           )}

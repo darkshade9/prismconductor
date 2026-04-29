@@ -35,7 +35,12 @@ body {
   0%, 100% { box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.55), 0 0 12px 2px rgba(245, 158, 11, 0.25); }
   50%      { box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.95), 0 0 24px 6px rgba(245, 158, 11, 0.50); }
 }
+@keyframes card-glow-blocked {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.65), 0 0 16px 3px rgba(239, 68, 68, 0.30); }
+  50%      { box-shadow: 0 0 0 2px rgba(239, 68, 68, 1), 0 0 32px 10px rgba(239, 68, 68, 0.55); }
+}
 .card-glow-plan    { animation: card-glow-plan    1.6s ease-in-out infinite; }
 .card-glow-execute { animation: card-glow-execute 1.6s ease-in-out infinite; }
 .card-glow-ready   { animation: card-glow-ready   2.4s ease-in-out infinite; }
+.card-glow-blocked { animation: card-glow-blocked 1.2s ease-in-out infinite; }
 

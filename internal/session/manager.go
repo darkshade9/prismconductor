@@ -234,8 +234,19 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 	prev := rs.sess.State
 	if err := rs.cmd.Wait(); err != nil {
 		rs.sess.State = types.StateFailed
-	} else if rs.sess.State == types.StateRunning {
-		rs.sess.State = types.StateCompleted
+	} else {
+		// Worker exited cleanly. Pattern-set transient states map to terminal:
+		//   Running          → Completed (PatternComplete didn't fire but
+		//                      exit was clean — count it as done)
+		//   Blocked          → Failed (worker emitted BLOCKED: and bailed)
+		//   WaitingForInput  → Failed (worker asked Question: then exited
+		//                      before any answer arrived; -p mode does this)
+		switch rs.sess.State {
+		case types.StateRunning:
+			rs.sess.State = types.StateCompleted
+		case types.StateBlocked, types.StateWaitingForInput:
+			rs.sess.State = types.StateFailed
+		}
 	}
 	end := time.Now()
 	rs.sess.EndedAt = &end
@@ -248,6 +259,12 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 	if m.bus != nil {
 		m.bus.Publish(eventbus.EvtWorkerSlotFreed, rs.sess.ID)
 	}
+
+	// Drop from in-process registry so Card iteration doesn't keep finding
+	// it. The transcript + DB row remain.
+	m.mu.Lock()
+	delete(m.sessions, rs.sess.ID)
+	m.mu.Unlock()
 }
 
 func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
