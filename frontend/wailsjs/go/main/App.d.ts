@@ -24,6 +24,8 @@ export function DeleteLabel(arg1:string,arg2:string):Promise<void>;
 
 export function FilterIssuesByActiveGoal(arg1:Array<types.Issue>):Promise<Array<types.Issue>>;
 
+export function GetAutoPullPaused():Promise<boolean>;
+
 export function GetNotifyPrefs():Promise<main.NotifyPrefs>;
 
 export function GetOllamaConfig():Promise<main.OllamaConfig>;
@@ -95,6 +97,8 @@ export function RunOrchestrator():Promise<void>;
 export function SaveGoal(arg1:types.Goal):Promise<void>;
 
 export function SendInput(arg1:string,arg2:string):Promise<void>;
+
+export function SetAutoPullPaused(arg1:boolean):Promise<void>;
 
 export function SetGoalStatus(arg1:string,arg2:string):Promise<void>;
 

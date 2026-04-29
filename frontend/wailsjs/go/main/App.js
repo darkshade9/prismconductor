@@ -34,6 +34,10 @@ export function FilterIssuesByActiveGoal(arg1) {
   return window['go']['main']['App']['FilterIssuesByActiveGoal'](arg1);
 }
 
+export function GetAutoPullPaused() {
+  return window['go']['main']['App']['GetAutoPullPaused']();
+}
+
 export function GetNotifyPrefs() {
   return window['go']['main']['App']['GetNotifyPrefs']();
 }
@@ -176,6 +180,10 @@ export function SaveGoal(arg1) {
 
 export function SendInput(arg1, arg2) {
   return window['go']['main']['App']['SendInput'](arg1, arg2);
+}
+
+export function SetAutoPullPaused(arg1) {
+  return window['go']['main']['App']['SetAutoPullPaused'](arg1);
 }
 
 export function SetGoalStatus(arg1, arg2) {

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { EventsOn } from "../wailsjs/runtime/runtime";
 import {
+  GetAutoPullPaused,
   GetWorkerPoolStatus,
   ListPendingPlans,
   ListSessions,
   RefreshIssuesNow,
+  SetAutoPullPaused,
   SpawnDemo,
   SpawnPlanForIssue,
 } from "../wailsjs/go/main/App";
@@ -38,6 +40,7 @@ function App() {
   const clearPlanReady = usePlanReadyStore((s) => s.clearReady);
   const issues = useIssueStore((s) => s.issues);
   const [poolStatus, setPoolStatus] = useState({ active: 0, capacity: 2 });
+  const [autoPaused, setAutoPaused] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [planTarget, setPlanTarget] = useState<PlanTarget>(null);
@@ -134,6 +137,11 @@ function App() {
     const offPoolFreed = EventsOn("bus.worker_slot_freed", refreshPool);
     const offPoolChanged = EventsOn("bus.agent_count_changed", refreshPool);
     const offPoolState = EventsOn("session.state", refreshPool);
+    GetAutoPullPaused().then(setAutoPaused).catch(() => {});
+    const offPause = EventsOn(
+      "bus.auto_pull_paused_changed",
+      (data: { paused: boolean }) => setAutoPaused(!!data?.paused),
+    );
     return () => {
       if (typeof offLine === "function") offLine();
       if (typeof offState === "function") offState();
@@ -153,6 +161,7 @@ function App() {
       if (typeof offGhClosed === "function") offGhClosed();
       if (typeof offGhLabel === "function") offGhLabel();
       if (typeof offLabelsUpdated === "function") offLabelsUpdated();
+      if (typeof offPause === "function") offPause();
     };
   }, [appendLine, setMeta, refreshWorkspaces, refreshGoals, refreshIssues, markPlanReady, clearPlanReady, selectedWorkspace]);
 
@@ -238,6 +247,30 @@ function App() {
             title="Re-fetch GitHub issues for every workspace now"
           >
             ↻ Refresh
+          </button>
+          <button
+            onClick={async () => {
+              const next = !autoPaused;
+              setAutoPaused(next);
+              try {
+                await SetAutoPullPaused(next);
+              } catch (e: any) {
+                setAutoPaused(!next);
+                alert(String(e?.message ?? e));
+              }
+            }}
+            className={
+              autoPaused
+                ? "text-xs border border-amber-700 bg-amber-950/40 hover:bg-amber-900/60 px-2 py-1 rounded text-amber-300"
+                : "text-xs border border-slate-700 hover:bg-slate-800 px-2 py-1 rounded text-slate-300"
+            }
+            title={
+              autoPaused
+                ? "Auto-pull paused — manual drag-to-PLAN still works; goal-scoped TODO filter unaffected. Click to resume."
+                : "Pause orchestrator's auto-pull. Manual drag-to-PLAN still works; goal-scoped TODO filter unaffected."
+            }
+          >
+            {autoPaused ? "⏸ auto-pull" : "▶ auto-pull"}
           </button>
           <button
             onClick={() => setDrawerOpen((v) => !v)}
