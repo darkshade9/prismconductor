@@ -5,6 +5,7 @@ import {main} from '../models';
 import {githubauth} from '../models';
 import {github} from '../models';
 import {workspace} from '../models';
+import {logbuffer} from '../models';
 
 export function ActivateGoal(arg1:string):Promise<void>;
 
@@ -14,7 +15,11 @@ export function AddWorkspace(arg1:types.Workspace):Promise<void>;
 
 export function ApprovePlan(arg1:string,arg2:number,arg3:number):Promise<void>;
 
+export function CreateLabel(arg1:string,arg2:types.Label):Promise<types.Label>;
+
 export function DeleteGoal(arg1:string):Promise<void>;
+
+export function DeleteLabel(arg1:string,arg2:string):Promise<void>;
 
 export function FilterIssuesByActiveGoal(arg1:Array<types.Issue>):Promise<Array<types.Issue>>;
 
@@ -48,6 +53,8 @@ export function ListGoals():Promise<Array<types.Goal>>;
 
 export function ListIssues(arg1:string):Promise<Array<types.Issue>>;
 
+export function ListLabels(arg1:string):Promise<Array<types.Label>>;
+
 export function ListPlans(arg1:string,arg2:number):Promise<Array<types.Plan>>;
 
 export function ListSessions():Promise<Array<types.Session>>;
@@ -65,6 +72,8 @@ export function OpenBundledSkill(arg1:string):Promise<void>;
 export function PickRepoPath():Promise<string>;
 
 export function ReadTranscript(arg1:string):Promise<string>;
+
+export function RecentLogs():Promise<Array<logbuffer.Entry>>;
 
 export function RefreshIssuesNow():Promise<void>;
 
@@ -84,6 +93,8 @@ export function SendInput(arg1:string,arg2:string):Promise<void>;
 
 export function SetGoalStatus(arg1:string,arg2:string):Promise<void>;
 
+export function SetIssueLabels(arg1:string,arg2:number,arg3:Array<string>):Promise<void>;
+
 export function SetNotifyPrefs(arg1:main.NotifyPrefs):Promise<void>;
 
 export function SetOllamaConfig(arg1:main.OllamaConfig):Promise<void>;
@@ -97,5 +108,7 @@ export function SpawnDemo():Promise<types.Session>;
 export function SpawnPlanForIssue(arg1:string,arg2:number):Promise<types.Session>;
 
 export function SubmitAnswers(arg1:main.AnswerSubmission):Promise<void>;
+
+export function UpdateLabel(arg1:string,arg2:string,arg3:types.Label):Promise<types.Label>;
 
 export function UpdateWorkspace(arg1:types.Workspace):Promise<void>;

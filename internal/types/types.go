@@ -126,11 +126,19 @@ type Plan struct {
 	PlanMarkdown         string       `json:"plan_markdown"`
 	FilesToModify        []FileIntent `json:"files_to_modify"`
 	DependenciesDetected []int        `json:"dependencies_detected"`
+	SuggestedLabels      []string     `json:"suggested_labels,omitempty"`
 	Questions            []Question   `json:"questions"`
 	EstimatedComplexity  string       `json:"estimated_complexity"`
 	ReadyToExecute       bool         `json:"ready_to_execute"`
 	GeneratedAt          time.Time    `json:"generated_at"`
 	ApprovedAt           *time.Time   `json:"approved_at,omitempty"`
+}
+
+// Label is a GitHub repo label mirrored locally.
+type Label struct {
+	Name        string `json:"name"`
+	Color       string `json:"color"` // 6 lowercase hex chars, no leading '#'
+	Description string `json:"description"`
 }
 
 type FileIntent struct {
@@ -170,6 +178,18 @@ type Session struct {
 	PID         int          `json:"pid"`
 	Transcript  string       `json:"-"`
 	LastPrompt  string       `json:"last_prompt"`
+}
+
+// SessionActivity is the per-tick liveness payload emitted on the
+// "session.activity" Wails event. Lets the UI show "still alive, doing X"
+// without subscribing to every PTY line.
+type SessionActivity struct {
+	SessionID    string    `json:"session_id"`
+	WorkspaceID  string    `json:"workspace_id"`
+	IssueNumber  int       `json:"issue_number"`
+	ToolCount    int       `json:"tool_count"`
+	LastAction   string    `json:"last_action"`
+	LastActionAt time.Time `json:"last_action_at"`
 }
 
 type SessionMode string

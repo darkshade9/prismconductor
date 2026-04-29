@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 import {
+  CollisionDetection,
   DndContext,
   DragEndEvent,
   DragOverEvent,
   DragOverlay,
   DragStartEvent,
   PointerSensor,
-  closestCorners,
+  pointerWithin,
+  rectIntersection,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
@@ -56,6 +58,12 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
   const { workspaces, selectedID } = useWorkspaceStore();
   const [filteredTodoNums, setFilteredTodoNums] = useState<Set<string> | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Capture the source column at drag-start. onDragOver does an optimistic
+  // local move (so the dragged card visually slips into the destination
+  // column mid-drag), which mutates the issue's `column` field. Without
+  // capturing the start column we'd later think source === target and skip
+  // the backend MoveIssueColumn call.
+  const [sourceColAtStart, setSourceColAtStart] = useState<ColumnID | null>(null);
 
   useEffect(() => {
     refresh(selectedID ?? "");
@@ -113,6 +121,15 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
+  // Pointer-first collision: the column activates as soon as the cursor
+  // enters it, not when 100% of the card geometry has crossed the edge.
+  // rectIntersection is the keyboard-drag fallback (no pointer position).
+  const collisionDetection: CollisionDetection = (args) => {
+    const pointer = pointerWithin(args);
+    if (pointer.length > 0) return pointer;
+    return rectIntersection(args);
+  };
+
   function findIssue(id: string): types.Issue | undefined {
     const { workspaceID, number } = fromCardID(id);
     return issues.find((i) => i.workspace_id === workspaceID && i.number === number);
@@ -125,7 +142,10 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
   }
 
   function onDragStart(e: DragStartEvent) {
-    setActiveId(String(e.active.id));
+    const id = String(e.active.id);
+    setActiveId(id);
+    const iss = findIssue(id);
+    setSourceColAtStart(iss ? ((iss.column || "todo") as ColumnID) : null);
   }
 
   // Cross-column dragover: live-move the card so the user sees the destination
@@ -145,7 +165,11 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
 
   async function onDragEnd(e: DragEndEvent) {
     setActiveId(null);
+    const startCol = sourceColAtStart;
+    setSourceColAtStart(null);
     const { active, over } = e;
+    // eslint-disable-next-line no-console
+    console.debug(`[Board] onDragEnd active=${String(active.id)} over=${String(over?.id ?? "none")} startCol=${startCol ?? "?"}`);
     if (!over) return;
     const activeStr = String(active.id);
     const overStr = String(over.id);
@@ -156,7 +180,9 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
     if (!targetCol) return;
 
     // Compute the new in-column ordering after the drop.
-    const sourceCol = (activeIssue.column || "todo") as ColumnID;
+    // Use the column captured at drag-start, not the (possibly already
+    // optimistically-updated) current column on the issue.
+    const sourceCol = (startCol ?? (activeIssue.column || "todo")) as ColumnID;
     const colIssues = (grouped[targetCol] ?? []).slice();
 
     if (sourceCol !== targetCol) {
@@ -202,10 +228,14 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCorners}
+      collisionDetection={collisionDetection}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDragEnd={onDragEnd}
+      onDragCancel={() => {
+        setActiveId(null);
+        setSourceColAtStart(null);
+      }}
     >
       <div className="flex gap-3 px-4 pb-4 overflow-x-auto h-full">
         {COLUMNS.map((c) => {

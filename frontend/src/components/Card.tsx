@@ -1,6 +1,12 @@
+import { useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { types } from "../../wailsjs/go/models";
+import { useSessionStore, SessionActivity } from "../stores/sessionStore";
+import { usePlanReadyStore } from "../stores/planReadyStore";
+import { useLabelsStore } from "../stores/labelsStore";
+import { getContrastText } from "../lib/contrast";
+import { LabelManagePopover } from "./LabelManagePopover";
 import { cn } from "../lib/cn";
 
 export type CardProps = {
@@ -22,6 +28,31 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
     opacity: isDragging ? 0.4 : 1,
   };
 
+  // Live state: subscribe to the *whole* sessions table so we re-render when any
+  // session changes.
+  const allSessions = useSessionStore((s) => s.sessions);
+  const { activeSession, activity } = (() => {
+    for (const view of Object.values(allSessions)) {
+      const m = view.meta;
+      if (!m) continue;
+      if (m.workspace_id !== issue.workspace_id || m.issue_number !== issue.number) continue;
+      if (m.state === "running" || m.state === "waiting_for_input" || m.state === "blocked") {
+        return { activeSession: m, activity: view.activity ?? null };
+      }
+    }
+    return { activeSession: null, activity: null };
+  })();
+  if (activeSession) {
+    // Visible in DevTools (Cmd+Opt+I in the Wails window) — confirms the
+    // session.state event reached the card render path.
+    // eslint-disable-next-line no-console
+    console.debug(
+      `[card #${issue.number}] active session ${activeSession.id.slice(0, 8)} mode=${activeSession.mode} state=${activeSession.state}`,
+    );
+  }
+
+  const planReady = usePlanReadyStore((s) => s.isReady(issue.workspace_id, issue.number));
+
   const blocked = (issue.dependencies ?? []).length > 0;
   const isPrimitive = !blocked && (issue.priority ?? 0) >= 0.7;
 
@@ -32,36 +63,223 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
       {...attributes}
       {...listeners}
       onClick={(e) => {
-        // Suppress click during drag.
         if (isDragging) return;
         onClick?.();
         e.stopPropagation();
       }}
       className={cn(
-        "w-full text-left rounded-md border border-slate-700 bg-slate-800/70 hover:bg-slate-800 px-3 py-2 mb-2",
+        "w-full text-left rounded-md border bg-slate-800/70 hover:bg-slate-800 px-3 py-2 mb-2",
         "shadow-sm transition-colors cursor-grab active:cursor-grabbing select-none",
+        activeSession && activeSession.mode === "plan"
+          ? "border-sky-500 card-glow-plan"
+          : activeSession && activeSession.mode === "execute"
+          ? "border-purple-500 card-glow-execute"
+          : planReady
+          ? "border-amber-500 card-glow-ready"
+          : "border-slate-700",
       )}
     >
       <div className="flex items-center justify-between text-xs text-slate-400">
-        <span className="flex items-center gap-2">
-          <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: workspaceColor ?? "#64748b" }} />
+        <span className="flex items-center gap-2 min-w-0">
+          <span className="inline-block h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: workspaceColor ?? "#64748b" }} />
           #{issue.number}
-          <span className="text-slate-500">{workspaceLabel ?? issue.workspace_id}</span>
+          <span className="text-slate-500 truncate">{workspaceLabel ?? issue.workspace_id}</span>
         </span>
-        {issue.priority ? <span className="text-slate-500">P{issue.priority.toFixed(2)}</span> : null}
+        {issue.priority ? <span className="text-slate-500 shrink-0">P{issue.priority.toFixed(2)}</span> : null}
       </div>
       <div className="text-sm text-slate-100 mt-1 line-clamp-2">{issue.title}</div>
-      <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-2">
-        {isPrimitive && <span className="text-emerald-400">🔴 primitive</span>}
-        {blocked && (
-          <span className="text-amber-300">
-            🚫 blocked by {issue.dependencies?.map((n) => `#${n}`).join(", ")}
-          </span>
-        )}
-        {(issue.labels ?? []).slice(0, 3).map((l) => (
-          <span key={l} className="text-slate-600">·{l}</span>
-        ))}
-      </div>
+
+      <StatusRow
+        activeSession={activeSession}
+        activity={activity}
+        planReady={planReady}
+        blocked={blocked}
+        isPrimitive={isPrimitive}
+        dependencies={issue.dependencies ?? []}
+        labels={issue.labels ?? []}
+        workspaceID={issue.workspace_id}
+        issueNumber={issue.number}
+      />
     </div>
+  );
+}
+
+function useNow(intervalMs: number) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(t);
+  }, [intervalMs]);
+  return now;
+}
+
+function StatusRow({
+  activeSession,
+  activity,
+  planReady,
+  blocked,
+  isPrimitive,
+  dependencies,
+  labels,
+  workspaceID,
+  issueNumber,
+}: {
+  activeSession: types.Session | null;
+  activity: SessionActivity | null;
+  planReady: { revision: number } | null;
+  blocked: boolean;
+  isPrimitive: boolean;
+  dependencies: number[];
+  labels: string[];
+  workspaceID: string;
+  issueNumber: number;
+}) {
+  if (activeSession) {
+    const planMode = activeSession.mode === "plan";
+    const label =
+      activeSession.state === "waiting_for_input"
+        ? planMode
+          ? "needs your answer"
+          : "needs input"
+        : activeSession.state === "blocked"
+        ? "blocked"
+        : planMode
+        ? "planning"
+        : "working";
+    return (
+      <div className="text-[11px] mt-1.5 space-y-0.5">
+        <div className="flex items-center gap-1.5">
+          <Pulse className={planMode ? "bg-sky-400" : "bg-purple-400"} />
+          <span className={planMode ? "text-sky-300" : "text-purple-300"}>{label}</span>
+          {activity && activity.tool_count > 0 && (
+            <span className="text-slate-500 ml-1">· {activity.tool_count} actions</span>
+          )}
+        </div>
+        {activity && activity.last_action && (
+          <ActivityHint activity={activity} />
+        )}
+      </div>
+    );
+  }
+  if (planReady) {
+    return (
+      <div className="text-[11px] mt-1.5 flex items-center gap-1.5">
+        <span className="text-amber-300">⏸ Plan ready (rev {planReady.revision})</span>
+        <span className="text-slate-500">— click to review</span>
+      </div>
+    );
+  }
+  return (
+    <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
+      {isPrimitive && <span className="text-emerald-400">🔴 primitive</span>}
+      {blocked && (
+        <span className="text-amber-300">
+          🚫 blocked by {dependencies.map((n) => `#${n}`).join(", ")}
+        </span>
+      )}
+      <LabelChips
+        workspaceID={workspaceID}
+        issueNumber={issueNumber}
+        labels={labels}
+      />
+    </div>
+  );
+}
+
+function LabelChips({
+  workspaceID,
+  issueNumber,
+  labels,
+}: {
+  workspaceID: string;
+  issueNumber: number;
+  labels: string[];
+}) {
+  const byName = useLabelsStore((s) => s.byName);
+  const knownLabels = useLabelsStore((s) => s.byWorkspace[workspaceID] ?? []);
+  const refresh = useLabelsStore((s) => s.refresh);
+  const [popoverAnchor, setPopoverAnchor] = useState<{ x: number; y: number } | null>(null);
+
+  // Fetch on first card render so chips have colors. Cheap (cached).
+  useEffect(() => {
+    if (workspaceID && knownLabels.length === 0) {
+      refresh(workspaceID);
+    }
+    // We deliberately depend on workspaceID + the cache emptiness — re-renders
+    // shouldn't re-fetch on every label-bus tick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceID]);
+
+  return (
+    <>
+      {labels.map((name) => {
+        const lab = byName(workspaceID, name);
+        const color = lab?.color ?? "475569"; // slate-600
+        const fg = getContrastText(color);
+        return (
+          <span
+            key={name}
+            className="px-1.5 py-0.5 rounded text-[10px] font-medium"
+            style={{ backgroundColor: `#${color}`, color: fg }}
+            title={lab?.description || name}
+          >
+            {name}
+          </span>
+        );
+      })}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          const rect = (e.target as HTMLElement).getBoundingClientRect();
+          setPopoverAnchor({ x: rect.left, y: rect.bottom });
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="px-1.5 py-0.5 rounded text-[10px] border border-dashed border-slate-600 text-slate-400 hover:border-slate-400 hover:text-slate-200"
+        title="Add label"
+      >
+        + Label
+      </button>
+      <LabelManagePopover
+        open={popoverAnchor !== null}
+        onClose={() => setPopoverAnchor(null)}
+        workspaceID={workspaceID}
+        issueNumber={issueNumber}
+        currentLabels={labels}
+        anchor={popoverAnchor}
+      />
+    </>
+  );
+}
+
+function ActivityHint({ activity }: { activity: SessionActivity }) {
+  // Re-render every second so the "Xs ago" stays current.
+  const now = useNow(1000);
+  const sinceMs = now - new Date(activity.last_action_at).getTime();
+  const seconds = Math.max(0, Math.floor(sinceMs / 1000));
+  const stale = seconds >= 30;
+  return (
+    <div className={cn("flex items-center gap-1 truncate", stale ? "text-amber-400" : "text-slate-500")}>
+      <span className="font-mono">⚙</span>
+      <span className="truncate">{activity.last_action}</span>
+      <span className="shrink-0">· {formatElapsed(seconds)}</span>
+    </div>
+  );
+}
+
+function formatElapsed(s: number): string {
+  if (s < 1) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return r > 0 ? `${m}m${r}s ago` : `${m}m ago`;
+}
+
+function Pulse({ className }: { className: string }) {
+  return (
+    <span className="relative inline-flex h-2 w-2">
+      <span className={cn("absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping", className)} />
+      <span className={cn("relative inline-flex h-2 w-2 rounded-full", className)} />
+    </span>
   );
 }

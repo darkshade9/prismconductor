@@ -1,10 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ApprovePlan, LatestPlan, RejectPlan, SubmitAnswers } from "../../wailsjs/go/main/App";
+import { ApprovePlan, LatestPlan, RejectPlan, SetIssueLabels, SubmitAnswers } from "../../wailsjs/go/main/App";
 import { main, types } from "../../wailsjs/go/models";
 import { useIssueStore } from "../stores/issueStore";
+import { useLabelsStore } from "../stores/labelsStore";
 import { AnswerState, QuestionForm, emptyAnswers, isComplete } from "./QuestionForm";
+import { LabelsModal } from "./LabelsModal";
+import { getContrastText } from "../lib/contrast";
 
 const INTENT_GLYPH: Record<string, string> = {
   add: "+",
@@ -23,11 +26,17 @@ export function PlanModal({
   issue: types.Issue | null;
 }) {
   const refreshIssues = useIssueStore((s) => s.refresh);
+  const refreshLabels = useLabelsStore((s) => s.refresh);
+  const labelsCache = useLabelsStore((s) => (issue ? s.byWorkspace[issue.workspace_id] ?? [] : []));
   const [plan, setPlan] = useState<types.Plan | null>(null);
   const [answers, setAnswers] = useState<AnswerState>(emptyAnswers());
+  const [refineText, setRefineText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [labelsModal, setLabelsModal] = useState<{ open: boolean; suggestName?: string }>({
+    open: false,
+  });
 
   useEffect(() => {
     if (!open || !issue) return;
@@ -38,7 +47,8 @@ export function PlanModal({
       .then((p) => setPlan(p ?? null))
       .catch((e) => setError(String(e?.message ?? e)))
       .finally(() => setLoading(false));
-  }, [open, issue?.workspace_id, issue?.number]);
+    refreshLabels(issue.workspace_id);
+  }, [open, issue?.workspace_id, issue?.number, refreshLabels]);
 
   if (!open || !issue) return null;
 
@@ -52,12 +62,17 @@ export function PlanModal({
     setBusy(true);
     setError(null);
     try {
+      // Bundle structured answers + the free-text refinement (if any) into a
+      // single submission. The worker sees __refine as a top-level free-form
+      // direction and rewrites the plan accordingly.
+      const merged = { ...answers.single };
+      if (refineText.trim()) merged.__refine = refineText.trim();
       await SubmitAnswers(
         new main.AnswerSubmission({
           workspace_id: issue.workspace_id,
           issue_number: issue.number,
           revision: plan.revision,
-          answers: answers.single,
+          answers: merged,
           multi: answers.multi,
         }),
       );
@@ -130,6 +145,15 @@ export function PlanModal({
 
           {plan && (
             <>
+              <LabelsSection
+                issue={issue}
+                plan={plan}
+                cache={labelsCache}
+                onManage={(name) => setLabelsModal({ open: true, suggestName: name })}
+                onError={setError}
+                onIssueRefresh={refreshIssues}
+              />
+
               <Section title="What the agent plans to do">
                 <Markdown text={plan.plan_markdown} />
               </Section>
@@ -163,27 +187,53 @@ export function PlanModal({
                   <QuestionForm questions={questions} state={answers} onChange={setAnswers} />
                 </Section>
               )}
+
+              <Section title="Refine plan (free-form)">
+                <textarea
+                  value={refineText}
+                  onChange={(e) => setRefineText(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. focus on the Settings tab first; skip the conventions sniffer; use my existing useGoalStore pattern"
+                  className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-slate-200 text-sm"
+                />
+                <div className="text-xs text-slate-500 mt-1">
+                  Anything you write here goes back to the worker as direction; it'll regenerate the plan
+                  with this in mind. Submit alongside any answers above.
+                </div>
+              </Section>
             </>
           )}
 
           {error && <div className="text-red-400 text-xs">{error}</div>}
         </div>
+        {issue && (
+          <LabelsModal
+            open={labelsModal.open}
+            onClose={() => setLabelsModal({ open: false })}
+            workspaceID={issue.workspace_id}
+            initialNewName={labelsModal.suggestName}
+          />
+        )}
 
         {plan && (
           <div className="px-4 py-2 border-t border-slate-800 flex justify-end gap-2">
             <button onClick={reject} disabled={busy} className="px-3 py-1 text-red-400 hover:text-red-300 disabled:opacity-50">
               Reject
             </button>
-            {hasQuestions && (
-              <button
-                onClick={submit}
-                disabled={busy || !allRequiredAnswered}
-                className="px-3 py-1 bg-sky-700 hover:bg-sky-600 rounded disabled:opacity-50"
-                title={!allRequiredAnswered ? "Answer all required questions first" : ""}
-              >
-                Submit answers & request revision
-              </button>
-            )}
+            <button
+              onClick={submit}
+              disabled={busy || (hasQuestions && !allRequiredAnswered) || (!hasQuestions && !refineText.trim())}
+              className="px-3 py-1 bg-sky-700 hover:bg-sky-600 rounded disabled:opacity-50"
+              title={
+                hasQuestions && !allRequiredAnswered
+                  ? "Answer all required questions first"
+                  : !hasQuestions && !refineText.trim()
+                  ? "Type a refinement to request a revision"
+                  : ""
+              }
+            >
+              {hasQuestions ? "Submit answers & request revision" : "Request revision"}
+            </button>
             <button
               onClick={approve}
               disabled={busy || (hasQuestions && !plan.ready_to_execute)}
@@ -196,6 +246,109 @@ export function PlanModal({
         )}
       </div>
     </div>
+  );
+}
+
+function LabelsSection({
+  issue,
+  plan,
+  cache,
+  onManage,
+  onError,
+  onIssueRefresh,
+}: {
+  issue: types.Issue;
+  plan: types.Plan;
+  cache: types.Label[];
+  onManage: (name?: string) => void;
+  onError: (msg: string | null) => void;
+  onIssueRefresh: () => Promise<void> | void;
+}) {
+  const cacheByName = useMemo(() => {
+    const m = new Map<string, types.Label>();
+    for (const l of cache) m.set(l.name, l);
+    return m;
+  }, [cache]);
+
+  const current = issue.labels ?? [];
+  const suggestions = (plan.suggested_labels ?? []).filter((n) => !current.includes(n));
+
+  async function applySuggestion(name: string) {
+    const exists = cacheByName.has(name);
+    if (!exists) {
+      // Defer to user — open the LabelsModal pre-filled with the name so they
+      // can review the color/description before creating it on GitHub.
+      onManage(name);
+      return;
+    }
+    onError(null);
+    const next = Array.from(new Set([...current, name]));
+    try {
+      await SetIssueLabels(issue.workspace_id, issue.number, next);
+      await onIssueRefresh();
+    } catch (e: any) {
+      onError(String(e?.message ?? e));
+    }
+  }
+
+  return (
+    <Section title="Labels">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {current.length === 0 && (
+          <span className="text-xs text-slate-500">no labels yet</span>
+        )}
+        {current.map((name) => {
+          const lab = cacheByName.get(name);
+          const color = lab?.color ?? "475569";
+          const fg = getContrastText(color);
+          return (
+            <span
+              key={name}
+              className="px-1.5 py-0.5 rounded text-[11px] font-medium"
+              style={{ backgroundColor: `#${color}`, color: fg }}
+              title={lab?.description || name}
+            >
+              {name}
+            </span>
+          );
+        })}
+        <button
+          onClick={() => onManage()}
+          className="px-2 py-0.5 rounded text-[11px] border border-slate-700 text-slate-400 hover:text-slate-200"
+        >
+          Manage…
+        </button>
+      </div>
+
+      {suggestions.length > 0 && (
+        <div className="mt-2">
+          <div className="text-[11px] text-slate-500 mb-1">Suggested by planner</div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {suggestions.map((name) => {
+              const exists = cacheByName.has(name);
+              const color = cacheByName.get(name)?.color ?? "475569";
+              const fg = getContrastText(color);
+              return (
+                <button
+                  key={name}
+                  onClick={() => applySuggestion(name)}
+                  className="px-1.5 py-0.5 rounded text-[11px] font-medium border border-dashed hover:opacity-90"
+                  style={{ backgroundColor: `#${color}`, color: fg, borderColor: `#${color}` }}
+                  title={
+                    exists
+                      ? "Apply this label"
+                      : "Label not in workspace yet — opens the editor pre-filled to create it"
+                  }
+                >
+                  + {name}
+                  {!exists && <span className="ml-1 opacity-70">(create)</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </Section>
   );
 }
 

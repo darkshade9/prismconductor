@@ -1,10 +1,23 @@
 import { create } from "zustand";
 import { types } from "../../wailsjs/go/models";
 
+// Mirrors SessionActivity in Go. Wails only generates TS types for
+// structs that appear in bound method signatures; activity rides through as
+// an event payload, so declare it here.
+export type SessionActivity = {
+  session_id: string;
+  workspace_id: string;
+  issue_number: number;
+  tool_count: number;
+  last_action: string;
+  last_action_at: string;
+};
+
 type SessionView = {
   id: string;
   meta?: types.Session;
   lines: string[]; // stored verbatim — including @live tail when streaming
+  activity?: SessionActivity;
 };
 
 type State = {
@@ -12,6 +25,7 @@ type State = {
   activeId: string | null;
   appendLine: (id: string, line: string) => void;
   setMeta: (sess: types.Session) => void;
+  setActivity: (act: SessionActivity) => void;
   loadTranscript: (id: string, body: string) => void;
   setActive: (id: string | null) => void;
   clear: (id: string) => void;
@@ -51,6 +65,11 @@ export const useSessionStore = create<State>((set) => ({
     set((s) => {
       const cur = s.sessions[sess.id] ?? { id: sess.id, lines: [] };
       return { sessions: { ...s.sessions, [sess.id]: { ...cur, meta: sess } } };
+    }),
+  setActivity: (act) =>
+    set((s) => {
+      const cur = s.sessions[act.session_id] ?? { id: act.session_id, lines: [] };
+      return { sessions: { ...s.sessions, [act.session_id]: { ...cur, activity: act } } };
     }),
   loadTranscript: (id, body) =>
     set((s) => {

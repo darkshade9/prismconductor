@@ -22,6 +22,7 @@ const (
 	EvtWorkerBlocked     EventType = "worker_blocked"
 	EvtCardMovedManually EventType = "card_moved_manually"
 	EvtAgentCountChanged EventType = "agent_count_changed"
+	EvtLabelsUpdated     EventType = "labels_updated"
 )
 
 type Event struct {

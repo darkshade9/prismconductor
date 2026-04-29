@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,6 +18,7 @@ import (
 
 	"prismconductor/internal/eventbus"
 	pcgithub "prismconductor/internal/github"
+	"prismconductor/internal/logbuffer"
 	"prismconductor/internal/goalfilter"
 	"prismconductor/internal/planio"
 	"prismconductor/internal/githubauth"
@@ -45,6 +47,7 @@ type App struct {
 	auth    *githubauth.Client
 	gh      *pcgithub.Client
 	poller  *pcgithub.Poller
+	logs    *logbuffer.Ring
 	cfgDir  string
 
 	pendingDevice *githubauth.DeviceCode
@@ -61,14 +64,19 @@ func (a *App) startup(ctx context.Context) {
 
 	cfgDir, _ := configDir()
 	a.cfgDir = cfgDir
+
+	// Capture every log.Printf into a ring buffer so the UI can show them.
+	a.logs = logbuffer.New(1000)
+	a.logs.HookStdLog("backend")
+	log.Printf("startup: cfgDir=%s", cfgDir)
 	bundleDir := filepath.Join(cfgDir, "skills")
 	if _, err := bundle.Extract(bundleDir); err != nil {
-		fmt.Fprintf(os.Stderr, "skill bundle extract: %v\n", err)
+		log.Printf("skill bundle extract: %v\n", err)
 	}
 	// Install (and refresh) as user-scoped Claude Code slash commands so the
 	// spawned worker resolves /conductor-plan etc.
 	if err := bundle.InstallAsCommands(); err != nil {
-		fmt.Fprintf(os.Stderr, "skill install as commands: %v\n", err)
+		log.Printf("skill install as commands: %v\n", err)
 	}
 
 	a.bus = eventbus.New()
@@ -78,7 +86,7 @@ func (a *App) startup(ctx context.Context) {
 	a.auth = githubauth.New("")
 
 	if s, err := store.Open(cfgDir); err != nil {
-		fmt.Fprintf(os.Stderr, "store open: %v\n", err)
+		log.Printf("store open: %v\n", err)
 	} else {
 		a.store = s
 		_ = a.store.EnsureDepCacheTable()
@@ -104,7 +112,7 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 	if r, err := workspace.New(cfgDir); err != nil {
-		fmt.Fprintf(os.Stderr, "workspace registry: %v\n", err)
+		log.Printf("workspace registry: %v\n", err)
 	} else {
 		a.wsReg = r
 	}
@@ -112,6 +120,9 @@ func (a *App) startup(ctx context.Context) {
 	a.mgr = session.NewManager(a.bus, a.emitLine)
 	a.mgr.Configure(filepath.Join(cfgDir, "transcripts"), a.store, a.handleSessionStateChange)
 	a.mgr.SetOnPlanReady(a.handlePlanReady)
+	a.mgr.SetOnActivity(func(act types.SessionActivity) {
+		wruntime.EventsEmit(a.ctx, "session.activity", act)
+	})
 
 	// Hook the orchestrator up to the store + pool + spawn callback now that
 	// every dependency exists.
@@ -138,13 +149,20 @@ func (a *App) startup(ctx context.Context) {
 		if running, _, err := a.store.LoadRunningSessions(); err == nil {
 			a.mgr.Reattach(running)
 		}
+		// Self-heal any closed issues stuck in non-DONE columns from earlier
+		// buggy poll cycles.
+		if n, err := a.store.ReconcileClosedIssues(); err != nil {
+			log.Printf("reconcile closed issues: %v\n", err)
+		} else if n > 0 {
+			log.Printf("reconciled %d closed issues to DONE\n", n)
+		}
 	}
 
 	// GitHub poller (#2). Uses the existing `gh` CLI auth — no OAuth App
 	// registration required.
 	if a.store != nil && a.wsReg != nil {
 		if c, err := pcgithub.New(); err != nil {
-			fmt.Fprintf(os.Stderr, "github client unavailable: %v\n", err)
+			log.Printf("github client unavailable: %v\n", err)
 		} else {
 			a.gh = c
 			interval := 5 * time.Minute
@@ -424,13 +442,17 @@ func (a *App) ListIssues(workspaceID string) ([]types.Issue, error) {
 }
 
 // MoveIssueColumn moves an issue card between columns. Emits EvtCardMovedManually
-// per §15.5 if the move was triggered by the user (which it always is at this layer —
-// orchestrator-driven moves bypass this method by writing the column directly).
+// per §15.5 (orchestrator-driven moves bypass this method by writing the column
+// directly). When the target is PLAN, also spawns the plan worker — that's
+// the natural meaning of dragging a card into the PLAN column.
 func (a *App) MoveIssueColumn(workspaceID string, number int, column string) error {
+	log.Printf("MoveIssueColumn called: ws=%s #%d → %s", workspaceID, number, column)
 	if a.store == nil {
+		log.Printf("MoveIssueColumn: store unavailable")
 		return fmt.Errorf("store unavailable")
 	}
 	if err := a.store.MoveIssueColumn(workspaceID, number, types.BoardColumn(column)); err != nil {
+		log.Printf("MoveIssueColumn store error: %v", err)
 		return err
 	}
 	a.bus.Publish(eventbus.EvtCardMovedManually, map[string]any{
@@ -438,7 +460,57 @@ func (a *App) MoveIssueColumn(workspaceID string, number int, column string) err
 		"number":       number,
 		"column":       column,
 	})
+
+	if types.BoardColumn(column) == types.ColPlan && a.wsReg != nil && a.mgr != nil {
+		// Skip if a plan worker is already in flight for this issue — avoids
+		// double-spawn when the user drags a card out and back in.
+		if a.hasActivePlanSession(workspaceID, number) {
+			log.Printf("drag-to-PLAN: #%d already has an active plan session, skipping spawn", number)
+		} else {
+			ws, ok := a.wsReg.Get(workspaceID)
+			if !ok {
+				log.Printf("drag-to-PLAN: workspace %q not found", workspaceID)
+			} else {
+				log.Printf("drag-to-PLAN: spawning plan worker for %s#%d", workspaceID, number)
+				sess, err := a.mgr.SpawnPlan(ws, types.Issue{Number: number, WorkspaceID: workspaceID})
+				if err != nil {
+					log.Printf("auto-spawn plan #%d FAILED: %v", number, err)
+				} else {
+					log.Printf("drag-to-PLAN: spawn ok for #%d, session=%s pid=%d", number, sess.ID[:8], sess.PID)
+				}
+			}
+		}
+	}
 	return nil
+}
+
+// RecentLogs returns the in-memory log ring for the Settings → Logs panel.
+func (a *App) RecentLogs() []logbuffer.Entry {
+	if a.logs == nil {
+		return nil
+	}
+	return a.logs.Snapshot()
+}
+
+// hasActivePlanSession returns true if a plan-mode worker is currently running
+// (or waiting / blocked) for the given issue.
+func (a *App) hasActivePlanSession(workspaceID string, number int) bool {
+	if a.mgr == nil {
+		return false
+	}
+	for _, s := range a.mgr.Snapshot() {
+		if s.WorkspaceID != workspaceID || s.IssueNumber != number {
+			continue
+		}
+		if s.Mode != types.ModePlan {
+			continue
+		}
+		switch s.State {
+		case types.StateRunning, types.StateWaitingForInput, types.StateBlocked:
+			return true
+		}
+	}
+	return false
 }
 
 // ReorderIssues persists a new ordering of issues within a single column.
@@ -501,6 +573,141 @@ func (a *App) GetPollInterval() int {
 		return 300
 	}
 	return n
+}
+
+// --- Labels (#14) ---
+
+// ListLabels returns the cached label set for a workspace. The poller fans
+// these in on every 5-min tick and after every label CRUD call.
+func (a *App) ListLabels(workspaceID string) ([]types.Label, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store unavailable")
+	}
+	return a.store.ListLabels(workspaceID)
+}
+
+// refreshLabels pulls fresh labels from GitHub for one workspace, mirrors them
+// locally, and publishes EvtLabelsUpdated. The single chokepoint for cache
+// updates so a future webhook listener plugs in cleanly.
+func (a *App) refreshLabels(workspaceID string) error {
+	if a.gh == nil || a.wsReg == nil || a.store == nil {
+		return fmt.Errorf("github client / registry / store unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	labels, err := a.gh.ListLabels(a.ctx, ws)
+	if err != nil {
+		return err
+	}
+	if err := a.store.SaveLabels(workspaceID, labels); err != nil {
+		return err
+	}
+	a.bus.Publish(eventbus.EvtLabelsUpdated, map[string]any{"workspace_id": workspaceID})
+	return nil
+}
+
+// CreateLabel creates a label on GitHub and refreshes the local cache.
+func (a *App) CreateLabel(workspaceID string, label types.Label) (types.Label, error) {
+	if a.gh == nil || a.wsReg == nil {
+		return types.Label{}, fmt.Errorf("github unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return types.Label{}, fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	out, err := a.gh.CreateLabel(a.ctx, ws, label)
+	if err != nil {
+		return types.Label{}, err
+	}
+	if err := a.refreshLabels(workspaceID); err != nil {
+		log.Printf("refresh labels after create: %v", err)
+	}
+	return out, nil
+}
+
+// UpdateLabel edits a label on GitHub, refreshes the cache, and pokes the
+// poller so issue rows reconcile their label arrays (Q4 = yes).
+func (a *App) UpdateLabel(workspaceID, originalName string, label types.Label) (types.Label, error) {
+	if a.gh == nil || a.wsReg == nil {
+		return types.Label{}, fmt.Errorf("github unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return types.Label{}, fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	out, err := a.gh.UpdateLabel(a.ctx, ws, originalName, label)
+	if err != nil {
+		return types.Label{}, err
+	}
+	if err := a.refreshLabels(workspaceID); err != nil {
+		log.Printf("refresh labels after update: %v", err)
+	}
+	if a.poller != nil {
+		a.poller.PokeNow()
+	}
+	return out, nil
+}
+
+// DeleteLabel removes a label on GitHub, refreshes the cache, and pokes the
+// poller so issue rows that referenced it reconcile.
+func (a *App) DeleteLabel(workspaceID, name string) error {
+	if a.gh == nil || a.wsReg == nil {
+		return fmt.Errorf("github unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	if err := a.gh.DeleteLabel(a.ctx, ws, name); err != nil {
+		return err
+	}
+	if err := a.refreshLabels(workspaceID); err != nil {
+		log.Printf("refresh labels after delete: %v", err)
+	}
+	if a.poller != nil {
+		a.poller.PokeNow()
+	}
+	return nil
+}
+
+// SetIssueLabels replaces an issue's labels on GitHub. Updates the local row
+// optimistically (Q2) so chips don't flicker, publishes
+// EvtIssueLabelChanged, then pokes the poller to reconcile.
+func (a *App) SetIssueLabels(workspaceID string, issueNumber int, names []string) error {
+	if a.gh == nil || a.wsReg == nil || a.store == nil {
+		return fmt.Errorf("github / registry / store unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	if err := a.gh.SetIssueLabels(a.ctx, ws, issueNumber, names); err != nil {
+		return err
+	}
+	// Optimistic local mirror update so the UI flips without waiting for the
+	// next poll. Find the existing row, swap the Labels slice, save back.
+	if existing, err := a.store.ListIssues(workspaceID); err == nil {
+		for _, iss := range existing {
+			if iss.Number != issueNumber {
+				continue
+			}
+			iss.Labels = append([]string(nil), names...)
+			if err := a.store.SaveIssue(iss); err != nil {
+				log.Printf("optimistic label save #%d: %v", issueNumber, err)
+			}
+			break
+		}
+	}
+	a.bus.Publish(eventbus.EvtIssueLabelChanged, map[string]any{
+		"workspace_id": workspaceID,
+		"number":       issueNumber,
+	})
+	if a.poller != nil {
+		a.poller.PokeNow()
+	}
+	return nil
 }
 
 // AddManualIssue lets the user create a fake issue card in any column. Used to
@@ -626,13 +833,13 @@ func (a *App) handlePlanReady(sess types.Session, relPath string) {
 	abs := filepath.Join(ws.RepoPath, relPath)
 	plan, err := planio.ReadPlan(abs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "plan ingest failed: %v\n", err)
+		log.Printf("plan ingest failed: %v\n", err)
 		return
 	}
 	plan.WorkspaceID = sess.WorkspaceID
 	plan.IssueNumber = sess.IssueNumber
 	if err := a.store.SavePlan(*plan); err != nil {
-		fmt.Fprintf(os.Stderr, "plan save failed: %v\n", err)
+		log.Printf("plan save failed: %v\n", err)
 		return
 	}
 	a.bus.Publish(eventbus.EvtPlanReady, map[string]any{

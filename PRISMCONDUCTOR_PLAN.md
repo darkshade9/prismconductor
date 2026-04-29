@@ -288,6 +288,7 @@ type Plan struct {
     PlanMarkdown         string       `json:"plan_markdown"`         // for human display
     FilesToModify        []FileIntent `json:"files_to_modify"`
     DependenciesDetected []int        `json:"dependencies_detected"`
+    SuggestedLabels      []string     `json:"suggested_labels,omitempty"` // optional, planner-suggested labels to apply (#14)
     Questions            []Question   `json:"questions"`
     EstimatedComplexity  string       `json:"estimated_complexity"`  // small | medium | large
     ReadyToExecute       bool         `json:"ready_to_execute"`      // false until all questions answered
@@ -427,6 +428,7 @@ When a worker finishes plan mode, it MUST emit a JSON file at `<repo>/.prismcond
     {"path": "tests/integration/gsx/spells/test_new_spell.py", "intent": "add"}
   ],
   "dependencies_detected": [1116, 1117],
+  "suggested_labels": ["backend", "good-first-issue"],
   "questions": [
     {
       "id": "q1",
@@ -442,6 +444,12 @@ When a worker finishes plan mode, it MUST emit a JSON file at `<repo>/.prismcond
 ```
 
 `ready_to_execute` is `true` only when `questions` is empty (or all answered in a revision).
+
+`suggested_labels` is optional (`omitempty`). Populated by `conductor-plan` from `gh label list`
+plus a semantic match against the issue title/body. Plans without it deserialize cleanly — older
+revisions on disk and native-mode skills are unaffected. The UI renders each entry as a click-to-apply
+chip in the PlanModal; if the suggested label doesn't yet exist on GitHub, the chip opens the
+LabelsModal pre-filled rather than auto-creating.
 
 ### 9.2 AskUserQuestion Schema (UI-rendered)
 

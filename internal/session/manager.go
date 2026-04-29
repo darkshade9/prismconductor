@@ -37,6 +37,12 @@ type StateChangeHandler func(sess types.Session, prev types.SessionState)
 // persisting it.
 type PlanReadyHandler func(sess types.Session, planPath string)
 
+// ActivityHandler receives a session-liveness ping (most recent tool call,
+// running tool count). Used to drive the UI's "still alive, doing X" hint.
+// Implementations should debounce — emissions are already throttled at the
+// manager level but each session may fire concurrently.
+type ActivityHandler func(types.SessionActivity)
+
 type Manager struct {
 	bus           *eventbus.Bus
 	emit          LineHandler
@@ -44,6 +50,7 @@ type Manager struct {
 	store         Persister
 	onStateChange StateChangeHandler
 	onPlanReady   PlanReadyHandler
+	onActivity    ActivityHandler
 
 	mu       sync.RWMutex
 	sessions map[string]*runtimeSession
@@ -57,6 +64,12 @@ type runtimeSession struct {
 	transcriptPath string
 	transcriptFile *os.File
 	parser         *StreamParser
+
+	actMu          sync.Mutex
+	toolCount      int
+	lastAction     string
+	lastActionAt   time.Time
+	lastEmittedAt  time.Time
 }
 
 func NewManager(bus *eventbus.Bus, emit LineHandler) *Manager {
@@ -73,6 +86,10 @@ func (m *Manager) Configure(transcriptDir string, store Persister, onChange Stat
 // SetOnPlanReady registers the handler invoked when a worker prints the
 // "Plan written" sentinel.
 func (m *Manager) SetOnPlanReady(h PlanReadyHandler) { m.onPlanReady = h }
+
+// SetOnActivity registers a handler called on tool-call activity (throttled
+// to ~2/sec/session). Used to drive the UI's per-card liveness indicator.
+func (m *Manager) SetOnActivity(h ActivityHandler) { m.onActivity = h }
 
 // SpawnPlan launches a plan-mode worker per §10.1 / §10.4.
 func (m *Manager) SpawnPlan(ws types.Workspace, issue types.Issue) (*types.Session, error) {
@@ -183,6 +200,7 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 				m.emit(rs.sess.ID, line)
 			}
 			m.matchPatterns(rs, line)
+			m.recordActivity(rs, line)
 		}
 	}
 	for {
@@ -267,6 +285,44 @@ func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 		if m.onStateChange != nil {
 			m.onStateChange(*rs.sess, prev)
 		}
+	}
+}
+
+// recordActivity ticks the per-session counters when a tool call goes by and
+// emits a throttled activity event. RoleTool ("@tool ") prefix is the canonical
+// signal from streamjson.go.
+func (m *Manager) recordActivity(rs *runtimeSession, line string) {
+	if !strings.HasPrefix(line, RoleTool) {
+		return
+	}
+	action := strings.TrimSpace(line[len(RoleTool):])
+	// Trim the JSON args off the action label — keep just the tool name +
+	// optional first arg word for the card display.
+	if i := strings.Index(action, " "); i > 0 {
+		action = action[:i]
+	}
+	now := time.Now()
+	rs.actMu.Lock()
+	rs.toolCount++
+	rs.lastAction = action
+	rs.lastActionAt = now
+	emit := false
+	if now.Sub(rs.lastEmittedAt) >= 500*time.Millisecond {
+		rs.lastEmittedAt = now
+		emit = true
+	}
+	count := rs.toolCount
+	rs.actMu.Unlock()
+
+	if emit && m.onActivity != nil {
+		m.onActivity(types.SessionActivity{
+			SessionID:    rs.sess.ID,
+			WorkspaceID:  rs.sess.WorkspaceID,
+			IssueNumber:  rs.sess.IssueNumber,
+			ToolCount:    count,
+			LastAction:   action,
+			LastActionAt: now,
+		})
 	}
 }
 

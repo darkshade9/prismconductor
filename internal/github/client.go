@@ -5,12 +5,15 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	gh "github.com/google/go-github/v62/github"
 
 	"prismconductor/internal/types"
 )
+
+var hexColorRe = regexp.MustCompile(`^[0-9a-f]{6}$`)
 
 type Client struct {
 	api *gh.Client
@@ -80,4 +83,110 @@ func (c *Client) FetchOpenIssues(ctx context.Context, ws types.Workspace) ([]typ
 		opts.Page = resp.NextPage
 	}
 	return out, nil
+}
+
+// ListLabels returns every label defined on the workspace's GitHub repo.
+func (c *Client) ListLabels(ctx context.Context, ws types.Workspace) ([]types.Label, error) {
+	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {
+		return nil, fmt.Errorf("workspace %q missing github_owner / github_repo", ws.ID)
+	}
+	opts := &gh.ListOptions{PerPage: 100}
+	var out []types.Label
+	for {
+		page, resp, err := c.api.Issues.ListLabels(ctx, ws.GitHubOwner, ws.GitHubRepo, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, l := range page {
+			out = append(out, types.Label{
+				Name:        l.GetName(),
+				Color:       strings.ToLower(l.GetColor()),
+				Description: l.GetDescription(),
+			})
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return out, nil
+}
+
+func validateLabelColor(c string) error {
+	if !hexColorRe.MatchString(c) {
+		return fmt.Errorf("color must be 6 lowercase hex chars (got %q)", c)
+	}
+	return nil
+}
+
+// CreateLabel adds a label on the workspace's GitHub repo.
+func (c *Client) CreateLabel(ctx context.Context, ws types.Workspace, label types.Label) (types.Label, error) {
+	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {
+		return types.Label{}, fmt.Errorf("workspace %q missing github_owner / github_repo", ws.ID)
+	}
+	color := strings.ToLower(strings.TrimPrefix(label.Color, "#"))
+	if err := validateLabelColor(color); err != nil {
+		return types.Label{}, err
+	}
+	in := &gh.Label{
+		Name:        gh.String(label.Name),
+		Color:       gh.String(color),
+		Description: gh.String(label.Description),
+	}
+	got, _, err := c.api.Issues.CreateLabel(ctx, ws.GitHubOwner, ws.GitHubRepo, in)
+	if err != nil {
+		return types.Label{}, err
+	}
+	return types.Label{
+		Name:        got.GetName(),
+		Color:       strings.ToLower(got.GetColor()),
+		Description: got.GetDescription(),
+	}, nil
+}
+
+// UpdateLabel renames / recolors / re-describes an existing label. originalName
+// is the current name on GitHub; patch.Name is the new name (may match).
+func (c *Client) UpdateLabel(ctx context.Context, ws types.Workspace, originalName string, patch types.Label) (types.Label, error) {
+	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {
+		return types.Label{}, fmt.Errorf("workspace %q missing github_owner / github_repo", ws.ID)
+	}
+	color := strings.ToLower(strings.TrimPrefix(patch.Color, "#"))
+	if err := validateLabelColor(color); err != nil {
+		return types.Label{}, err
+	}
+	in := &gh.Label{
+		Name:        gh.String(patch.Name),
+		Color:       gh.String(color),
+		Description: gh.String(patch.Description),
+	}
+	got, _, err := c.api.Issues.EditLabel(ctx, ws.GitHubOwner, ws.GitHubRepo, originalName, in)
+	if err != nil {
+		return types.Label{}, err
+	}
+	return types.Label{
+		Name:        got.GetName(),
+		Color:       strings.ToLower(got.GetColor()),
+		Description: got.GetDescription(),
+	}, nil
+}
+
+// DeleteLabel removes a label on the workspace's GitHub repo.
+func (c *Client) DeleteLabel(ctx context.Context, ws types.Workspace, name string) error {
+	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {
+		return fmt.Errorf("workspace %q missing github_owner / github_repo", ws.ID)
+	}
+	_, err := c.api.Issues.DeleteLabel(ctx, ws.GitHubOwner, ws.GitHubRepo, name)
+	return err
+}
+
+// SetIssueLabels replaces an issue's labels with the given set.
+func (c *Client) SetIssueLabels(ctx context.Context, ws types.Workspace, issueNumber int, names []string) error {
+	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {
+		return fmt.Errorf("workspace %q missing github_owner / github_repo", ws.ID)
+	}
+	if names == nil {
+		names = []string{}
+	}
+	_, _, err := c.api.Issues.ReplaceLabelsForIssue(ctx, ws.GitHubOwner, ws.GitHubRepo, issueNumber, names)
+	return err
 }
