@@ -70,12 +70,21 @@ export function GoalPane() {
             <span className="text-slate-600">none — {goals.length === 0 ? "create one →" : "activate from Up Next →"}</span>
           )}
           {active && (
-            <button
-              onClick={() => setStatus(active.id, "achieved")}
-              className="text-xs text-emerald-400 hover:underline ml-2"
-            >
-              mark achieved
-            </button>
+            <>
+              <button
+                onClick={() => setStatus(active.id, "achieved")}
+                className="text-xs text-emerald-400 hover:underline ml-2"
+              >
+                mark achieved
+              </button>
+              <button
+                onClick={() => setStatus(active.id, "backlog")}
+                className="text-xs text-slate-400 hover:text-slate-200 hover:underline ml-2"
+                title="Stop auto-pull and return goal to Up Next"
+              >
+                deactivate
+              </button>
+            </>
           )}
         </div>
         <div className="flex items-center gap-2 text-xs">

@@ -869,6 +869,17 @@ func (a *App) ListPlans(workspaceID string, issueNumber int) ([]types.Plan, erro
 	return a.store.ListPlans(workspaceID, issueNumber)
 }
 
+// ListPendingPlans returns every issue whose latest plan revision has not
+// been approved yet. Frontend calls this on mount to rehydrate the
+// "plan ready (rev N)" glow on cards that had a plan ready when the user
+// last quit the app.
+func (a *App) ListPendingPlans() ([]store.PendingPlan, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store unavailable")
+	}
+	return a.store.ListPendingPlans()
+}
+
 // AnswerSubmission is the frontend's payload for the answers form.
 type AnswerSubmission struct {
 	WorkspaceID string              `json:"workspace_id"`

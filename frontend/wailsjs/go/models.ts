@@ -912,6 +912,27 @@ export namespace main {
 
 }
 
+export namespace store {
+	
+	export class PendingPlan {
+	    workspace_id: string;
+	    issue_number: number;
+	    revision: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PendingPlan(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.workspace_id = source["workspace_id"];
+	        this.issue_number = source["issue_number"];
+	        this.revision = source["revision"];
+	    }
+	}
+
+}
+
 export namespace types {
 	
 	export class ConventionHints {
@@ -1206,6 +1227,7 @@ export namespace types {
 	    ended_at?: any;
 	    pid: number;
 	    last_prompt: string;
+	    blocked_reason?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
@@ -1222,6 +1244,7 @@ export namespace types {
 	        this.ended_at = this.convertValues(source["ended_at"], null);
 	        this.pid = source["pid"];
 	        this.last_prompt = source["last_prompt"];
+	        this.blocked_reason = source["blocked_reason"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

@@ -98,6 +98,10 @@ export function ListLabels(arg1) {
   return window['go']['main']['App']['ListLabels'](arg1);
 }
 
+export function ListPendingPlans() {
+  return window['go']['main']['App']['ListPendingPlans']();
+}
+
 export function ListPlans(arg1, arg2) {
   return window['go']['main']['App']['ListPlans'](arg1, arg2);
 }

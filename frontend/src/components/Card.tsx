@@ -31,16 +31,27 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   // Live state: subscribe to the *whole* sessions table so we re-render when any
   // session changes.
   const allSessions = useSessionStore((s) => s.sessions);
-  const { activeSession, activity } = (() => {
+  const { activeSession, activity, lastFailure } = (() => {
+    let active: types.Session | null = null;
+    let activeAct: SessionActivity | null = null;
+    let lastFail: types.Session | null = null;
     for (const view of Object.values(allSessions)) {
       const m = view.meta;
       if (!m) continue;
       if (m.workspace_id !== issue.workspace_id || m.issue_number !== issue.number) continue;
       if (m.state === "running" || m.state === "waiting_for_input" || m.state === "blocked") {
-        return { activeSession: m, activity: view.activity ?? null };
+        if (!active) {
+          active = m;
+          activeAct = view.activity ?? null;
+        }
+      } else if ((m.state === "failed" || m.state === "blocked") && m.blocked_reason) {
+        // Newest failed-with-reason session, regardless of column.
+        if (!lastFail || String(m.started_at ?? "") > String(lastFail.started_at ?? "")) {
+          lastFail = m;
+        }
       }
     }
-    return { activeSession: null, activity: null };
+    return { activeSession: active, activity: activeAct, lastFailure: lastFail };
   })();
   if (activeSession) {
     // Visible in DevTools (Cmd+Opt+I in the Wails window) — confirms the
@@ -73,6 +84,8 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         // Blocked beats mode color — failure signal must be unmistakable.
         activeSession && activeSession.state === "blocked"
           ? "border-red-500 card-glow-blocked"
+          : !activeSession && lastFailure
+          ? "border-red-500 card-glow-blocked"
           : activeSession && activeSession.mode === "plan"
           ? "border-sky-500 card-glow-plan"
           : activeSession && activeSession.mode === "execute"
@@ -95,6 +108,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
       <StatusRow
         activeSession={activeSession}
         activity={activity}
+        lastFailure={lastFailure}
         planReady={planReady}
         blocked={blocked}
         isPrimitive={isPrimitive}
@@ -119,6 +133,7 @@ function useNow(intervalMs: number) {
 function StatusRow({
   activeSession,
   activity,
+  lastFailure,
   planReady,
   blocked,
   isPrimitive,
@@ -129,6 +144,7 @@ function StatusRow({
 }: {
   activeSession: types.Session | null;
   activity: SessionActivity | null;
+  lastFailure: types.Session | null;
   planReady: { revision: number } | null;
   blocked: boolean;
   isPrimitive: boolean;
@@ -163,6 +179,19 @@ function StatusRow({
         {activity && activity.last_action && (
           <ActivityHint activity={activity} />
         )}
+      </div>
+    );
+  }
+  if (lastFailure) {
+    const reason = lastFailure.blocked_reason || "session ended without success";
+    return (
+      <div className="text-[11px] mt-1.5 space-y-0.5" title={reason}>
+        <div className="flex items-center gap-1.5">
+          <Pulse className="bg-red-400" />
+          <span className="text-red-300">blocked</span>
+          <span className="text-slate-500">· {lastFailure.mode}</span>
+        </div>
+        <div className="text-slate-400 break-words">⚠ {reason}</div>
       </div>
     );
   }

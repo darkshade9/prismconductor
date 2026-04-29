@@ -5,6 +5,7 @@ import {main} from '../models';
 import {githubauth} from '../models';
 import {github} from '../models';
 import {workspace} from '../models';
+import {store} from '../models';
 import {logbuffer} from '../models';
 
 export function ActivateGoal(arg1:string):Promise<void>;
@@ -54,6 +55,8 @@ export function ListGoals():Promise<Array<types.Goal>>;
 export function ListIssues(arg1:string):Promise<Array<types.Issue>>;
 
 export function ListLabels(arg1:string):Promise<Array<types.Label>>;
+
+export function ListPendingPlans():Promise<Array<store.PendingPlan>>;
 
 export function ListPlans(arg1:string,arg2:number):Promise<Array<types.Plan>>;
 

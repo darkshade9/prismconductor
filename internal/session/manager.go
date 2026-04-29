@@ -291,6 +291,17 @@ func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 		rs.sess.State = types.StateCompleted
 	case strings.Contains(line, PatternBlocked):
 		rs.sess.State = types.StateBlocked
+		// Capture the reason text after the BLOCKED: prefix so the UI can
+		// surface it on the card. The line is already stripped + role-prefixed
+		// (e.g. "@asst BLOCKED: tests failed — 3 failures") so we hunt for
+		// the literal sentinel and take the rest of the line.
+		if i := strings.Index(line, PatternBlocked); i >= 0 {
+			reason := strings.TrimSpace(line[i+len(PatternBlocked):])
+			if len(reason) > 500 {
+				reason = reason[:500]
+			}
+			rs.sess.BlockedReason = reason
+		}
 		if m.bus != nil {
 			m.bus.Publish(eventbus.EvtWorkerBlocked, rs.sess.ID)
 		}
@@ -389,13 +400,17 @@ func (m *Manager) Snapshot() []types.Session {
 // per §10.1 / §10.2 — they're one-shot operations.
 
 // claudeArgs are the universal flags every conductor-spawned worker uses:
-//   - -p: non-interactive print mode (one-shot worker)
+//   - -p: non-interactive print mode (one-shot worker).
 //   - --output-format stream-json + --include-partial-messages + --verbose:
 //     emits a JSON event per token / tool call so the UI shows live progress
 //     instead of waiting silently for the final response.
-//   - --permission-mode acceptEdits: the worker writes plan / answer / code
-//     files in the workspace's repo without an interactive approval gate
-//     (which `-p` mode can't answer).
+//   - --permission-mode bypassPermissions: the worker is fully agentic. The
+//     plan skill needs `gh issue view`, `gh label list`, `git grep`; the
+//     execute skill needs `git switch`, `gh pr create`, the project's lint /
+//     build / test commands. acceptEdits only auto-approves Edit/Write tool
+//     calls — every Bash invocation still asks for approval, which a -p
+//     worker can't answer, so it halts. bypass is the right level for a
+//     hands-off conductor where the user already approved the plan.
 func claudeArgs(prompt string) []string {
 	return []string{
 		"claude",
@@ -403,7 +418,7 @@ func claudeArgs(prompt string) []string {
 		"--output-format", "stream-json",
 		"--include-partial-messages",
 		"--verbose",
-		"--permission-mode", "acceptEdits",
+		"--permission-mode", "bypassPermissions",
 		prompt,
 	}
 }

@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { EventsOn } from "../wailsjs/runtime/runtime";
-import { GetWorkerPoolStatus, ListSessions, RefreshIssuesNow, SpawnDemo, SpawnPlanForIssue } from "../wailsjs/go/main/App";
+import {
+  GetWorkerPoolStatus,
+  ListPendingPlans,
+  ListSessions,
+  RefreshIssuesNow,
+  SpawnDemo,
+  SpawnPlanForIssue,
+} from "../wailsjs/go/main/App";
 import { types } from "../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "./stores/sessionStore";
 // useSessionStore.getState() is also used directly inside the activity handler.
@@ -51,6 +58,19 @@ function App() {
     ListSessions().then((all) => {
       (all ?? []).forEach((s) => setMeta(s));
     });
+    // Rehydrate plan-ready glow on cards whose latest plan revision was
+    // never approved/rejected — survives app restarts.
+    ListPendingPlans()
+      .then((pending) => {
+        (pending ?? []).forEach((p) =>
+          markPlanReady({
+            workspace_id: p.workspace_id,
+            issue_number: p.issue_number,
+            revision: p.revision,
+          }),
+        );
+      })
+      .catch(() => {});
     const offLine = EventsOn("session.line", (data: { session_id: string; line: string }) => {
       appendLine(data.session_id, data.line);
     });

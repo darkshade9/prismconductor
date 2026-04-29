@@ -73,11 +73,17 @@ These run before commit. Failures here are **stop-the-world** events: print `BLO
 17. Print exactly `PR_OPENED: <url>` on its own line so the conductor can parse the PR number and move the card to TESTING.
 18. Print `Work complete.` so the PTY parser advances state (§10.3).
 
-### Failure paths
+### Failure paths (NON-NEGOTIABLE: ALWAYS print `BLOCKED:` before exiting)
 
-- Steps 4-6 (branch hygiene) failures → `BLOCKED: <reason>`. No branch created, nothing to clean up.
-- Step 9-11 (verification) failures → `BLOCKED: <reason>`. Branch exists with WIP code so the user can `git switch <branch>` and finish manually. Do not push.
-- Steps 12-15 (commit/push/PR) failures (network down, no remote, push rejected, etc.) → `BLOCKED: <reason>`. Branch + commit exist locally.
+If you cannot complete this skill for ANY reason — permission denial, command refused, network error, missing file, lint/build/test fail, push rejected, branch conflict, ANYTHING — your last printed line MUST start with the literal `BLOCKED: ` followed by a one-line reason. The conductor only treats a session as truly blocked when it sees that exact prefix; printing `Halting because…` or just exiting cleanly without the sentinel makes the card show "completed" even though no work shipped.
+
+- Steps 4-6 (branch hygiene) failures → `BLOCKED: <reason>`. No branch created.
+- Step 9-11 (verification) failures → `BLOCKED: <reason>`. Branch exists with WIP code; do not push.
+- Steps 12-15 (commit/push/PR) failures → `BLOCKED: <reason>`. Branch + commit exist locally.
+- Tool-permission denial (Bash/Edit/Write refused) → `BLOCKED: tool denied: <command>`. Do not interpret a denial as "user wants me to stop quietly" — surface it.
+- Anything else preventing reaching step 17 → `BLOCKED: <reason>`.
+
+`Work complete.` and `PR_OPENED:` are reserved for the success path only — never print them on a failure.
 
 ## Mid-execution questions
 

@@ -168,16 +168,17 @@ const (
 // --- Session (§6.5) ---
 
 type Session struct {
-	ID          string       `json:"id"`
-	WorkspaceID string       `json:"workspace_id"`
-	IssueNumber int          `json:"issue_number"`
-	Mode        SessionMode  `json:"mode"`
-	State       SessionState `json:"state"`
-	StartedAt   time.Time    `json:"started_at"`
-	EndedAt     *time.Time   `json:"ended_at,omitempty"`
-	PID         int          `json:"pid"`
-	Transcript  string       `json:"-"`
-	LastPrompt  string       `json:"last_prompt"`
+	ID            string       `json:"id"`
+	WorkspaceID   string       `json:"workspace_id"`
+	IssueNumber   int          `json:"issue_number"`
+	Mode          SessionMode  `json:"mode"`
+	State         SessionState `json:"state"`
+	StartedAt     time.Time    `json:"started_at"`
+	EndedAt       *time.Time   `json:"ended_at,omitempty"`
+	PID           int          `json:"pid"`
+	Transcript    string       `json:"-"`
+	LastPrompt    string       `json:"last_prompt"`
+	BlockedReason string       `json:"blocked_reason,omitempty"`
 }
 
 // SessionActivity is the per-tick liveness payload emitted on the
