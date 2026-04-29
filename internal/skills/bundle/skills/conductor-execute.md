@@ -7,6 +7,11 @@ description: Resumes an issue from an approved plan plus answered questions. Imp
 
 Bundled by PrismConductor (PRISMCONDUCTOR_PLAN.md §15.7).
 
+> Note (issue #22): the conductor spawns this skill inside a per-execute git
+> worktree off `origin/<BASE>`. The branch is pre-created. The user's primary
+> checkout is unaffected by anything you do here. Multiple parallel execute
+> workers each run in their own worktree.
+
 ## Inputs
 
 - `--issue <number>` (required)
@@ -27,9 +32,16 @@ These steps are mandatory and must run in this order. Do **not** edit any files 
 ### 2. Branch hygiene (NON-NEGOTIABLE)
 
 4. Determine the default branch via `gh repo view --json defaultBranchRef -q .defaultBranchRef.name` (or `git symbolic-ref refs/remotes/origin/HEAD` as fallback). Call it `BASE`.
-5. Refuse to operate on a dirty working tree. If `git status --porcelain` is non-empty:
-   - Print `BLOCKED: working tree has uncommitted changes; resolve before re-running` and exit. Do not stash, do not commit, do not delete.
-6. `git fetch origin` then `git switch -c feat/issue-<num>-<slug> origin/<BASE>`. The slug is a kebab-case truncation of the issue title (≤40 chars). If the branch already exists locally or remotely, use `feat/issue-<num>-<slug>-<short-uuid>` instead — never overwrite an existing branch.
+5. **You are running inside a conductor-managed worktree.** The conductor has
+   already fetched origin, created a fresh `feat/issue-<num>-<slug>` branch off
+   `origin/<BASE>`, and put you on it. Do NOT `git switch` to a different
+   branch. Do NOT `git stash`, do NOT `git reset` — the working tree was just
+   created clean. Sanity check ONLY:
+   ```
+   git status --short            # should be empty
+   git branch --show-current     # should start with feat/issue-<num>-
+   ```
+   If either check fails: print `BLOCKED: worktree integrity check failed — <reason>` and exit. Do not attempt to recover.
 
 ### 3. Implementation
 
@@ -65,6 +77,7 @@ These run before commit. Failures here are **stop-the-world** events: print `BLO
     - The list of files modified
     - **Verification:** lint command + result, build command + result, test command + result with pass/fail counts
     - Anything skipped or flagged for human review
+    - `Workspace mode: per-execute worktree at <pwd>` — surfaces the conductor isolation mode for reviewers (run `pwd` to fill the path).
     - The literal trailer line `Closes #<num>`
 16. Capture the PR URL from the `gh pr create` output.
 

@@ -19,6 +19,7 @@ import (
 	gh "github.com/google/go-github/v62/github"
 
 	"prismconductor/internal/eventbus"
+	pcgit "prismconductor/internal/git"
 	pcgithub "prismconductor/internal/github"
 	"prismconductor/internal/logbuffer"
 	"prismconductor/internal/goalfilter"
@@ -120,6 +121,26 @@ func (a *App) startup(ctx context.Context) {
 		log.Printf("workspace registry: %v\n", err)
 	} else {
 		a.wsReg = r
+	}
+
+	// Issue #22: prune any orphan worktrees from prior conductor sessions, then
+	// remove worktrees for terminal-state sessions whose ended_at is older than
+	// 24h. Repeated on a 1h tick (q3=A) so a long-running app session catches
+	// post-success worktrees that aged in.
+	if a.wsReg != nil {
+		a.gcWorktreesAll()
+		go func() {
+			t := time.NewTicker(1 * time.Hour)
+			defer t.Stop()
+			for {
+				select {
+				case <-a.ctx.Done():
+					return
+				case <-t.C:
+					a.gcWorktreesAll()
+				}
+			}
+		}()
 	}
 
 	a.mgr = session.NewManager(a.bus, a.emitLine)
@@ -327,6 +348,80 @@ func (a *App) emitLine(sessionID, line string) {
 		"session_id": sessionID,
 		"line":       line,
 	})
+}
+
+// gcWorktreesAll prunes orphan worktree records and removes any
+// `.prismconductor/worktrees/<wsID>-<num>` directory whose most recent
+// terminal-state session ended more than 24h ago. Issue #22, q3=A.
+func (a *App) gcWorktreesAll() {
+	if a.wsReg == nil {
+		return
+	}
+	cutoff := time.Now().Add(-24 * time.Hour)
+	for _, ws := range a.wsReg.List() {
+		if ws.RepoPath == "" {
+			continue
+		}
+		if err := pcgit.Prune(ws.RepoPath); err != nil {
+			log.Printf("worktree prune %s: %v", ws.ID, err)
+		}
+		entries, err := pcgit.List(ws.RepoPath)
+		if err != nil {
+			continue
+		}
+		prefix := filepath.Join(ws.RepoPath, ".prismconductor", "worktrees")
+		for _, e := range entries {
+			if !strings.HasPrefix(e.Path, prefix) {
+				continue
+			}
+			if a.store == nil {
+				continue
+			}
+			ended, ok, err := a.store.MostRecentEndedAtForWorktree(ws.ID, e.Path)
+			if err != nil || !ok {
+				continue
+			}
+			if ended.Before(cutoff) {
+				if err := pcgit.Remove(ws.RepoPath, e.Path); err != nil {
+					log.Printf("24h GC remove %s: %v", e.Path, err)
+				}
+			}
+		}
+	}
+}
+
+// GCWorktrees force-removes every conductor-managed worktree under
+// `<RepoPath>/.prismconductor/worktrees/` for one workspace, regardless of
+// session state. Surfaced as a manual "something got jammed" recovery in the
+// Workspaces panel (issue #22). Returns the count of directories removed.
+func (a *App) GCWorktrees(workspaceID string) (int, error) {
+	if a.wsReg == nil {
+		return 0, fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return 0, fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	entries, err := pcgit.List(ws.RepoPath)
+	if err != nil {
+		return 0, err
+	}
+	prefix := filepath.Join(ws.RepoPath, ".prismconductor", "worktrees")
+	removed := 0
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Path, prefix) {
+			continue
+		}
+		if err := pcgit.Remove(ws.RepoPath, e.Path); err != nil {
+			log.Printf("GCWorktrees remove %s: %v", e.Path, err)
+			continue
+		}
+		removed++
+	}
+	if err := pcgit.Prune(ws.RepoPath); err != nil {
+		log.Printf("GCWorktrees prune %s: %v", ws.ID, err)
+	}
+	return removed, nil
 }
 
 // --- Bound methods exposed to frontend ---
@@ -1069,7 +1164,16 @@ func (a *App) ApprovePlan(workspaceID string, issueNumber, revision int) error {
 	if err := a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColInProgress); err != nil {
 		return err
 	}
-	if _, err := a.mgr.SpawnExecute(ws, types.Issue{Number: issueNumber, WorkspaceID: workspaceID}, plan); err != nil {
+	// Issue #22: SpawnExecute derives the branch slug from Issue.Title, so we
+	// load the full row instead of passing a stub. Fall back to the stub if
+	// the issue isn't in the store (e.g., conductor-only test rows that
+	// somehow lost their record), so an approved plan still spawns.
+	issue, err := a.store.LoadIssue(workspaceID, issueNumber)
+	if err != nil {
+		log.Printf("ApprovePlan: load issue #%d failed (%v); spawning with empty title", issueNumber, err)
+		issue = types.Issue{Number: issueNumber, WorkspaceID: workspaceID}
+	}
+	if _, err := a.mgr.SpawnExecute(ws, issue, plan); err != nil {
 		return err
 	}
 	a.bus.Publish(eventbus.EvtPlanApproved, map[string]any{

@@ -3,6 +3,10 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"prismconductor/internal/types"
 )
@@ -65,6 +69,53 @@ func (s *Store) LoadRunningSessions() ([]types.Session, string, error) {
 		}
 	}
 	return out, firstTranscript, rows.Err()
+}
+
+// MostRecentEndedAtForWorktree resolves the most recent terminal-state session
+// for the issue whose number is encoded in the worktree directory name
+// (`<wsID>-<num>`), returning its EndedAt timestamp.
+//
+// Used by the 24h GC walk (issue #22) to decide whether a Completed worktree
+// is old enough to reclaim. Returns ok=false when:
+//   - the path does not encode an issue number,
+//   - no terminal session exists for that issue,
+//   - the matching session has no EndedAt (state set before the timestamp
+//     was persisted; the GC treats this as "unknown, leave alone").
+//
+// Sessions table has no ended_at column; the timestamp lives only inside the
+// JSON blob, so this method unmarshals the row.
+func (s *Store) MostRecentEndedAtForWorktree(workspaceID, worktreePath string) (time.Time, bool, error) {
+	if s == nil || s.DB == nil {
+		return time.Time{}, false, errors.New("store unavailable")
+	}
+	base := filepath.Base(worktreePath)
+	idx := strings.LastIndex(base, "-")
+	if idx < 0 || idx == len(base)-1 {
+		return time.Time{}, false, nil
+	}
+	num, err := strconv.Atoi(base[idx+1:])
+	if err != nil {
+		return time.Time{}, false, nil
+	}
+	var raw string
+	err = s.DB.QueryRow(
+		`SELECT json FROM sessions
+		 WHERE workspace_id = ? AND issue_number = ?
+		   AND state IN ('completed','failed','blocked')
+		 ORDER BY rowid DESC LIMIT 1`,
+		workspaceID, num,
+	).Scan(&raw)
+	if err != nil {
+		return time.Time{}, false, nil
+	}
+	var sess types.Session
+	if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+		return time.Time{}, false, err
+	}
+	if sess.EndedAt == nil {
+		return time.Time{}, false, nil
+	}
+	return *sess.EndedAt, true, nil
 }
 
 // SessionTranscriptPath returns the spool path for a session id.

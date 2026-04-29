@@ -24,6 +24,8 @@ export function DeleteLabel(arg1:string,arg2:string):Promise<void>;
 
 export function FilterIssuesByActiveGoal(arg1:Array<types.Issue>):Promise<Array<types.Issue>>;
 
+export function GCWorktrees(arg1:string):Promise<number>;
+
 export function GetAutoPullPaused():Promise<boolean>;
 
 export function GetNotifyPrefs():Promise<main.NotifyPrefs>;
