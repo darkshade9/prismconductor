@@ -921,6 +921,126 @@ func (a *App) SetIssueLabels(workspaceID string, issueNumber int, names []string
 	return nil
 }
 
+// autoApplyPlanLabels intersects plan.SuggestedLabels with the workspace label
+// cache, drops missing names (logged, never invented — issue #24 q3 C),
+// reconciles the prior plan revision's axis label (q2 A), and pushes the
+// union via SetIssueLabels (which fires EvtIssueLabelChanged — q4 A).
+func (a *App) autoApplyPlanLabels(ws types.Workspace, issueNumber int, plan *types.Plan) {
+	if a.store == nil {
+		return
+	}
+	cache, err := a.store.ListLabels(ws.ID)
+	if err != nil {
+		log.Printf("auto-apply labels #%d: list cache: %v", issueNumber, err)
+		return
+	}
+	inCache := make(map[string]struct{}, len(cache))
+	for _, l := range cache {
+		inCache[l.Name] = struct{}{}
+	}
+
+	var keep []string
+	for _, name := range plan.SuggestedLabels {
+		if _, ok := inCache[name]; ok {
+			keep = append(keep, name)
+		} else {
+			log.Printf("auto-apply #%d: dropped suggestion %q (not in repo)", issueNumber, name)
+		}
+	}
+
+	issue, ok := a.findIssue(ws.ID, issueNumber)
+	if !ok {
+		return
+	}
+	priorAxis := a.priorAxisLabel(ws.ID, issueNumber, plan.Revision)
+	next := reconcileAutoLabels(issue.Labels, keep, priorAxis)
+	if labelSetEqual(issue.Labels, next) {
+		return
+	}
+	if err := a.SetIssueLabels(ws.ID, issueNumber, next); err != nil {
+		log.Printf("auto-apply #%d: SetIssueLabels: %v", issueNumber, err)
+	}
+}
+
+// priorAxisLabel returns the first label of the issue's previous plan revision
+// (if any). Used to decide whether to drop the obsolete axis on re-plan.
+func (a *App) priorAxisLabel(workspaceID string, issueNumber, revision int) string {
+	if a.store == nil || revision <= 1 {
+		return ""
+	}
+	prior, err := a.store.GetPlan(workspaceID, issueNumber, revision-1)
+	if err != nil || len(prior.SuggestedLabels) == 0 {
+		return ""
+	}
+	return prior.SuggestedLabels[0]
+}
+
+// reconcileAutoLabels implements issue #24 q2 A:
+//   - start from current
+//   - if priorAxis is on current AND not in keep, drop it
+//   - union with keep
+//   - preserve original ordering of current (minus dropped axis), then append new
+func reconcileAutoLabels(current, keep []string, priorAxis string) []string {
+	keepSet := make(map[string]struct{}, len(keep))
+	for _, k := range keep {
+		keepSet[k] = struct{}{}
+	}
+	have := make(map[string]struct{}, len(current))
+	out := make([]string, 0, len(current)+len(keep))
+	for _, c := range current {
+		if priorAxis != "" && c == priorAxis {
+			if _, stillSuggested := keepSet[c]; !stillSuggested {
+				continue
+			}
+		}
+		if _, dup := have[c]; dup {
+			continue
+		}
+		have[c] = struct{}{}
+		out = append(out, c)
+	}
+	for _, k := range keep {
+		if _, dup := have[k]; dup {
+			continue
+		}
+		have[k] = struct{}{}
+		out = append(out, k)
+	}
+	return out
+}
+
+func labelSetEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(a))
+	for _, x := range a {
+		seen[x] = struct{}{}
+	}
+	for _, x := range b {
+		if _, ok := seen[x]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *App) findIssue(workspaceID string, issueNumber int) (types.Issue, bool) {
+	if a.store == nil {
+		return types.Issue{}, false
+	}
+	rows, err := a.store.ListIssues(workspaceID)
+	if err != nil {
+		return types.Issue{}, false
+	}
+	for _, iss := range rows {
+		if iss.Number == issueNumber {
+			return iss, true
+		}
+	}
+	return types.Issue{}, false
+}
+
 // AddManualIssue lets the user create a fake issue card in any column. Used to
 // drive the board UI before #2 lands the real GitHub fetch loop.
 func (a *App) AddManualIssue(workspaceID string, number int, title, body string, labels []string, column string) (*types.Issue, error) {
@@ -1082,6 +1202,11 @@ func (a *App) handlePlanReady(sess types.Session, relPath string) {
 	if err := a.store.SavePlan(*plan); err != nil {
 		log.Printf("plan save failed: %v\n", err)
 		return
+	}
+	// Issue #24: auto-apply planner-suggested labels before announcing plan_ready
+	// so the modal opens with the chips already in their final state.
+	if ws.SkillProfile.AutoApplyLabelsEnabled() && len(plan.SuggestedLabels) > 0 {
+		a.autoApplyPlanLabels(ws, sess.IssueNumber, plan)
 	}
 	a.bus.Publish(eventbus.EvtPlanReady, map[string]any{
 		"workspace_id": sess.WorkspaceID,

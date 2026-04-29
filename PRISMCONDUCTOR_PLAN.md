@@ -179,6 +179,7 @@ type SkillProfile struct {
     NativeExecuteCommand string    `json:"native_execute_command"` // e.g. "/start-issue --resume-from-approved-plan"
     NativeCloseCommand   string    `json:"native_close_command"`   // e.g. "/check-and-close"
     ExtraContextFiles    []string  `json:"extra_context_files"`    // optional repo-local files to preload
+    AutoApplyLabels      *bool     `json:"auto_apply_labels,omitempty"` // nil = enabled (issue #24)
 }
 
 type SkillMode string
@@ -399,7 +400,7 @@ const (
 | `issue_added` (new GH issue matching filter) | Run rank+deps for the single new issue + neighbors. Insert into TODO at correct position. |
 | `issue_closed` | Remove from board (move to DONE column visually). Recompute unblocked status of dependents. Reorder TODO. |
 | `issue_label_changed` | Re-evaluate goal membership. Add/remove from candidate set if needed. |
-| `plan_ready` | Mark card "Plan Ready (rev N, K questions)". Notify user. **Do not auto-pull next** — wait for user approval first. |
+| `plan_ready` | Mark card "Plan Ready (rev N, K questions)". Notify user. **Do not auto-pull next** — wait for user approval first. If `SkillProfile.AutoApplyLabelsEnabled()` and `plan.SuggestedLabels` is non-empty, the orchestrator intersects with the workspace label cache and applies the union via `SetIssueLabels` (replacing the prior plan revision's axis label — issue #24). The resulting `EvtIssueLabelChanged` is the only side effect. |
 | `plan_approved` | Move card to IN_PROGRESS. Resume worker session in execute mode. |
 | `plan_rejected` | Move card back to TODO. Free worker slot. |
 | `plan_revised` | Mark card "Plan Ready (rev N+1)". Notify user. |
@@ -448,11 +449,17 @@ When a worker finishes plan mode, it MUST emit a JSON file at `<repo>/.prismcond
 
 `ready_to_execute` is `true` only when `questions` is empty (or all answered in a revision).
 
-`suggested_labels` is optional (`omitempty`). Populated by `conductor-plan` from `gh label list`
-plus a semantic match against the issue title/body. Plans without it deserialize cleanly — older
-revisions on disk and native-mode skills are unaffected. The UI renders each entry as a click-to-apply
-chip in the PlanModal; if the suggested label doesn't yet exist on GitHub, the chip opens the
-LabelsModal pre-filled rather than auto-creating.
+`suggested_labels` is optional (`omitempty`). Populated by `conductor-plan` with one **axis** label
+at index 0 (`enhancement` / `bug` / `refactor` / `documentation` / `test` — mapped from the issue
+type to whatever the repo's existing vocabulary calls it) followed by up to 4 **topical** labels
+naming the components/areas the plan touches (`frontend`, `backend`, `worker`, etc.). Topicals MAY
+be names the repo doesn't have yet; the conductor's auto-apply path (issue #24) drops missing names
+with a log line, and the PlanModal renders them as `(create)` chips so the user can opt to create
+them. Plans without `suggested_labels` deserialize cleanly — older revisions on disk and native-mode
+skills are unaffected. When the workspace's `SkillProfile.AutoApplyLabelsEnabled()` is true (the
+default), labels matching the cache are applied automatically on `plan_ready`; the modal still
+renders click-to-toggle chips for every entry, with an `(auto-applied)` badge on the ones already
+on the issue.
 
 ### 9.2 AskUserQuestion Schema (UI-rendered)
 
@@ -922,7 +929,7 @@ The conductor ships four universal skills with the binary:
 
 | Skill | Purpose |
 |---|---|
-| `conductor-plan` | Universal `/start-issue` analogue. Reads issue, greps repo, reads any `CLAUDE.md` + `.claude/rules/` present, emits plan JSON, stops. No code mutation. |
+| `conductor-plan` | Universal `/start-issue` analogue. Reads issue, greps repo, reads any `CLAUDE.md` + `.claude/rules/` present, classifies the issue (axis label at index 0 + up to 4 topical labels — issue #24), emits plan JSON, stops. No code mutation. |
 | `conductor-execute` | Resumes from approved plan + answered questions. Reads repo conventions from `ConventionHints` for test/build commands. Implements per plan. Opens draft PR. |
 | `conductor-close` | Universal `/check-and-close` analogue. Posts completion summary, closes issue. No commit/push beyond what was already done. |
 | `conductor-question` | Helper invoked inline when a worker needs to emit a structured question mid-execution. Writes to `<repo>/.prismconductor/questions/<id>.json`. |
