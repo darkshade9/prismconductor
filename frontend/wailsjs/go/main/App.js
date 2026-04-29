@@ -34,6 +34,10 @@ export function KillSession(arg1) {
   return window['go']['main']['App']['KillSession'](arg1);
 }
 
+export function ListSessions() {
+  return window['go']['main']['App']['ListSessions']();
+}
+
 export function ListWorkspaces() {
   return window['go']['main']['App']['ListWorkspaces']();
 }
@@ -50,6 +54,10 @@ export function PickRepoPath() {
   return window['go']['main']['App']['PickRepoPath']();
 }
 
+export function ReadTranscript(arg1) {
+  return window['go']['main']['App']['ReadTranscript'](arg1);
+}
+
 export function RemoveWorkspace(arg1) {
   return window['go']['main']['App']['RemoveWorkspace'](arg1);
 }
@@ -60,6 +68,10 @@ export function SendInput(arg1, arg2) {
 
 export function SpawnDemo() {
   return window['go']['main']['App']['SpawnDemo']();
+}
+
+export function SpawnPlanForIssue(arg1, arg2) {
+  return window['go']['main']['App']['SpawnPlanForIssue'](arg1, arg2);
 }
 
 export function UpdateWorkspace(arg1) {

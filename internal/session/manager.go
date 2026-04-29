@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,24 +23,46 @@ import (
 // LineHandler receives each PTY output line as it arrives.
 type LineHandler func(sessionID string, line string)
 
-// Manager spawns and tracks worker subprocesses.
+// Persister is the slice of *store.Store that the session manager needs.
+// Defined as an interface so the package doesn't depend on store directly.
+type Persister interface {
+	SaveSession(sess *types.Session, transcriptPath string) error
+	UpdateSessionState(id string, state types.SessionState) error
+}
+
+// StateChangeHandler is fired on every state transition. Used by the App layer
+// to fan out OS notifications + Wails events.
+type StateChangeHandler func(sess types.Session, prev types.SessionState)
+
 type Manager struct {
-	bus  *eventbus.Bus
-	emit LineHandler
+	bus           *eventbus.Bus
+	emit          LineHandler
+	transcriptDir string
+	store         Persister
+	onStateChange StateChangeHandler
 
 	mu       sync.RWMutex
 	sessions map[string]*runtimeSession
 }
 
 type runtimeSession struct {
-	sess   *types.Session
-	cmd    *exec.Cmd
-	pty    *os.File
-	cancel context.CancelFunc
+	sess           *types.Session
+	cmd            *exec.Cmd
+	pty            *os.File
+	cancel         context.CancelFunc
+	transcriptPath string
+	transcriptFile *os.File
 }
 
 func NewManager(bus *eventbus.Bus, emit LineHandler) *Manager {
 	return &Manager{bus: bus, emit: emit, sessions: map[string]*runtimeSession{}}
+}
+
+// Configure wires optional persistence + state-change side effects.
+func (m *Manager) Configure(transcriptDir string, store Persister, onChange StateChangeHandler) {
+	m.transcriptDir = transcriptDir
+	m.store = store
+	m.onStateChange = onChange
 }
 
 // SpawnPlan launches a plan-mode worker per §10.1 / §10.4.
@@ -86,7 +109,25 @@ func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.Sessio
 		StartedAt:   time.Now(),
 		PID:         cmd.Process.Pid,
 	}
+
 	rs := &runtimeSession{sess: sess, cmd: cmd, pty: f, cancel: cancel}
+
+	if m.transcriptDir != "" {
+		_ = os.MkdirAll(m.transcriptDir, 0o755)
+		rs.transcriptPath = filepath.Join(m.transcriptDir, sess.ID+".log")
+		if tf, err := os.Create(rs.transcriptPath); err == nil {
+			rs.transcriptFile = tf
+		}
+	}
+	sess.Transcript = rs.transcriptPath
+
+	if m.store != nil {
+		_ = m.store.SaveSession(sess, rs.transcriptPath)
+	}
+	if m.onStateChange != nil {
+		m.onStateChange(*sess, "")
+	}
+
 	m.mu.Lock()
 	m.sessions[sess.ID] = rs
 	m.mu.Unlock()
@@ -96,7 +137,12 @@ func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.Sessio
 }
 
 func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
-	defer rs.pty.Close()
+	defer func() {
+		rs.pty.Close()
+		if rs.transcriptFile != nil {
+			rs.transcriptFile.Close()
+		}
+	}()
 	scanner := bufio.NewScanner(rs.pty)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -106,11 +152,15 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 		default:
 		}
 		line := scanner.Text()
+		if rs.transcriptFile != nil {
+			fmt.Fprintln(rs.transcriptFile, line)
+		}
 		if m.emit != nil {
 			m.emit(rs.sess.ID, line)
 		}
 		m.matchPatterns(rs, line)
 	}
+	prev := rs.sess.State
 	if err := rs.cmd.Wait(); err != nil {
 		rs.sess.State = types.StateFailed
 	} else if rs.sess.State == types.StateRunning {
@@ -118,12 +168,19 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 	}
 	end := time.Now()
 	rs.sess.EndedAt = &end
+	if m.store != nil {
+		_ = m.store.UpdateSessionState(rs.sess.ID, rs.sess.State)
+	}
+	if m.onStateChange != nil && prev != rs.sess.State {
+		m.onStateChange(*rs.sess, prev)
+	}
 	if m.bus != nil {
 		m.bus.Publish(eventbus.EvtWorkerSlotFreed, rs.sess.ID)
 	}
 }
 
 func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
+	prev := rs.sess.State
 	switch {
 	case strings.Contains(line, PatternQuestion):
 		rs.sess.State = types.StateWaitingForInput
@@ -138,6 +195,14 @@ func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 		rs.sess.State = types.StateBlocked
 		if m.bus != nil {
 			m.bus.Publish(eventbus.EvtWorkerBlocked, rs.sess.ID)
+		}
+	}
+	if rs.sess.State != prev {
+		if m.store != nil {
+			_ = m.store.UpdateSessionState(rs.sess.ID, rs.sess.State)
+		}
+		if m.onStateChange != nil {
+			m.onStateChange(*rs.sess, prev)
 		}
 	}
 }
@@ -167,6 +232,17 @@ func (m *Manager) SendInput(sessionID, text string) error {
 	}
 	_, err := io.WriteString(rs.pty, text)
 	return err
+}
+
+// Snapshot returns a copy of the current in-process session table.
+func (m *Manager) Snapshot() []types.Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]types.Session, 0, len(m.sessions))
+	for _, rs := range m.sessions {
+		out = append(out, *rs.sess)
+	}
+	return out
 }
 
 // --- §10.4 dispatch ---

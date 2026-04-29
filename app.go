@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
+	"time"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -39,6 +41,10 @@ type App struct {
 	cfgDir  string
 
 	pendingDevice *githubauth.DeviceCode
+
+	notifyMu      sync.Mutex
+	lastNotifyKey string
+	lastNotifyAt  int64
 }
 
 func NewApp() *App { return &App{} }
@@ -71,6 +77,74 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	a.mgr = session.NewManager(a.bus, a.emitLine)
+	a.mgr.Configure(filepath.Join(cfgDir, "transcripts"), a.store, a.handleSessionStateChange)
+
+	// Re-attach to sessions that were live at last shutdown (§15.3).
+	if a.store != nil {
+		if running, _, err := a.store.LoadRunningSessions(); err == nil {
+			a.mgr.Reattach(running)
+		}
+	}
+}
+
+// handleSessionStateChange runs on every session state transition. Fans the
+// new state to the UI as a Wails event and fires an OS notification per §15.6.
+func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionState) {
+	wruntime.EventsEmit(a.ctx, "session.state", sess)
+
+	if prev == sess.State {
+		return
+	}
+	switch sess.State {
+	case types.StateWaitingForInput, types.StateBlocked, types.StateCompleted, types.StateFailed:
+		// One notification per transition; dedupe identical kicks within 2s.
+		key := sess.ID + ":" + string(sess.State)
+		a.notifyMu.Lock()
+		now := nowUnix()
+		if key == a.lastNotifyKey && now-a.lastNotifyAt < 2 {
+			a.notifyMu.Unlock()
+			return
+		}
+		a.lastNotifyKey = key
+		a.lastNotifyAt = now
+		a.notifyMu.Unlock()
+
+		title := titleForWorkspace(a.wsReg, sess.WorkspaceID)
+		body := notifyBody(sess)
+		_ = notify.Send(title, body)
+	}
+}
+
+func titleForWorkspace(reg *workspace.Registry, id string) string {
+	if reg == nil || id == "" {
+		return "PrismConductor"
+	}
+	if ws, ok := reg.Get(id); ok {
+		return "PrismConductor — " + ws.DisplayName
+	}
+	return "PrismConductor"
+}
+
+func notifyBody(sess types.Session) string {
+	prefix := ""
+	if sess.IssueNumber > 0 {
+		prefix = fmt.Sprintf("#%d ", sess.IssueNumber)
+	}
+	switch sess.State {
+	case types.StateWaitingForInput:
+		return prefix + "needs input"
+	case types.StateBlocked:
+		return prefix + "is blocked"
+	case types.StateCompleted:
+		return prefix + "completed"
+	case types.StateFailed:
+		return prefix + "failed"
+	}
+	return prefix + string(sess.State)
+}
+
+func nowUnix() int64 {
+	return time.Now().Unix()
 }
 
 // emitLine fans PTY output out as a Wails event for the frontend SessionDrawer.
@@ -142,6 +216,49 @@ func (a *App) SpawnDemo() (*types.Session, error) {
 	cwd, _ := os.Getwd()
 	ws := types.Workspace{ID: "demo", RepoPath: cwd}
 	return a.mgr.SpawnRaw(ws, "claude", []string{"--version"})
+}
+
+// SpawnPlanForIssue spawns a plan-mode worker for the given issue in the given workspace.
+// Triggered by drag-to-PLAN once the board is wired (issue #3) — exposed now so flows can be tested.
+func (a *App) SpawnPlanForIssue(workspaceID string, issueNumber int) (*types.Session, error) {
+	if a.wsReg == nil {
+		return nil, fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return nil, fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	return a.mgr.SpawnPlan(ws, types.Issue{Number: issueNumber, WorkspaceID: workspaceID})
+}
+
+// ListSessions returns the live in-process sessions plus any running rows
+// from the store that haven't been re-attached.
+func (a *App) ListSessions() []types.Session {
+	if a.mgr == nil {
+		return nil
+	}
+	return a.mgr.Snapshot()
+}
+
+// ReadTranscript returns the full transcript file for a session id.
+// Used by the SessionDrawer when re-attaching to a session whose PTY is no
+// longer streaming (e.g., after app restart).
+func (a *App) ReadTranscript(sessionID string) (string, error) {
+	if a.store == nil {
+		return "", fmt.Errorf("store unavailable")
+	}
+	path, err := a.store.SessionTranscriptPath(sessionID)
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // KillSession terminates a running session.

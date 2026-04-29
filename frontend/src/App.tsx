@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { EventsOn } from "../wailsjs/runtime/runtime";
-import { SpawnDemo } from "../wailsjs/go/main/App";
+import { ListSessions, SpawnDemo, SpawnPlanForIssue } from "../wailsjs/go/main/App";
+import { types } from "../wailsjs/go/models";
 import { useSessionStore } from "./stores/sessionStore";
 import { useWorkspaceStore } from "./stores/workspaceStore";
 import { Board } from "./components/Board";
@@ -13,28 +14,41 @@ import { LoginButton } from "./components/LoginButton";
 
 function App() {
   const appendLine = useSessionStore((s) => s.appendLine);
+  const setMeta = useSessionStore((s) => s.setMeta);
   const setActive = useSessionStore((s) => s.setActive);
   const refreshWorkspaces = useWorkspaceStore((s) => s.refresh);
+  const selectedWorkspace = useWorkspaceStore((s) => s.selectedID);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [issueInput, setIssueInput] = useState("");
 
   useEffect(() => {
     refreshWorkspaces();
-    const off = EventsOn("session.line", (data: { session_id: string; line: string }) => {
+    ListSessions().then((all) => {
+      (all ?? []).forEach((s) => setMeta(s));
+    });
+    const offLine = EventsOn("session.line", (data: { session_id: string; line: string }) => {
       appendLine(data.session_id, data.line);
     });
+    const offState = EventsOn("session.state", (sess: types.Session) => {
+      setMeta(sess);
+    });
     return () => {
-      if (typeof off === "function") off();
+      if (typeof offLine === "function") offLine();
+      if (typeof offState === "function") offState();
     };
-  }, [appendLine, refreshWorkspaces]);
+  }, [appendLine, setMeta, refreshWorkspaces]);
 
   async function spawnDemo() {
     setBusy(true);
     try {
       const sess = await SpawnDemo();
-      if (sess?.id) setActive(sess.id);
+      if (sess?.id) {
+        setMeta(sess);
+        setActive(sess.id);
+      }
       setDrawerOpen(true);
     } catch (e) {
       appendLine("error", String(e));
@@ -45,23 +59,63 @@ function App() {
     }
   }
 
+  async function spawnIssue() {
+    if (!selectedWorkspace) {
+      alert("Pick a workspace first.");
+      return;
+    }
+    const num = parseInt(issueInput, 10);
+    if (!num) return;
+    setBusy(true);
+    try {
+      const sess = await SpawnPlanForIssue(selectedWorkspace, num);
+      if (sess?.id) {
+        setMeta(sess);
+        setActive(sess.id);
+      }
+      setDrawerOpen(true);
+      setIssueInput("");
+    } catch (e: any) {
+      alert(String(e?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="h-screen flex flex-col bg-slate-950 text-slate-200">
       <header className="flex items-center justify-between px-4 py-2 border-b border-slate-800">
         <div className="font-semibold">PrismConductor</div>
         <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={1}
+            value={issueInput}
+            onChange={(e) => setIssueInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && spawnIssue()}
+            placeholder="issue #"
+            className="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs"
+          />
+          <button
+            onClick={spawnIssue}
+            disabled={busy || !selectedWorkspace || !issueInput}
+            className="text-xs bg-sky-700 hover:bg-sky-600 disabled:opacity-40 px-2 py-1 rounded"
+            title={selectedWorkspace ? "" : "select a workspace first"}
+          >
+            Plan issue
+          </button>
           <button
             onClick={spawnDemo}
             disabled={busy}
             className="text-xs bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 px-2 py-1 rounded"
           >
-            {busy ? "Spawning…" : "Spawn `claude --version`"}
+            {busy ? "…" : "Spawn `claude --version`"}
           </button>
           <button
-            onClick={() => setPlanOpen(true)}
+            onClick={() => setDrawerOpen((v) => !v)}
             className="text-xs border border-slate-700 hover:bg-slate-800 px-2 py-1 rounded"
           >
-            Plan modal (stub)
+            Drawer
           </button>
           <button
             onClick={() => setSettingsOpen(true)}

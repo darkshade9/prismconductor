@@ -21,6 +21,8 @@ export function InspectRepo(arg1:string):Promise<workspace.Inspection>;
 
 export function KillSession(arg1:string):Promise<void>;
 
+export function ListSessions():Promise<Array<types.Session>>;
+
 export function ListWorkspaces():Promise<Array<types.Workspace>>;
 
 export function Notify(arg1:string,arg2:string):Promise<void>;
@@ -29,10 +31,14 @@ export function OnboardCheck(arg1:string):Promise<Array<workspace.OnboardCheck>>
 
 export function PickRepoPath():Promise<string>;
 
+export function ReadTranscript(arg1:string):Promise<string>;
+
 export function RemoveWorkspace(arg1:string):Promise<void>;
 
 export function SendInput(arg1:string,arg2:string):Promise<void>;
 
 export function SpawnDemo():Promise<types.Session>;
+
+export function SpawnPlanForIssue(arg1:string,arg2:number):Promise<types.Session>;
 
 export function UpdateWorkspace(arg1:types.Workspace):Promise<void>;
