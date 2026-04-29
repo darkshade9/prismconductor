@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +38,11 @@ type StateChangeHandler func(sess types.Session, prev types.SessionState)
 // persisting it.
 type PlanReadyHandler func(sess types.Session, planPath string)
 
+// PROpenedHandler is fired when the worker prints the §10.3 "PR_OPENED: <url>"
+// sentinel. The handler is responsible for parsing the PR number, persisting
+// it on the issue row, and publishing EvtPROpened.
+type PROpenedHandler func(sess types.Session, prURL string)
+
 // ActivityHandler receives a session-liveness ping (most recent tool call,
 // running tool count). Used to drive the UI's "still alive, doing X" hint.
 // Implementations should debounce — emissions are already throttled at the
@@ -50,6 +56,7 @@ type Manager struct {
 	store         Persister
 	onStateChange StateChangeHandler
 	onPlanReady   PlanReadyHandler
+	onPROpened    PROpenedHandler
 	onActivity    ActivityHandler
 
 	mu       sync.RWMutex
@@ -86,6 +93,10 @@ func (m *Manager) Configure(transcriptDir string, store Persister, onChange Stat
 // SetOnPlanReady registers the handler invoked when a worker prints the
 // "Plan written" sentinel.
 func (m *Manager) SetOnPlanReady(h PlanReadyHandler) { m.onPlanReady = h }
+
+// SetOnPROpened registers the handler invoked when a worker prints the
+// "PR_OPENED: <url>" sentinel.
+func (m *Manager) SetOnPROpened(h PROpenedHandler) { m.onPROpened = h }
 
 // SetOnActivity registers a handler called on tool-call activity (throttled
 // to ~2/sec/session). Used to drive the UI's per-card liveness indicator.
@@ -286,6 +297,16 @@ func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 		// has the plan id; if no handler is wired, publish a generic event.
 		if m.onPlanReady == nil && m.bus != nil {
 			m.bus.Publish(eventbus.EvtPlanReady, rs.sess.ID)
+		}
+	case strings.Contains(line, PatternPROpened):
+		// No state mutation here — worker keeps running until PatternComplete.
+		// Mirrors the PatternPlanWritten arm shape.
+		idx := strings.Index(line, PatternPROpened)
+		url := strings.TrimSpace(line[idx+len(PatternPROpened):])
+		if url == "" {
+			log.Printf("PR_OPENED sentinel with empty URL on session %s", rs.sess.ID)
+		} else if m.onPROpened != nil {
+			m.onPROpened(*rs.sess, url)
 		}
 	case strings.Contains(line, PatternComplete):
 		rs.sess.State = types.StateCompleted

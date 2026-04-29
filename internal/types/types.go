@@ -105,6 +105,8 @@ type Issue struct {
 	Plan         *Plan       `json:"plan,omitempty"`
 	SessionID    *string     `json:"session_id,omitempty"`
 	LastError    string      `json:"last_error,omitempty"`
+	PRNumber     *int        `json:"pr_number,omitempty"`
+	PRURL        string      `json:"pr_url,omitempty"`
 }
 
 type BoardColumn string

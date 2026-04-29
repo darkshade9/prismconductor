@@ -7,4 +7,5 @@ const (
 	PatternPlanWritten = "Plan written to .prismconductor/plans/"
 	PatternComplete    = "Work complete."
 	PatternBlocked     = "BLOCKED:"
+	PatternPROpened    = "PR_OPENED: "
 )

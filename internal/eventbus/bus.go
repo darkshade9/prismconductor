@@ -15,6 +15,7 @@ const (
 	EvtIssueClosed       EventType = "issue_closed"
 	EvtIssueLabelChanged EventType = "issue_label_changed"
 	EvtPlanReady         EventType = "plan_ready"
+	EvtPROpened          EventType = "pr_opened"
 	EvtPlanApproved      EventType = "plan_approved"
 	EvtPlanRejected      EventType = "plan_rejected"
 	EvtPlanRevised       EventType = "plan_revised"

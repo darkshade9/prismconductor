@@ -6,8 +6,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -120,6 +122,7 @@ func (a *App) startup(ctx context.Context) {
 	a.mgr = session.NewManager(a.bus, a.emitLine)
 	a.mgr.Configure(filepath.Join(cfgDir, "transcripts"), a.store, a.handleSessionStateChange)
 	a.mgr.SetOnPlanReady(a.handlePlanReady)
+	a.mgr.SetOnPROpened(a.handlePROpened)
 	a.mgr.SetOnActivity(func(act types.SessionActivity) {
 		wruntime.EventsEmit(a.ctx, "session.activity", act)
 	})
@@ -851,6 +854,57 @@ func (a *App) handlePlanReady(sess types.Session, relPath string) {
 	_ = a.store.MoveIssueColumn(sess.WorkspaceID, sess.IssueNumber, types.ColPlan)
 	_ = notify.Send(titleForWorkspace(a.wsReg, sess.WorkspaceID),
 		fmt.Sprintf("#%d plan ready (rev %d, %d questions)", sess.IssueNumber, plan.Revision, len(plan.Questions)))
+}
+
+// pullNumberRegexp extracts the PR number from a github.com pull URL.
+// Compiled once at package init.
+var pullNumberRegexp = regexp.MustCompile(`/pull/(\d+)`)
+
+func pullNumberFromURL(url string) (int, bool) {
+	m := pullNumberRegexp.FindStringSubmatch(url)
+	if len(m) < 2 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// handlePROpened persists the PR number + URL on the issue row, moves the
+// card to REVIEW, and fires an OS notification when a worker emits the
+// "PR_OPENED: <url>" sentinel.
+func (a *App) handlePROpened(sess types.Session, prURL string) {
+	if a.wsReg == nil || a.store == nil {
+		return
+	}
+	prURL = strings.TrimSpace(prURL)
+	if prURL == "" {
+		log.Printf("PR_OPENED: empty URL on session %s, skipping", sess.ID)
+		return
+	}
+	n, ok := pullNumberFromURL(prURL)
+	if !ok {
+		log.Printf("PR_OPENED: could not parse PR number from %q (session %s), skipping", prURL, sess.ID)
+		return
+	}
+	if _, ok := a.wsReg.Get(sess.WorkspaceID); !ok {
+		log.Printf("PR_OPENED: unknown workspace %q (session %s), skipping", sess.WorkspaceID, sess.ID)
+		return
+	}
+	if err := a.store.MarkPROpened(sess.WorkspaceID, sess.IssueNumber, n, prURL); err != nil {
+		log.Printf("PR_OPENED: MarkPROpened failed for #%d: %v", sess.IssueNumber, err)
+		return
+	}
+	a.bus.Publish(eventbus.EvtPROpened, map[string]any{
+		"workspace_id": sess.WorkspaceID,
+		"issue_number": sess.IssueNumber,
+		"pr_number":    n,
+		"pr_url":       prURL,
+	})
+	_ = notify.Send(titleForWorkspace(a.wsReg, sess.WorkspaceID),
+		fmt.Sprintf("#%d opened PR #%d", sess.IssueNumber, n))
 }
 
 // LatestPlan returns the highest-revision plan for an issue.

@@ -1153,6 +1153,8 @@ export namespace types {
 	    plan?: Plan;
 	    session_id?: string;
 	    last_error?: string;
+	    pr_number?: number;
+	    pr_url?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Issue(source);
@@ -1176,6 +1178,8 @@ export namespace types {
 	        this.plan = this.convertValues(source["plan"], Plan);
 	        this.session_id = source["session_id"];
 	        this.last_error = source["last_error"];
+	        this.pr_number = source["pr_number"];
+	        this.pr_url = source["pr_url"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
