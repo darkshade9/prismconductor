@@ -186,9 +186,12 @@ function StatusRow({
       : "working";
     const dotCls = isBlocked ? "bg-red-400" : planMode ? "bg-sky-400" : "bg-purple-400";
     const textCls = isBlocked ? "text-red-300" : planMode ? "text-sky-300" : "text-purple-300";
+    const tooltipReason = isBlocked
+      ? truncateForTooltip(activeSession.blocked_reason || "BLOCKED: (no reason given)")
+      : undefined;
     return (
       <div className="text-[11px] mt-1.5 space-y-0.5">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5" title={tooltipReason}>
           <Pulse className={dotCls} />
           <span className={textCls}>{label}</span>
           {activity && activity.tool_count > 0 && (
@@ -330,6 +333,11 @@ function ActivityHint({ activity }: { activity: SessionActivity }) {
       <span className="shrink-0">· {formatElapsed(seconds)}</span>
     </div>
   );
+}
+
+function truncateForTooltip(s: string): string {
+  const trimmed = s.trim();
+  return trimmed.length > 120 ? trimmed.slice(0, 117) + "…" : trimmed;
 }
 
 function formatElapsed(s: number): string {
