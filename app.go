@@ -112,6 +112,9 @@ func (a *App) startup(ctx context.Context) {
 				a.pool.SetCapacity(n)
 			}
 		}
+		if v, _ := a.store.GetSetting("auto_pull_paused"); v == "true" {
+			a.orch.SetPaused(true)
+		}
 	}
 	if r, err := workspace.New(cfgDir); err != nil {
 		log.Printf("workspace registry: %v\n", err)
@@ -813,6 +816,36 @@ func (a *App) SetWorkerPoolCapacity(n int) error {
 		_ = a.store.SetSetting("worker_pool_capacity", strconv.Itoa(n))
 	}
 	a.bus.Publish(eventbus.EvtAgentCountChanged, map[string]any{"prev": prev, "new": n})
+	return nil
+}
+
+// GetAutoPullPaused returns the live pause state from the orchestrator's
+// atomic.Bool — no DB round-trip per call.
+func (a *App) GetAutoPullPaused() bool {
+	if a.orch == nil {
+		return false
+	}
+	return a.orch.IsPaused()
+}
+
+// SetAutoPullPaused persists the toggle and updates the running orchestrator.
+// On resume (paused=false), kicks autoPull so catch-up is immediate.
+func (a *App) SetAutoPullPaused(paused bool) error {
+	if a.orch == nil || a.store == nil {
+		return fmt.Errorf("orchestrator/store unavailable")
+	}
+	a.orch.SetPaused(paused)
+	val := "false"
+	if paused {
+		val = "true"
+	}
+	if err := a.store.SetSetting("auto_pull_paused", val); err != nil {
+		return err
+	}
+	a.bus.Publish(eventbus.EvtAutoPullPausedChanged, map[string]any{"paused": paused})
+	if !paused {
+		a.orch.KickAutoPull("resumed")
+	}
 	return nil
 }
 

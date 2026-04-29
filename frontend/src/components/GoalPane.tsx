@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { FilterIssuesByActiveGoal } from "../../wailsjs/go/main/App";
+import { FilterIssuesByActiveGoal, GetAutoPullPaused } from "../../wailsjs/go/main/App";
+import { EventsOn } from "../../wailsjs/runtime/runtime";
 import { types } from "../../wailsjs/go/models";
 import { useGoalStore } from "../stores/goalStore";
 import { useIssueStore } from "../stores/issueStore";
@@ -12,10 +13,22 @@ export function GoalPane() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [scopedIssues, setScopedIssues] = useState<types.Issue[] | null>(null);
+  const [paused, setPaused] = useState(false);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    GetAutoPullPaused().then(setPaused).catch(() => {});
+    const off = EventsOn(
+      "bus.auto_pull_paused_changed",
+      (d: { paused: boolean }) => setPaused(!!d?.paused),
+    );
+    return () => {
+      if (typeof off === "function") off();
+    };
+  }, []);
 
   const active = goals.find((g) => g.status === "active") ?? null;
   const upNext = goals.filter((g) => g.status === "backlog");
@@ -64,7 +77,7 @@ export function GoalPane() {
               className="text-amber-300 hover:underline truncate max-w-[420px]"
               title={active.intent || ""}
             >
-              🎯 {active.title}
+              🎯 {active.title}{paused ? " (paused)" : ""}
             </button>
           ) : (
             <span className="text-slate-600">none — {goals.length === 0 ? "create one →" : "activate from Up Next →"}</span>

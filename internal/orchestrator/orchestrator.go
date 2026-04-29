@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"prismconductor/internal/eventbus"
@@ -47,6 +48,20 @@ type Orchestrator struct {
 
 	mu      sync.Mutex
 	running bool
+	paused  atomic.Bool
+}
+
+// SetPaused suspends/resumes auto-pull. Manual drag-to-PLAN (which goes
+// through App.MoveIssueColumn, not the orchestrator) is unaffected.
+func (o *Orchestrator) SetPaused(b bool) { o.paused.Store(b) }
+
+// IsPaused returns the current pause state.
+func (o *Orchestrator) IsPaused() bool { return o.paused.Load() }
+
+// KickAutoPull triggers an auto-pull pass from outside the bus (e.g., the
+// resume path on SetAutoPullPaused(false)). Async to match the bus handlers.
+func (o *Orchestrator) KickAutoPull(reason string) {
+	go o.autoPull(reason)
 }
 
 func New(bus *eventbus.Bus, llm LLM) *Orchestrator {
@@ -109,6 +124,9 @@ func (o *Orchestrator) handle(e eventbus.Event) {
 // but defensive). Respects manual moves implicitly: a card the user just
 // dragged into PLAN is no longer in TODO so won't be re-pulled.
 func (o *Orchestrator) autoPull(reason string) {
+	if o.paused.Load() {
+		return
+	}
 	if o.pool == nil || o.spawn == nil || o.store == nil {
 		return
 	}
