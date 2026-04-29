@@ -107,6 +107,11 @@ function App() {
         refreshIssues(selectedWorkspace ?? "");
       },
     );
+    const offPRMerged = EventsOn("bus.pr_merged", () => refreshIssues(selectedWorkspace ?? ""));
+    const offPRClosedUnmerged = EventsOn(
+      "bus.pr_closed_unmerged",
+      () => refreshIssues(selectedWorkspace ?? ""),
+    );
     const offPlanApproved = EventsOn(
       "bus.plan_approved",
       (data: { workspace_id: string; issue_number: number }) => {
@@ -151,6 +156,8 @@ function App() {
       if (typeof offIssue === "function") offIssue();
       if (typeof offPlanReady === "function") offPlanReady();
       if (typeof offPROpened === "function") offPROpened();
+      if (typeof offPRMerged === "function") offPRMerged();
+      if (typeof offPRClosedUnmerged === "function") offPRClosedUnmerged();
       if (typeof offPlanApproved === "function") offPlanApproved();
       if (typeof offPlanRejected === "function") offPlanRejected();
       if (typeof offPoolFreed === "function") offPoolFreed();

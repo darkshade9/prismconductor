@@ -278,6 +278,87 @@ func (s *Store) MarkPROpened(workspaceID string, number int, prNumber int, prURL
 	return tx.Commit()
 }
 
+// MarkPRMerged moves the card to DONE and marks the issue closed, mirroring
+// MarkIssueClosed but driven by the GitHub PR-state probe (#33). Preserves
+// pr_number / pr_url so the chip stays on the DONE card as history. Clears
+// last_error in the same tx so a stale failure string doesn't linger.
+// Idempotent: re-runs are no-ops because the column is already DONE.
+func (s *Store) MarkPRMerged(workspaceID string, number int) error {
+	if s == nil || s.DB == nil {
+		return errors.New("store unavailable")
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var raw string
+	if err := tx.QueryRow(`SELECT json FROM issues WHERE workspace_id = ? AND number = ?`,
+		workspaceID, number).Scan(&raw); err != nil {
+		return err
+	}
+	var iss types.Issue
+	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+		return err
+	}
+	iss.State = "closed"
+	iss.Column = types.ColDone
+	iss.LastError = ""
+	b, _ := json.Marshal(iss)
+
+	var maxOrder sql.NullInt64
+	if err := tx.QueryRow(
+		`SELECT COALESCE(MAX(manual_order), -1) FROM issues WHERE workspace_id = ? AND column_name = ?`,
+		workspaceID, string(types.ColDone),
+	).Scan(&maxOrder); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`UPDATE issues SET column_name = ?, manual_order = ?, json = ? WHERE workspace_id = ? AND number = ?`,
+		string(types.ColDone), maxOrder.Int64+1, string(b), workspaceID, number,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// MarkPRClosedUnmerged clears pr_number / pr_url on an issue whose PR was
+// closed without merging (#33). Leaves column_name / manual_order alone —
+// per rev2 q2, trust the user's manual placement. Bypasses SaveIssue because
+// SaveIssue's preserve-PR-fields path would resurrect the cleared values on
+// the next poll.
+func (s *Store) MarkPRClosedUnmerged(workspaceID string, number int) error {
+	if s == nil || s.DB == nil {
+		return errors.New("store unavailable")
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var raw string
+	if err := tx.QueryRow(`SELECT json FROM issues WHERE workspace_id = ? AND number = ?`,
+		workspaceID, number).Scan(&raw); err != nil {
+		return err
+	}
+	var iss types.Issue
+	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+		return err
+	}
+	iss.PRNumber = nil
+	iss.PRURL = ""
+	b, _ := json.Marshal(iss)
+	if _, err := tx.Exec(
+		`UPDATE issues SET json = ? WHERE workspace_id = ? AND number = ?`,
+		string(b), workspaceID, number,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // MarkIssueClosed forces state=closed AND column=done in a single transaction,
 // bypassing SaveIssue's column-preservation logic (which would otherwise keep
 // the closed issue stuck in whatever column the user last placed it in).

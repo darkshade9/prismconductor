@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v62/github"
 
@@ -177,6 +178,37 @@ func (c *Client) DeleteLabel(ctx context.Context, ws types.Workspace, name strin
 	}
 	_, err := c.api.Issues.DeleteLabel(ctx, ws.GitHubOwner, ws.GitHubRepo, name)
 	return err
+}
+
+// PRState is the slice of GitHub PR fields the poller uses to drive
+// REVIEW→DONE on merge and chip-clear on close-without-merge (issue #33).
+type PRState struct {
+	State    string
+	MergedAt *time.Time
+	ClosedAt *time.Time
+}
+
+// FetchPRState fetches the current state of a single PR. Used by the poller
+// once per REVIEW-column issue per tick (rate-bounded; ≤ board-size of REVIEW
+// cards on a typical board).
+func (c *Client) FetchPRState(ctx context.Context, ws types.Workspace, prNumber int) (*PRState, error) {
+	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {
+		return nil, fmt.Errorf("workspace %q missing github_owner / github_repo", ws.ID)
+	}
+	pr, _, err := c.api.PullRequests.Get(ctx, ws.GitHubOwner, ws.GitHubRepo, prNumber)
+	if err != nil {
+		return nil, err
+	}
+	out := &PRState{State: pr.GetState()}
+	if pr.MergedAt != nil {
+		ts := pr.MergedAt.Time
+		out.MergedAt = &ts
+	}
+	if pr.ClosedAt != nil {
+		ts := pr.ClosedAt.Time
+		out.ClosedAt = &ts
+	}
+	return out, nil
 }
 
 // SetIssueLabels replaces an issue's labels with the given set.
