@@ -322,6 +322,11 @@ func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 				reason = reason[:500]
 			}
 			rs.sess.BlockedReason = reason
+			// Re-save the full JSON so BlockedReason survives restart.
+			// UpdateSessionState only updates the `state` column.
+			if m.store != nil {
+				_ = m.store.SaveSession(rs.sess, rs.transcriptPath)
+			}
 		}
 		if m.bus != nil {
 			m.bus.Publish(eventbus.EvtWorkerBlocked, rs.sess.ID)
