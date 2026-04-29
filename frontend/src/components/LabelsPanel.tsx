@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CreateLabel, DeleteLabel, UpdateLabel } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import { useLabelsStore } from "../stores/labelsStore";
+import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
 import { getContrastText, normalizeHex } from "../lib/contrast";
 
 type Props = {
@@ -32,7 +32,7 @@ export function LabelsPanel({ workspaceID, initialNewName }: Props) {
     }
   }, [workspaceID, activeID, workspaces, selectedID]);
 
-  const labels = useLabelsStore((s) => (activeID ? s.byWorkspace[activeID] ?? [] : []));
+  const labels = useLabelsStore((s) => (activeID ? s.byWorkspace[activeID] ?? EMPTY_LABELS : EMPTY_LABELS));
   const refresh = useLabelsStore((s) => s.refresh);
   const loading = useLabelsStore((s) => (activeID ? s.loading[activeID] : false));
 

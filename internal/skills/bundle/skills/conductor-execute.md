@@ -1,6 +1,6 @@
 ---
 name: conductor-execute
-description: Resumes an issue from an approved plan plus answered questions. Implements the plan on a fresh feature branch, commits, pushes, and opens a draft PR linking back to the issue. Never edits the default branch directly.
+description: Resumes an issue from an approved plan plus answered questions. Implements the plan on a fresh feature branch, lints, runs tests, refuses to commit if anything fails, then commits, pushes, and opens a draft PR linking back to the issue. Never edits the default branch directly.
 ---
 
 # conductor-execute
@@ -22,7 +22,7 @@ These steps are mandatory and must run in this order. Do **not** edit any files 
 
 1. Read `.prismconductor/plans/<issue>-rev<N>.json` (the approved plan).
 2. Read `.prismconductor/answers/<issue>-rev<N>.json` (the user's question answers, if any).
-3. Read repo conventions: `CLAUDE.md`, `.claude/rules/`, and any test/build/lint commands the conductor injected via env (`PRISMCONDUCTOR_TEST_CMD`, etc.).
+3. Read repo conventions: `CLAUDE.md`, `.claude/rules/`, and any test/build/lint commands the conductor injected via env (`PRISMCONDUCTOR_TEST_CMD`, `PRISMCONDUCTOR_LINT_CMD`, `PRISMCONDUCTOR_BUILD_CMD`).
 
 ### 2. Branch hygiene (NON-NEGOTIABLE)
 
@@ -33,31 +33,51 @@ These steps are mandatory and must run in this order. Do **not** edit any files 
 
 ### 3. Implementation
 
-7. Implement the plan: edit files listed in `files_to_modify`, write tests for `add` intents, follow the conventions discovered in step 3.
-8. Run the test command if configured. Skip silently if not — note "No tests run (no runner detected)" in the PR body (§15.8). Run any lint/format command the repo configures.
+7. Implement the plan: edit files listed in `files_to_modify`, follow the conventions discovered in step 3.
+8. **For every `add` intent in the plan, write at least one test exercising the new code.** If the plan adds a Go function `Foo`, add a `TestFoo` (or table test) in the appropriate `_test.go`. If the plan adds a React component or hook, add a Vitest/Jest test (or at minimum a render-doesn't-throw smoke test). Skipping this with "no test framework yet" is only acceptable if the repo genuinely has no test infrastructure AND you note it explicitly in the PR body.
 
-### 4. Commit + push + PR (NON-NEGOTIABLE)
+### 4. Verification gates (NON-NEGOTIABLE — block on failure)
 
-9. `git add` only the files you modified (avoid `git add -A` — never commit unrelated WIP that may be in the tree from another task).
-10. `git commit -m "<short subject>\n\nCloses #<num>\n\nCo-Authored-By: PrismConductor worker <noreply@anthropic.com>"`. Subject must reference the issue number; body must include `Closes #<num>` so the PR auto-closes the issue on merge.
-11. `git push -u origin HEAD`.
-12. `gh pr create --draft --base <BASE> --title "<short subject> (#<num>)" --body-file -` — pipe a body containing:
+These run before commit. Failures here are **stop-the-world** events: print `BLOCKED:` and exit, leaving the branch in place for the user to inspect. Do **not** commit broken work. Do **not** swallow failures into the PR body.
+
+9. **Lint / typecheck** every changed surface:
+   - Go files touched → `go vet ./...` (or the project's `PRISMCONDUCTOR_LINT_CMD` if set).
+   - TypeScript files touched → `npx tsc --noEmit` from the relevant frontend dir.
+   - Other languages → run the project-conventional linter from `CLAUDE.md`.
+   Any non-zero exit → `BLOCKED: lint failed — <command> exited <code>` and exit.
+10. **Build** the project:
+    - For a Wails project: `wails build` from repo root.
+    - For Go-only: `go build ./...`.
+    - For Node-only: `npm run build` (or pnpm/yarn equivalent).
+    Non-zero exit → `BLOCKED: build failed — <command> exited <code>` and exit.
+11. **Run tests**:
+    - If `PRISMCONDUCTOR_TEST_CMD` is set, run it. Else fall back to `go test ./...` for Go projects, `npm test` (or vitest/jest) for Node, `pytest` for Python.
+    - Non-zero exit → `BLOCKED: tests failed — <N> failures; full output below` then dump the last 50 lines of test output and exit.
+    - If no test runner is available, you MAY proceed but must include `## ⚠ No tests run (no runner detected)` as a top-level header in the PR body. This is the ONLY case where a missing test step is acceptable.
+
+### 5. Commit + push + PR (NON-NEGOTIABLE)
+
+12. `git add` only the files you modified (avoid `git add -A` — never commit unrelated WIP that may be in the tree from another task).
+13. `git commit -m "<short subject>\n\nCloses #<num>\n\nCo-Authored-By: PrismConductor worker <noreply@anthropic.com>"`. Subject must reference the issue number; body must include `Closes #<num>` so the PR auto-closes the issue on merge.
+14. `git push -u origin HEAD`.
+15. `gh pr create --draft --base <BASE> --title "<short subject> (#<num>)" --body-file -` — pipe a body containing:
     - A 1-2 sentence summary
     - The list of files modified
-    - Test/lint outcomes
+    - **Verification:** lint command + result, build command + result, test command + result with pass/fail counts
     - Anything skipped or flagged for human review
     - The literal trailer line `Closes #<num>`
-13. Capture the PR URL from the `gh pr create` output.
+16. Capture the PR URL from the `gh pr create` output.
 
-### 5. Sentinel for the conductor
+### 6. Sentinels for the conductor
 
-14. Print exactly `PR_OPENED: <url>` on its own line so the conductor can parse the PR number and move the card to REVIEW.
-15. Print `Work complete.` so the PTY parser advances state (§10.3).
+17. Print exactly `PR_OPENED: <url>` on its own line so the conductor can parse the PR number and move the card to TESTING.
+18. Print `Work complete.` so the PTY parser advances state (§10.3).
 
 ### Failure paths
 
-- If any of steps 4, 9-12 fail (network down, no remote, push rejected, etc.), print `BLOCKED: <one-line reason>` and exit. Leave the branch in place so the user can finish manually.
-- If tests fail in step 8, still commit + push + open the PR but mark it draft and surface the failure prominently in the body. Do not silently swallow.
+- Steps 4-6 (branch hygiene) failures → `BLOCKED: <reason>`. No branch created, nothing to clean up.
+- Step 9-11 (verification) failures → `BLOCKED: <reason>`. Branch exists with WIP code so the user can `git switch <branch>` and finish manually. Do not push.
+- Steps 12-15 (commit/push/PR) failures (network down, no remote, push rejected, etc.) → `BLOCKED: <reason>`. Branch + commit exist locally.
 
 ## Mid-execution questions
 

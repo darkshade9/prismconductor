@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SetIssueLabels } from "../../wailsjs/go/main/App";
-import { useLabelsStore } from "../stores/labelsStore";
+import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
 import { getContrastText } from "../lib/contrast";
 
 type Props = {
@@ -21,7 +21,7 @@ export function LabelManagePopover({
   currentLabels,
   anchor,
 }: Props) {
-  const labels = useLabelsStore((s) => s.byWorkspace[workspaceID] ?? []);
+  const labels = useLabelsStore((s) => s.byWorkspace[workspaceID] ?? EMPTY_LABELS);
   const refresh = useLabelsStore((s) => s.refresh);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(currentLabels));
   const [busy, setBusy] = useState(false);

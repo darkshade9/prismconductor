@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import { ApprovePlan, LatestPlan, RejectPlan, SetIssueLabels, SubmitAnswers } from "../../wailsjs/go/main/App";
 import { main, types } from "../../wailsjs/go/models";
 import { useIssueStore } from "../stores/issueStore";
-import { useLabelsStore } from "../stores/labelsStore";
+import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
 import { AnswerState, QuestionForm, emptyAnswers, isComplete } from "./QuestionForm";
 import { LabelsModal } from "./LabelsModal";
 import { getContrastText } from "../lib/contrast";
@@ -27,7 +27,7 @@ export function PlanModal({
 }) {
   const refreshIssues = useIssueStore((s) => s.refresh);
   const refreshLabels = useLabelsStore((s) => s.refresh);
-  const labelsCache = useLabelsStore((s) => (issue ? s.byWorkspace[issue.workspace_id] ?? [] : []));
+  const labelsCache = useLabelsStore((s) => (issue ? s.byWorkspace[issue.workspace_id] ?? EMPTY_LABELS : EMPTY_LABELS));
   const [plan, setPlan] = useState<types.Plan | null>(null);
   const [answers, setAnswers] = useState<AnswerState>(emptyAnswers());
   const [refineText, setRefineText] = useState("");

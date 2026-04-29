@@ -4,7 +4,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { types } from "../../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "../stores/sessionStore";
 import { usePlanReadyStore } from "../stores/planReadyStore";
-import { useLabelsStore } from "../stores/labelsStore";
+import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
 import { getContrastText } from "../lib/contrast";
 import { LabelManagePopover } from "./LabelManagePopover";
 import { cn } from "../lib/cn";
@@ -196,7 +196,7 @@ function LabelChips({
   labels: string[];
 }) {
   const byName = useLabelsStore((s) => s.byName);
-  const knownLabels = useLabelsStore((s) => s.byWorkspace[workspaceID] ?? []);
+  const knownLabels = useLabelsStore((s) => s.byWorkspace[workspaceID] ?? EMPTY_LABELS);
   const refresh = useLabelsStore((s) => s.refresh);
   const [popoverAnchor, setPopoverAnchor] = useState<{ x: number; y: number } | null>(null);
 
