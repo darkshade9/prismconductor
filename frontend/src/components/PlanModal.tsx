@@ -5,7 +5,7 @@ import { ApprovePlan, LatestPlan, RejectPlan, SetIssueLabels, SubmitAnswers } fr
 import { main, types } from "../../wailsjs/go/models";
 import { useIssueStore } from "../stores/issueStore";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
-import { AnswerState, QuestionForm, emptyAnswers, isComplete } from "./QuestionForm";
+import { AnswerState, QuestionForm, emptyAnswers, initialAnswers, isComplete } from "./QuestionForm";
 import { LabelsModal } from "./LabelsModal";
 import { getContrastText } from "../lib/contrast";
 
@@ -44,7 +44,12 @@ export function PlanModal({
     setError(null);
     setAnswers(emptyAnswers());
     LatestPlan(issue.workspace_id, issue.number)
-      .then((p) => setPlan(p ?? null))
+      .then((p) => {
+        setPlan(p ?? null);
+        if (p?.questions?.length) {
+          setAnswers(initialAnswers(p.questions));
+        }
+      })
       .catch((e) => setError(String(e?.message ?? e)))
       .finally(() => setLoading(false));
     refreshLabels(issue.workspace_id);
