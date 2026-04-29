@@ -156,3 +156,79 @@ func (s *Store) RemoveIssue(workspaceID string, number int) error {
 	_, err := s.DB.Exec(`DELETE FROM issues WHERE workspace_id = ? AND number = ?`, workspaceID, number)
 	return err
 }
+
+// ReconcileClosedIssues routes any issue that's already state=closed in its
+// JSON but stuck in a non-done column over to DONE. Self-healing pass for
+// rows left half-migrated by an earlier buggy poll. Returns the number of
+// rows fixed.
+func (s *Store) ReconcileClosedIssues() (int, error) {
+	if s == nil || s.DB == nil {
+		return 0, errors.New("store unavailable")
+	}
+	rows, err := s.DB.Query(`SELECT workspace_id, number, json FROM issues WHERE column_name != 'done'`)
+	if err != nil {
+		return 0, err
+	}
+	type pending struct {
+		ws  string
+		num int
+	}
+	var todo []pending
+	for rows.Next() {
+		var ws, raw string
+		var num int
+		if err := rows.Scan(&ws, &num, &raw); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		var iss types.Issue
+		if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+			continue
+		}
+		if iss.State == "closed" {
+			todo = append(todo, pending{ws: ws, num: num})
+		}
+	}
+	rows.Close()
+	for _, p := range todo {
+		if err := s.MarkIssueClosed(p.ws, p.num); err != nil {
+			return 0, err
+		}
+	}
+	return len(todo), nil
+}
+
+// MarkIssueClosed forces state=closed AND column=done in a single transaction,
+// bypassing SaveIssue's column-preservation logic (which would otherwise keep
+// the closed issue stuck in whatever column the user last placed it in).
+// Called by the GitHub poller when an issue is no longer in the open list.
+func (s *Store) MarkIssueClosed(workspaceID string, number int) error {
+	if s == nil || s.DB == nil {
+		return errors.New("store unavailable")
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var raw string
+	if err := tx.QueryRow(`SELECT json FROM issues WHERE workspace_id = ? AND number = ?`,
+		workspaceID, number).Scan(&raw); err != nil {
+		return err
+	}
+	var iss types.Issue
+	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+		return err
+	}
+	iss.State = "closed"
+	iss.Column = types.ColDone
+	b, _ := json.Marshal(iss)
+	if _, err := tx.Exec(
+		`UPDATE issues SET column_name = ?, json = ? WHERE workspace_id = ? AND number = ?`,
+		string(types.ColDone), string(b), workspaceID, number,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

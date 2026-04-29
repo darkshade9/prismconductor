@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { EventsOn } from "../wailsjs/runtime/runtime";
 import { GetWorkerPoolStatus, ListSessions, RefreshIssuesNow, SpawnDemo, SpawnPlanForIssue } from "../wailsjs/go/main/App";
 import { types } from "../wailsjs/go/models";
-import { useSessionStore } from "./stores/sessionStore";
+import { useSessionStore, SessionActivity } from "./stores/sessionStore";
+// useSessionStore.getState() is also used directly inside the activity handler.
 import { useWorkspaceStore } from "./stores/workspaceStore";
 import { Board } from "./components/Board";
 import { GoalPane } from "./components/GoalPane";
@@ -10,10 +11,11 @@ import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { SessionDrawer } from "./components/SessionDrawer";
 import { Settings } from "./components/Settings";
 import { PlanModal } from "./components/PlanModal";
-import { LoginButton } from "./components/LoginButton";
 import { AddIssueQuick } from "./components/AddIssueQuick";
 import { useIssueStore } from "./stores/issueStore";
 import { useGoalStore } from "./stores/goalStore";
+import { usePlanReadyStore } from "./stores/planReadyStore";
+import { useLabelsStore } from "./stores/labelsStore";
 
 type PlanTarget = { workspace_id: string; number: number } | null;
 
@@ -25,6 +27,8 @@ function App() {
   const selectedWorkspace = useWorkspaceStore((s) => s.selectedID);
   const refreshIssues = useIssueStore((s) => s.refresh);
   const refreshGoals = useGoalStore((s) => s.refresh);
+  const markPlanReady = usePlanReadyStore((s) => s.markReady);
+  const clearPlanReady = usePlanReadyStore((s) => s.clearReady);
   const issues = useIssueStore((s) => s.issues);
   const [poolStatus, setPoolStatus] = useState({ active: 0, capacity: 2 });
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -51,7 +55,14 @@ function App() {
       appendLine(data.session_id, data.line);
     });
     const offState = EventsOn("session.state", (sess: types.Session) => {
+      // eslint-disable-next-line no-console
+      console.debug(
+        `[bus] session.state id=${sess.id?.slice(0, 8)} ws=${sess.workspace_id} #${sess.issue_number} mode=${sess.mode} state=${sess.state}`,
+      );
       setMeta(sess);
+    });
+    const offActivity = EventsOn("session.activity", (act: SessionActivity) => {
+      useSessionStore.getState().setActivity(act);
     });
     const offGoal = EventsOn("bus.goal_activated", () => {
       refreshGoals();
@@ -63,14 +74,35 @@ function App() {
       "bus.plan_ready",
       (data: { workspace_id: string; issue_number: number; revision: number }) => {
         refreshIssues(selectedWorkspace ?? "");
+        markPlanReady(data);
         setPlanTarget({ workspace_id: data.workspace_id, number: data.issue_number });
       },
     );
-    const offPlanApproved = EventsOn("bus.plan_approved", () => refreshIssues(selectedWorkspace ?? ""));
+    const offPlanApproved = EventsOn(
+      "bus.plan_approved",
+      (data: { workspace_id: string; issue_number: number }) => {
+        refreshIssues(selectedWorkspace ?? "");
+        if (data) clearPlanReady(data.workspace_id, data.issue_number);
+      },
+    );
+    const offPlanRejected = EventsOn(
+      "bus.plan_rejected",
+      (data: { workspace_id: string; issue_number: number }) => {
+        if (data) clearPlanReady(data.workspace_id, data.issue_number);
+      },
+    );
     const offGhPoll = EventsOn("bus.github_poll_done", () => refreshIssues(selectedWorkspace ?? ""));
     const offGhIssue = EventsOn("bus.issue_added", () => refreshIssues(selectedWorkspace ?? ""));
     const offGhClosed = EventsOn("bus.issue_closed", () => refreshIssues(selectedWorkspace ?? ""));
     const offGhLabel = EventsOn("bus.issue_label_changed", () => refreshIssues(selectedWorkspace ?? ""));
+    const offLabelsUpdated = EventsOn(
+      "bus.labels_updated",
+      (data: { workspace_id: string }) => {
+        if (data?.workspace_id) {
+          useLabelsStore.getState().refresh(data.workspace_id);
+        }
+      },
+    );
     const refreshPool = () => GetWorkerPoolStatus().then(setPoolStatus).catch(() => {});
     refreshPool();
     const offPoolFreed = EventsOn("bus.worker_slot_freed", refreshPool);
@@ -79,11 +111,13 @@ function App() {
     return () => {
       if (typeof offLine === "function") offLine();
       if (typeof offState === "function") offState();
+      if (typeof offActivity === "function") offActivity();
       if (typeof offGoal === "function") offGoal();
       if (typeof offGoalUpd === "function") offGoalUpd();
       if (typeof offIssue === "function") offIssue();
       if (typeof offPlanReady === "function") offPlanReady();
       if (typeof offPlanApproved === "function") offPlanApproved();
+      if (typeof offPlanRejected === "function") offPlanRejected();
       if (typeof offPoolFreed === "function") offPoolFreed();
       if (typeof offPoolChanged === "function") offPoolChanged();
       if (typeof offPoolState === "function") offPoolState();
@@ -91,8 +125,9 @@ function App() {
       if (typeof offGhIssue === "function") offGhIssue();
       if (typeof offGhClosed === "function") offGhClosed();
       if (typeof offGhLabel === "function") offGhLabel();
+      if (typeof offLabelsUpdated === "function") offLabelsUpdated();
     };
-  }, [appendLine, setMeta, refreshWorkspaces, refreshGoals, refreshIssues, selectedWorkspace]);
+  }, [appendLine, setMeta, refreshWorkspaces, refreshGoals, refreshIssues, markPlanReady, clearPlanReady, selectedWorkspace]);
 
   async function spawnDemo() {
     setBusy(true);
@@ -189,7 +224,6 @@ function App() {
           >
             Settings
           </button>
-          <LoginButton />
         </div>
       </header>
       <WorkspaceSwitcher />

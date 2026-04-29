@@ -1,8 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { LabelsModal } from "./LabelsModal";
 
 export function WorkspaceSwitcher() {
   const { workspaces, selectedID, setSelected, refresh, loading } = useWorkspaceStore();
+  const [labelsOpen, setLabelsOpen] = useState(false);
+  const labelsTarget = selectedID ?? workspaces[0]?.id ?? "";
 
   useEffect(() => {
     if (workspaces.length === 0 && !loading) refresh();
@@ -40,6 +43,20 @@ export function WorkspaceSwitcher() {
       {workspaces.length === 0 && !loading && (
         <span className="text-xs text-slate-600">— no workspaces yet, add one in Settings</span>
       )}
+      {labelsTarget && (
+        <button
+          onClick={() => setLabelsOpen(true)}
+          className="ml-auto px-2 py-0.5 rounded border border-slate-700 text-xs text-slate-400 hover:text-slate-200 hover:border-slate-500"
+          title="Manage labels for the active workspace"
+        >
+          🏷  Manage labels
+        </button>
+      )}
+      <LabelsModal
+        open={labelsOpen}
+        onClose={() => setLabelsOpen(false)}
+        workspaceID={labelsTarget}
+      />
     </div>
   );
 }

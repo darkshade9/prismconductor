@@ -18,8 +18,16 @@ export function ApprovePlan(arg1, arg2, arg3) {
   return window['go']['main']['App']['ApprovePlan'](arg1, arg2, arg3);
 }
 
+export function CreateLabel(arg1, arg2) {
+  return window['go']['main']['App']['CreateLabel'](arg1, arg2);
+}
+
 export function DeleteGoal(arg1) {
   return window['go']['main']['App']['DeleteGoal'](arg1);
+}
+
+export function DeleteLabel(arg1, arg2) {
+  return window['go']['main']['App']['DeleteLabel'](arg1, arg2);
 }
 
 export function FilterIssuesByActiveGoal(arg1) {
@@ -86,6 +94,10 @@ export function ListIssues(arg1) {
   return window['go']['main']['App']['ListIssues'](arg1);
 }
 
+export function ListLabels(arg1) {
+  return window['go']['main']['App']['ListLabels'](arg1);
+}
+
 export function ListPlans(arg1, arg2) {
   return window['go']['main']['App']['ListPlans'](arg1, arg2);
 }
@@ -120,6 +132,10 @@ export function PickRepoPath() {
 
 export function ReadTranscript(arg1) {
   return window['go']['main']['App']['ReadTranscript'](arg1);
+}
+
+export function RecentLogs() {
+  return window['go']['main']['App']['RecentLogs']();
 }
 
 export function RefreshIssuesNow() {
@@ -158,6 +174,10 @@ export function SetGoalStatus(arg1, arg2) {
   return window['go']['main']['App']['SetGoalStatus'](arg1, arg2);
 }
 
+export function SetIssueLabels(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetIssueLabels'](arg1, arg2, arg3);
+}
+
 export function SetNotifyPrefs(arg1) {
   return window['go']['main']['App']['SetNotifyPrefs'](arg1);
 }
@@ -184,6 +204,10 @@ export function SpawnPlanForIssue(arg1, arg2) {
 
 export function SubmitAnswers(arg1) {
   return window['go']['main']['App']['SubmitAnswers'](arg1);
+}
+
+export function UpdateLabel(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UpdateLabel'](arg1, arg2, arg3);
 }
 
 export function UpdateWorkspace(arg1) {

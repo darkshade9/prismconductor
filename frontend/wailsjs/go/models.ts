@@ -783,6 +783,48 @@ export namespace githubauth {
 
 }
 
+export namespace logbuffer {
+	
+	export class Entry {
+	    // Go type: time
+	    ts: any;
+	    level: string;
+	    source: string;
+	    text: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Entry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ts = this.convertValues(source["ts"], null);
+	        this.level = source["level"];
+	        this.source = source["source"];
+	        this.text = source["text"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace main {
 	
 	export class AnswerSubmission {
@@ -1025,6 +1067,7 @@ export namespace types {
 	    plan_markdown: string;
 	    files_to_modify: FileIntent[];
 	    dependencies_detected: number[];
+	    suggested_labels?: string[];
 	    questions: Question[];
 	    estimated_complexity: string;
 	    ready_to_execute: boolean;
@@ -1045,6 +1088,7 @@ export namespace types {
 	        this.plan_markdown = source["plan_markdown"];
 	        this.files_to_modify = this.convertValues(source["files_to_modify"], FileIntent);
 	        this.dependencies_detected = source["dependencies_detected"];
+	        this.suggested_labels = source["suggested_labels"];
 	        this.questions = this.convertValues(source["questions"], Question);
 	        this.estimated_complexity = source["estimated_complexity"];
 	        this.ready_to_execute = source["ready_to_execute"];
@@ -1132,6 +1176,22 @@ export namespace types {
 		}
 	}
 	
+	export class Label {
+	    name: string;
+	    color: string;
+	    description: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Label(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.color = source["color"];
+	        this.description = source["description"];
+	    }
+	}
 	
 	
 	export class Session {

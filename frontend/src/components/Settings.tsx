@@ -4,8 +4,10 @@ import { OllamaPanel } from "./OllamaPanel";
 import { BundledSkillsViewer } from "./BundledSkillsViewer";
 import { WorkerPoolPanel } from "./WorkerPoolPanel";
 import { NotifyPanel } from "./NotifyPanel";
+import { LogsPanel } from "./LogsPanel";
+import { LabelsPanel } from "./LabelsPanel";
 
-type Tab = "workspaces" | "agents" | "ollama" | "skills" | "notify";
+type Tab = "workspaces" | "agents" | "ollama" | "skills" | "labels" | "notify" | "logs";
 
 export function Settings({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [tab, setTab] = useState<Tab>("workspaces");
@@ -25,7 +27,9 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
                 ["agents", "Worker pool"],
                 ["ollama", "Ollama"],
                 ["skills", "Bundled skills"],
+                ["labels", "Labels"],
                 ["notify", "Notifications"],
+                ["logs", "Logs"],
               ] as [Tab, string][]
             ).map(([k, label]) => (
               <button
@@ -45,7 +49,9 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
             {tab === "agents" && <WorkerPoolPanel />}
             {tab === "ollama" && <OllamaPanel />}
             {tab === "skills" && <BundledSkillsViewer />}
+            {tab === "labels" && <LabelsPanel />}
             {tab === "notify" && <NotifyPanel />}
+            {tab === "logs" && <LogsPanel />}
           </div>
         </div>
       </div>

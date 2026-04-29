@@ -15,6 +15,8 @@ import (
 type Store interface {
 	ListIssues(workspaceID string) ([]types.Issue, error)
 	SaveIssue(iss types.Issue) error
+	MarkIssueClosed(workspaceID string, number int) error
+	SaveLabels(workspaceID string, labels []types.Label) error
 }
 
 // WorkspaceSource lets the poller pick up newly-added workspaces between ticks.
@@ -163,23 +165,33 @@ func (p *Poller) pollOne(ctx context.Context, ws types.Workspace) error {
 		}
 	}
 
-	// Anything previously open and now missing from the open list: closed.
+	// Anything previously known and now missing from the open list: closed.
+	// Use MarkIssueClosed (not SaveIssue) — SaveIssue's column-preservation
+	// would otherwise stick the closed issue in whatever column it was in.
+	// Gate on column (not state) so issues left in a half-migrated state by
+	// an earlier buggy poll get re-routed to DONE on the next tick.
 	for _, old := range prev {
 		if _, stillOpen := freshByNum[old.Number]; stillOpen {
 			continue
 		}
-		if old.State != "open" {
+		if old.Column == types.ColDone {
 			continue
 		}
-		old.State = "closed"
-		if old.Column != types.ColDone {
-			old.Column = types.ColDone
-		}
-		if err := p.Store.SaveIssue(old); err != nil {
+		if err := p.Store.MarkIssueClosed(ws.ID, old.Number); err != nil {
 			log.Printf("close issue %s#%d: %v", ws.ID, old.Number, err)
 			continue
 		}
 		p.publish(eventbus.EvtIssueClosed, ws, old)
+	}
+
+	// Piggy-back label fetch on the same tick. Failures are logged and don't
+	// abort the issue cycle (the cache stays stale until the next tick).
+	if labels, err := p.Client.ListLabels(ctx, ws); err != nil {
+		log.Printf("github labels %s: %v", ws.ID, err)
+	} else if err := p.Store.SaveLabels(ws.ID, labels); err != nil {
+		log.Printf("save labels %s: %v", ws.ID, err)
+	} else if p.Bus != nil {
+		p.Bus.Publish(eventbus.EvtLabelsUpdated, map[string]any{"workspace_id": ws.ID})
 	}
 	return nil
 }

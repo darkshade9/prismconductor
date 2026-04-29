@@ -34,8 +34,15 @@ export const useIssueStore = create<State>((set, get) => ({
     }
   },
   moveColumn: async (workspaceID, number, column) => {
+    // eslint-disable-next-line no-console
+    console.debug(`[issueStore] moveColumn ws=${workspaceID} #${number} → ${column}`);
     get().applyLocalMove(workspaceID, number, column);
-    await MoveIssueColumn(workspaceID, number, column);
+    try {
+      await MoveIssueColumn(workspaceID, number, column);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("[issueStore] MoveIssueColumn failed", { workspaceID, number, column }, e);
+    }
   },
   reorder: async (workspaceID, column, ordered) => {
     get().applyLocalReorder(workspaceID, column, ordered);

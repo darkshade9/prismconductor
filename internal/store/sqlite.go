@@ -82,6 +82,13 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS labels (
+    workspace_id TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    color        TEXT NOT NULL,
+    description  TEXT,
+    PRIMARY KEY (workspace_id, name)
+);
 `)
 	return err
 }
