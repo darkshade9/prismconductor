@@ -821,6 +821,79 @@ export namespace types {
 	        this.shell = source["shell"];
 	    }
 	}
+	export class IssueQuery {
+	    labels: string[];
+	    milestone: string;
+	    free_text: string;
+	    includes: number[];
+	    excludes: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new IssueQuery(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.labels = source["labels"];
+	        this.milestone = source["milestone"];
+	        this.free_text = source["free_text"];
+	        this.includes = source["includes"];
+	        this.excludes = source["excludes"];
+	    }
+	}
+	export class Goal {
+	    id: string;
+	    workspace_id: string;
+	    title: string;
+	    intent: string;
+	    acceptance_rule: string;
+	    issue_filter: IssueQuery;
+	    status: string;
+	    order: number;
+	    // Go type: time
+	    created_at: any;
+	    // Go type: time
+	    achieved_at?: any;
+	    notes: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Goal(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.workspace_id = source["workspace_id"];
+	        this.title = source["title"];
+	        this.intent = source["intent"];
+	        this.acceptance_rule = source["acceptance_rule"];
+	        this.issue_filter = this.convertValues(source["issue_filter"], IssueQuery);
+	        this.status = source["status"];
+	        this.order = source["order"];
+	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.achieved_at = this.convertValues(source["achieved_at"], null);
+	        this.notes = source["notes"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class Session {
 	    id: string;
 	    workspace_id: string;

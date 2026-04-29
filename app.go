@@ -11,6 +11,7 @@ import (
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/google/uuid"
 	gh "github.com/google/go-github/v62/github"
 
 	"prismconductor/internal/eventbus"
@@ -78,6 +79,14 @@ func (a *App) startup(ctx context.Context) {
 
 	a.mgr = session.NewManager(a.bus, a.emitLine)
 	a.mgr.Configure(filepath.Join(cfgDir, "transcripts"), a.store, a.handleSessionStateChange)
+
+	// Persist every event for debugging + Phase 7 transcript pattern detector.
+	if a.store != nil {
+		a.bus.Subscribe(func(e eventbus.Event) {
+			_ = a.store.LogEvent(string(e.Type), e.Payload)
+			wruntime.EventsEmit(a.ctx, "bus."+string(e.Type), e.Payload)
+		})
+	}
 
 	// Re-attach to sessions that were live at last shutdown (§15.3).
 	if a.store != nil {
@@ -208,6 +217,78 @@ func (a *App) RemoveWorkspace(id string) error {
 		return fmt.Errorf("workspace registry unavailable")
 	}
 	return a.wsReg.Remove(id)
+}
+
+// --- Goals ---
+
+// ListGoals returns all goals (active first, then backlog, then achieved/abandoned).
+func (a *App) ListGoals() ([]types.Goal, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store unavailable")
+	}
+	return a.store.ListGoals()
+}
+
+// SaveGoal upserts a goal. Use this for Create + Edit; the frontend allocates the ID
+// for new goals via uuid.
+func (a *App) SaveGoal(g types.Goal) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if g.ID == "" {
+		g.ID = uuid.NewString()
+	}
+	if g.CreatedAt.IsZero() {
+		g.CreatedAt = time.Now()
+	}
+	if g.Status == "" {
+		g.Status = types.GoalBacklog
+	}
+	if err := a.store.SaveGoal(g); err != nil {
+		return err
+	}
+	a.bus.Publish(eventbus.EvtGoalUpdated, g.ID)
+	return nil
+}
+
+// DeleteGoal removes a goal.
+func (a *App) DeleteGoal(id string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	return a.store.DeleteGoal(id)
+}
+
+// ActivateGoal sets a goal to active, demoting any currently-active goal to backlog (§15.4).
+func (a *App) ActivateGoal(id string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.SetGoalActive(id); err != nil {
+		return err
+	}
+	a.bus.Publish(eventbus.EvtGoalActivated, id)
+	return nil
+}
+
+// SetGoalStatus moves a goal to a non-active status (backlog/achieved/abandoned).
+func (a *App) SetGoalStatus(id, status string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	gs := types.GoalStatus(status)
+	if err := a.store.SetGoalStatus(id, gs); err != nil {
+		return err
+	}
+	if gs == types.GoalAchieved {
+		now := time.Now()
+		if g, err := a.store.GetGoal(id); err == nil {
+			g.AchievedAt = &now
+			_ = a.store.SaveGoal(g)
+		}
+	}
+	a.bus.Publish(eventbus.EvtGoalUpdated, id)
+	return nil
 }
 
 // SpawnDemo runs `claude --version` in the cwd and streams output to the frontend.
