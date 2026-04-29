@@ -58,10 +58,6 @@ export function GetNotifyPrefs() {
   return window['go']['main']['App']['GetNotifyPrefs']();
 }
 
-export function GetOllamaConfig() {
-  return window['go']['main']['App']['GetOllamaConfig']();
-}
-
 export function GetPollInterval() {
   return window['go']['main']['App']['GetPollInterval']();
 }
@@ -228,10 +224,6 @@ export function SetIssueLabels(arg1, arg2, arg3) {
 
 export function SetNotifyPrefs(arg1) {
   return window['go']['main']['App']['SetNotifyPrefs'](arg1);
-}
-
-export function SetOllamaConfig(arg1) {
-  return window['go']['main']['App']['SetOllamaConfig'](arg1);
 }
 
 export function SetPollInterval(arg1) {

@@ -69,3 +69,15 @@ func (l litellmProvider) ListModels(ctx context.Context, p types.Pool) ([]string
 func (litellmProvider) SpawnArgs(_ types.Pool, _ string) ([]string, error) {
 	return nil, ErrNotSupported
 }
+
+func (l litellmProvider) ChatJSON(ctx context.Context, p types.Pool, system, user string) (string, error) {
+	endpoint := strings.TrimRight(p.Endpoint, "/")
+	if endpoint == "" {
+		endpoint = defaultLiteLLMEndpoint
+	}
+	key := p.APIKey
+	if key == "" {
+		key = os.Getenv("LITELLM_API_KEY")
+	}
+	return openAICompatChat(ctx, l.client, endpoint, key, p.Model, system, user)
+}

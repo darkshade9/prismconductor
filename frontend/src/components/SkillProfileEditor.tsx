@@ -1,5 +1,6 @@
-import { UpdateWorkspace } from "../../wailsjs/go/main/App";
-import { types } from "../../wailsjs/go/models";
+import { useEffect, useState } from "react";
+import { ListPools, UpdateWorkspace } from "../../wailsjs/go/main/App";
+import { types, workerpool } from "../../wailsjs/go/models";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 
 type SkillMode = "bundled" | "hybrid" | "native";
@@ -13,6 +14,13 @@ const MODE_DESC: Record<SkillMode, string> = {
 
 export function SkillProfileEditor({ workspace }: { workspace: types.Workspace }) {
   const refresh = useWorkspaceStore((s) => s.refresh);
+  const [pools, setPools] = useState<workerpool.PoolStatus[]>([]);
+
+  useEffect(() => {
+    ListPools()
+      .then((rows) => setPools(rows ?? []))
+      .catch((err) => console.error("SkillProfileEditor ListPools", err));
+  }, []);
 
   async function update(patch: Partial<types.SkillProfile>) {
     const next = new types.Workspace({
@@ -24,6 +32,8 @@ export function SkillProfileEditor({ workspace }: { workspace: types.Workspace }
   }
 
   const sp = workspace.skill_profile;
+  const planPools = pools.filter((row) => row.pool.role === "plan" && row.pool.enabled);
+  const workPools = pools.filter((row) => row.pool.role === "work" && row.pool.enabled);
 
   return (
     <div className="space-y-3 text-sm bg-slate-950/40 rounded p-3 border border-slate-800">
@@ -69,6 +79,21 @@ export function SkillProfileEditor({ workspace }: { workspace: types.Workspace }
         </div>
       )}
 
+      <div className="grid grid-cols-2 gap-3">
+        <PoolPicker
+          label="Plan pool"
+          value={sp.preferred_plan_pool_id ?? ""}
+          pools={planPools}
+          onChange={(v) => update({ preferred_plan_pool_id: v })}
+        />
+        <PoolPicker
+          label="Work pool"
+          value={sp.preferred_work_pool_id ?? ""}
+          pools={workPools}
+          onChange={(v) => update({ preferred_work_pool_id: v })}
+        />
+      </div>
+
       {sp.mode === "hybrid" && (
         <div>
           <div className="text-xs text-slate-500 mb-1">Use bundled fallback for</div>
@@ -107,6 +132,36 @@ export function SkillProfileEditor({ workspace }: { workspace: types.Workspace }
         />
       </div>
     </div>
+  );
+}
+
+function PoolPicker({
+  label,
+  value,
+  pools,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  pools: workerpool.PoolStatus[];
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="block">
+      <div className="text-xs text-slate-500 mb-1">{label}</div>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 text-xs"
+      >
+        <option value="">(any compatible)</option>
+        {pools.map((row) => (
+          <option key={row.pool.id} value={row.pool.id}>
+            {row.pool.name} · {row.pool.provider}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

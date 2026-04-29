@@ -28,7 +28,6 @@ import (
 	"prismconductor/internal/githubauth"
 	"prismconductor/internal/llm"
 	"prismconductor/internal/notify"
-	"prismconductor/internal/ollama"
 	"prismconductor/internal/orchestrator"
 	"prismconductor/internal/session"
 	"prismconductor/internal/skills/bundle"
@@ -47,7 +46,6 @@ type App struct {
 	mgr       *session.Manager
 	poolReg   *workerpool.Registry
 	providers *llm.Registry
-	llm       *ollama.Client
 	orch      *orchestrator.Orchestrator
 	wsReg     *workspace.Registry
 	auth      *githubauth.Client
@@ -96,8 +94,7 @@ func (a *App) startup(ctx context.Context) {
 		llm.NewOllamaProvider(),
 	)
 	a.poolReg = workerpool.NewRegistry(a.providers.CanSpawn)
-	a.llm = ollama.New("", "")
-	a.orch = orchestrator.New(a.bus, a.llm)
+	a.orch = orchestrator.New(a.bus, a.resolveOrchestratorLLM)
 	a.auth = githubauth.New("")
 
 	if s, err := store.Open(cfgDir); err != nil {
@@ -105,21 +102,6 @@ func (a *App) startup(ctx context.Context) {
 	} else {
 		a.store = s
 		_ = a.store.EnsureDepCacheTable()
-		// Apply persisted Ollama settings if present. First-run defaults are
-		// the user's known LAN endpoint; user can override in Settings →
-		// Ollama at any time.
-		if u, _ := a.store.GetSetting("ollama_url"); u != "" {
-			a.llm.URL = u
-		} else {
-			a.llm.URL = "http://192.168.0.101:1234"
-			_ = a.store.SetSetting("ollama_url", a.llm.URL)
-		}
-		if m, _ := a.store.GetSetting("ollama_model"); m != "" {
-			a.llm.Model = m
-		} else {
-			a.llm.Model = "google/gemma-2-27b"
-			_ = a.store.SetSetting("ollama_model", a.llm.Model)
-		}
 		if v, _ := a.store.GetSetting("auto_pull_paused"); v == "true" {
 			a.orch.SetPaused(true)
 		}
@@ -128,6 +110,12 @@ func (a *App) startup(ctx context.Context) {
 		// configured in Settings → Pools.
 		if n, err := a.store.PoolsCount(); err == nil && n == 0 {
 			a.migrateClaudePoolFromLegacy()
+		}
+		// Issue #39: migrate the legacy ollama_url / ollama_model settings into
+		// a role=orchestrator pool. Idempotent; no-op if a pool already exists
+		// or if no legacy keys are set (fresh install).
+		if err := a.migrateOrchestratorPool(); err != nil {
+			log.Printf("migrate orchestrator pool: %v", err)
 		}
 		if rows, err := a.store.ListPools(); err == nil {
 			a.poolReg.Sync(rows)
@@ -186,6 +174,13 @@ func (a *App) startup(ctx context.Context) {
 			_, err = a.mgr.SpawnPlan(ws, types.Issue{Number: issueNumber, WorkspaceID: workspaceID}, pool)
 			return err
 		})
+		// Issue #39: feed the registry the workspace's SkillProfile so
+		// PreferredPlanPoolID pinning works in auto-pull.
+		if a.wsReg != nil {
+			a.orch.SetWorkspaceLookup(func(id string) (types.Workspace, bool) {
+				return a.wsReg.Get(id)
+			})
+		}
 
 		// Persist every event for debugging + Phase 7 transcript pattern detector.
 		a.bus.Subscribe(func(e eventbus.Event) {
@@ -697,9 +692,9 @@ func (a *App) MoveIssueColumn(workspaceID string, number int, column string) err
 				log.Printf("drag-to-PLAN: workspace %q not found", workspaceID)
 			} else {
 				log.Printf("drag-to-PLAN: spawning plan worker for %s#%d (no existing plan)", workspaceID, number)
-				pool, ok := a.acquirePoolFor(ws)
+				pool, ok := a.acquirePlanPool(ws)
 				if !ok {
-					log.Printf("auto-spawn plan #%d: no spawn-capable pool available", number)
+					log.Printf("auto-spawn plan #%d: no plan pool available", number)
 				} else {
 					sess, err := a.mgr.SpawnPlan(ws, types.Issue{Number: number, WorkspaceID: workspaceID}, pool)
 					if err != nil {
@@ -740,9 +735,9 @@ func (a *App) Replan(workspaceID string, number int) error {
 		return fmt.Errorf("plan worker already in flight for #%d", number)
 	}
 	log.Printf("Replan: spawning plan worker for %s#%d", workspaceID, number)
-	pool, ok := a.acquirePoolFor(ws)
+	pool, ok := a.acquirePlanPool(ws)
 	if !ok {
-		return fmt.Errorf("no spawn-capable pool available")
+		return fmt.Errorf("no plan pool available")
 	}
 	sess, err := a.mgr.SpawnPlan(ws, types.Issue{Number: number, WorkspaceID: workspaceID}, pool)
 	if err != nil {
@@ -1552,9 +1547,9 @@ func (a *App) handleMidRunAnswerArrived(ps store.PausedSession) {
 	if err := a.store.UpdateSessionPendingQuestion(ps.SessionID, ""); err != nil {
 		log.Printf("answer resume: clear pending_question_id on %s: %v", ps.SessionID, err)
 	}
-	pool, ok := a.acquirePoolFor(ws)
+	pool, ok := a.acquireWorkPool(ws)
 	if !ok {
-		log.Printf("answer resume: no spawn-capable pool available for #%d", ps.IssueNumber)
+		log.Printf("answer resume: no work pool available for #%d", ps.IssueNumber)
 		return
 	}
 	if _, err := a.mgr.SpawnExecuteResume(ws, issue, plan, pool, ps.QuestionID); err != nil {
@@ -1646,9 +1641,9 @@ func (a *App) SubmitAnswers(sub AnswerSubmission) error {
 	}
 	// Re-spawn plan worker; the bundled skill checks for an answers file at the
 	// matching revision and emits rev<N+1>.
-	pool, ok := a.acquirePoolFor(ws)
+	pool, ok := a.acquirePlanPool(ws)
 	if !ok {
-		return fmt.Errorf("no spawn-capable pool available")
+		return fmt.Errorf("no plan pool available")
 	}
 	if _, err := a.mgr.SpawnPlan(ws, types.Issue{Number: sub.IssueNumber, WorkspaceID: sub.WorkspaceID}, pool); err != nil {
 		a.poolReg.ReleaseByPool(pool.ID)
@@ -1694,9 +1689,9 @@ func (a *App) ApprovePlan(workspaceID string, issueNumber, revision int) error {
 		log.Printf("ApprovePlan: load issue #%d failed (%v); spawning with empty title", issueNumber, err)
 		issue = types.Issue{Number: issueNumber, WorkspaceID: workspaceID}
 	}
-	pool, ok := a.acquirePoolFor(ws)
+	pool, ok := a.acquireWorkPool(ws)
 	if !ok {
-		return fmt.Errorf("no spawn-capable pool available")
+		return fmt.Errorf("no work pool available")
 	}
 	if _, err := a.mgr.SpawnExecute(ws, issue, plan, pool); err != nil {
 		a.poolReg.ReleaseByPool(pool.ID)
@@ -1727,40 +1722,85 @@ func (a *App) RejectPlan(workspaceID string, issueNumber int) error {
 	return nil
 }
 
-// --- Orchestrator + Ollama ---
+// --- Orchestrator pool resolver (issue #39) ---
 
-// OllamaConfig is the user-visible Ollama settings.
-type OllamaConfig struct {
-	URL       string `json:"url"`
-	Model     string `json:"model"`
-	Available bool   `json:"available"`
+// resolveOrchestratorLLM returns the orchestrator's LLM client for the next
+// rank pass, or nil when no enabled role=orchestrator pool exists. Resolved
+// on every runRank call so changes via the UI take effect on the next event
+// tick without an app restart.
+func (a *App) resolveOrchestratorLLM() orchestrator.LLM {
+	if a.poolReg == nil || a.providers == nil {
+		return nil
+	}
+	pool, ok := a.poolReg.OrchestratorPool()
+	if !ok {
+		return nil
+	}
+	prov, ok := a.providers.Get(pool.Provider)
+	if !ok {
+		return nil
+	}
+	return &orchestratorChatLLM{provider: prov, pool: pool}
 }
 
-// GetOllamaConfig returns the current settings + a presence check against the
-// configured endpoint.
-func (a *App) GetOllamaConfig() OllamaConfig {
-	cfg := OllamaConfig{URL: a.llm.URL, Model: a.llm.Model}
-	if ok, err := a.llm.Available(a.ctx); err == nil {
-		cfg.Available = ok
-	}
-	return cfg
+// orchestratorChatLLM adapts a llm.Provider into the orchestrator.LLM
+// interface (Generate(system,user) -> string). Each Generate call is a
+// one-shot HTTP request through the provider's ChatJSON path.
+type orchestratorChatLLM struct {
+	provider llm.Provider
+	pool     types.Pool
 }
 
-// SetOllamaConfig persists the user's URL/model picks.
-func (a *App) SetOllamaConfig(cfg OllamaConfig) error {
-	if cfg.URL == "" {
-		cfg.URL = ollama.DefaultURL
+func (o *orchestratorChatLLM) Generate(ctx context.Context, system, prompt string) (string, error) {
+	return o.provider.ChatJSON(ctx, o.pool, system, prompt)
+}
+
+// migrateOrchestratorPool moves the legacy ollama_url / ollama_model settings
+// into a role=orchestrator pool the first time #39 is run. Idempotent: no-op
+// if a role=orchestrator pool already exists, and no-op on fresh installs
+// (where the legacy keys were never written).
+func (a *App) migrateOrchestratorPool() error {
+	if a.store == nil {
+		return nil
 	}
-	if cfg.Model == "" {
-		cfg.Model = ollama.DefaultModel
+	rows, err := a.store.ListPoolsByRole(types.RoleOrchestrator)
+	if err != nil {
+		return err
 	}
-	a.llm.URL = cfg.URL
-	a.llm.Model = cfg.Model
-	a.orch.SetLLM(a.llm)
-	if a.store != nil {
-		_ = a.store.SetSetting("ollama_url", cfg.URL)
-		_ = a.store.SetSetting("ollama_model", cfg.Model)
+	if len(rows) > 0 {
+		_ = a.store.DeleteSetting("ollama_url")
+		_ = a.store.DeleteSetting("ollama_model")
+		return nil
 	}
+	url, _ := a.store.GetSetting("ollama_url")
+	model, _ := a.store.GetSetting("ollama_model")
+	if url == "" && model == "" {
+		return nil
+	}
+	provider := types.ProviderOllama
+	if strings.Contains(url, ":1234") || strings.Contains(strings.ToLower(url), "lmstudio") {
+		provider = types.ProviderLMStudio
+	}
+	name := "orchestrator"
+	if model != "" {
+		name = "orchestrator (" + model + ")"
+	}
+	pool := types.Pool{
+		ID:        uuid.NewString(),
+		Name:      name,
+		Provider:  provider,
+		Endpoint:  url,
+		Model:     model,
+		Capacity:  1,
+		Enabled:   true,
+		Role:      types.RoleOrchestrator,
+		CreatedAt: time.Now(),
+	}
+	if err := a.store.SavePool(pool); err != nil {
+		return err
+	}
+	_ = a.store.DeleteSetting("ollama_url")
+	_ = a.store.DeleteSetting("ollama_model")
 	return nil
 }
 
@@ -1813,22 +1853,31 @@ func (a *App) SpawnDemo() (*types.Session, error) {
 	return a.mgr.SpawnRaw(ws, "claude", []string{"--version"})
 }
 
-// acquirePoolFor reserves a slot on the first eligible pool and returns the
+// acquirePlanPool reserves a slot on a role=plan pool and returns the
 // resolved row. Callers MUST poolReg.ReleaseByPool(pool.ID) on spawn failure.
-// Returns ok=false when no pool is enabled with capacity > 0 and a
-// spawn-capable provider — the caller surfaces this as a user-visible error.
-func (a *App) acquirePoolFor(ws types.Workspace) (types.Pool, bool) {
+// Strict role=plan — never falls back to role=work (issue #39 rev2).
+func (a *App) acquirePlanPool(ws types.Workspace) (types.Pool, bool) {
+	return a.acquirePool(func() (string, bool) { return a.poolReg.AcquireForPlan(ws) })
+}
+
+// acquireWorkPool reserves a slot on a role=work pool. Strict — never falls
+// back to role=plan.
+func (a *App) acquireWorkPool(ws types.Workspace) (types.Pool, bool) {
+	return a.acquirePool(func() (string, bool) { return a.poolReg.AcquireForWork(ws) })
+}
+
+func (a *App) acquirePool(reserve func() (string, bool)) (types.Pool, bool) {
 	if a.poolReg == nil || a.store == nil {
 		return types.Pool{}, false
 	}
-	id, ok := a.poolReg.AcquireFor(ws)
+	id, ok := reserve()
 	if !ok {
 		return types.Pool{}, false
 	}
 	pool, err := a.store.GetPool(id)
 	if err != nil {
 		a.poolReg.ReleaseByPool(id)
-		log.Printf("acquirePoolFor: GetPool(%s): %v", id, err)
+		log.Printf("acquirePool: GetPool(%s): %v", id, err)
 		return types.Pool{}, false
 	}
 	return pool, true
@@ -1844,9 +1893,9 @@ func (a *App) SpawnPlanForIssue(workspaceID string, issueNumber int) (*types.Ses
 	if !ok {
 		return nil, fmt.Errorf("unknown workspace %q", workspaceID)
 	}
-	pool, ok := a.acquirePoolFor(ws)
+	pool, ok := a.acquirePlanPool(ws)
 	if !ok {
-		return nil, fmt.Errorf("no spawn-capable pool available")
+		return nil, fmt.Errorf("no plan pool available")
 	}
 	sess, err := a.mgr.SpawnPlan(ws, types.Issue{Number: issueNumber, WorkspaceID: workspaceID}, pool)
 	if err != nil {

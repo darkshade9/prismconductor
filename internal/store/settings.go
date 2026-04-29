@@ -26,6 +26,15 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
 }
 
+// DeleteSetting removes a kv row. No error if absent.
+func (s *Store) DeleteSetting(key string) error {
+	if s == nil || s.DB == nil {
+		return errors.New("store unavailable")
+	}
+	_, err := s.DB.Exec(`DELETE FROM settings WHERE key = ?`, key)
+	return err
+}
+
 // AllSettings returns the full kv table as a map.
 func (s *Store) AllSettings() (map[string]string, error) {
 	if s == nil || s.DB == nil {

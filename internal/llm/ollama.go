@@ -60,3 +60,15 @@ func (o ollamaProvider) ListModels(ctx context.Context, p types.Pool) ([]string,
 func (ollamaProvider) SpawnArgs(_ types.Pool, _ string) ([]string, error) {
 	return nil, ErrNotSupported
 }
+
+// ChatJSON routes through Ollama's OpenAI-compat /v1/chat/completions. The
+// extended timeout in NewOllamaProvider is short for orchestrator runs against
+// large local models, so callers should pass a context with their own
+// deadline (the orchestrator gives 5 minutes).
+func (o ollamaProvider) ChatJSON(ctx context.Context, p types.Pool, system, user string) (string, error) {
+	endpoint := strings.TrimRight(p.Endpoint, "/")
+	if endpoint == "" {
+		endpoint = defaultOllamaEndpoint
+	}
+	return openAICompatChat(ctx, o.client, endpoint, p.APIKey, p.Model, system, user)
+}

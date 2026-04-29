@@ -5,8 +5,29 @@ import {
 } from "../../wailsjs/go/main/App";
 import { main, types } from "../../wailsjs/go/models";
 
+type Role = "plan" | "work" | "orchestrator";
+
+const ROLE_OPTIONS: { value: Role; label: string; help: string }[] = [
+  {
+    value: "plan",
+    label: "Plan",
+    help: "Runs /conductor-plan against this pool's model.",
+  },
+  {
+    value: "work",
+    label: "Work",
+    help: "Runs /conductor-execute (the heavy implementation pass).",
+  },
+  {
+    value: "orchestrator",
+    label: "Orchestrator",
+    help: "Runs the rank+deps backlog pass. At most one enabled.",
+  },
+];
+
 type Props = {
   providers: main.ProviderInfo[];
+  existingPools: types.Pool[];
   initial: types.Pool | null;
   onClose: () => void;
   onSaved: () => void;
@@ -18,9 +39,18 @@ function modelTail(model: string): string {
   return last.split(":")[0] ?? last;
 }
 
-export function PoolEditModal({ providers, initial, onClose, onSaved }: Props) {
+export function PoolEditModal({
+  providers,
+  existingPools,
+  initial,
+  onClose,
+  onSaved,
+}: Props) {
   const fallbackProvider = (providers[0]?.kind ?? "claude") as string;
-  const [providerKind, setProviderKind] = useState<string>(initial?.provider ?? fallbackProvider);
+  const [role, setRole] = useState<Role>(((initial?.role as Role) || "work") as Role);
+  const [providerKind, setProviderKind] = useState<string>(
+    initial?.provider ?? fallbackProvider,
+  );
   const [name, setName] = useState<string>(initial?.name ?? "");
   const [endpoint, setEndpoint] = useState<string>(initial?.endpoint ?? "");
   const [apiKey, setApiKey] = useState<string>(initial?.api_key ?? "");
@@ -37,6 +67,21 @@ export function PoolEditModal({ providers, initial, onClose, onSaved }: Props) {
     () => providers.find((p) => p.kind === providerKind),
     [providers, providerKind],
   );
+
+  // Disable Save when picking role=orchestrator while another enabled
+  // orchestrator pool already exists (and isn't the row we're editing).
+  const orchestratorBlock = useMemo(() => {
+    if (role !== "orchestrator") return false;
+    return existingPools.some(
+      (p) =>
+        p.role === "orchestrator" &&
+        p.enabled &&
+        p.id !== (initial?.id ?? ""),
+    );
+  }, [role, existingPools, initial]);
+
+  const harnessPending =
+    (role === "plan" || role === "work") && providerInfo && !providerInfo.can_spawn;
 
   useEffect(() => {
     if (initial) return;
@@ -96,19 +141,23 @@ export function PoolEditModal({ providers, initial, onClose, onSaved }: Props) {
 
   async function onSave() {
     if (!providerInfo) return;
+    if (orchestratorBlock) return;
     setBusy(true);
     setSaveErr("");
     try {
       const finalName = name.trim() || `${providerKind}-${modelTail(model) || "pool"}`;
+      // Orchestrator runs are per-call HTTP, capacity is irrelevant. Persist 1.
+      const finalCapacity = role === "orchestrator" ? 1 : capacity;
       const pool = types.Pool.createFrom({
         id: initial?.id ?? "",
         name: finalName,
         provider: providerKind,
         endpoint: endpoint.trim(),
         model: model.trim(),
-        capacity,
+        capacity: finalCapacity,
         enabled,
         api_key: apiKey,
+        role,
         created_at: initial?.created_at ?? new Date().toISOString(),
       });
       await SavePool(pool);
@@ -132,6 +181,24 @@ export function PoolEditModal({ providers, initial, onClose, onSaved }: Props) {
 
         <div className="space-y-3 text-sm">
           <div>
+            <div className="text-xs text-slate-500 mb-1">Role</div>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value as Role)}
+              className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
+            >
+              {ROLE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <div className="text-[11px] text-slate-500 mt-1">
+              {ROLE_OPTIONS.find((o) => o.value === role)?.help}
+            </div>
+          </div>
+
+          <div>
             <div className="text-xs text-slate-500 mb-1">Provider</div>
             <select
               value={providerKind}
@@ -150,6 +217,12 @@ export function PoolEditModal({ providers, initial, onClose, onSaved }: Props) {
                 </option>
               ))}
             </select>
+            {harnessPending && (
+              <div className="text-[11px] text-amber-300 mt-1">
+                Pools with this provider can be saved now but will return an
+                error on spawn until harness-v1 ships.
+              </div>
+            )}
           </div>
 
           {providerInfo && providerKind !== "claude" && (
@@ -223,20 +296,22 @@ export function PoolEditModal({ providers, initial, onClose, onSaved }: Props) {
             )}
           </div>
 
-          <div>
-            <div className="text-xs text-slate-500 mb-1">Capacity (1–10)</div>
-            <div className="flex items-center gap-3">
-              <input
-                type="range"
-                min={1}
-                max={10}
-                value={capacity}
-                onChange={(e) => setCapacity(parseInt(e.target.value, 10))}
-                className="flex-1"
-              />
-              <span className="font-mono text-slate-200 w-6 text-right">{capacity}</span>
+          {role !== "orchestrator" && (
+            <div>
+              <div className="text-xs text-slate-500 mb-1">Capacity (1–10)</div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min={1}
+                  max={10}
+                  value={capacity}
+                  onChange={(e) => setCapacity(parseInt(e.target.value, 10))}
+                  className="flex-1"
+                />
+                <span className="font-mono text-slate-200 w-6 text-right">{capacity}</span>
+              </div>
             </div>
-          </div>
+          )}
 
           <div>
             <div className="text-xs text-slate-500 mb-1">Name</div>
@@ -257,6 +332,13 @@ export function PoolEditModal({ providers, initial, onClose, onSaved }: Props) {
             Enabled
           </label>
 
+          {orchestratorBlock && (
+            <div className="text-xs text-rose-300">
+              Only one orchestrator pool can be enabled at a time. Disable the
+              existing one first.
+            </div>
+          )}
+
           {saveErr && <div className="text-xs text-rose-300">{saveErr}</div>}
         </div>
 
@@ -269,7 +351,7 @@ export function PoolEditModal({ providers, initial, onClose, onSaved }: Props) {
           </button>
           <button
             onClick={onSave}
-            disabled={busy}
+            disabled={busy || orchestratorBlock}
             className="text-xs px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-100 rounded disabled:opacity-50"
           >
             {busy ? "Saving…" : "Save"}

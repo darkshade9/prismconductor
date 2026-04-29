@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS pools (
     capacity     INTEGER NOT NULL DEFAULT 1,
     enabled      INTEGER NOT NULL DEFAULT 1,
     api_key      TEXT NOT NULL DEFAULT '',
+    role         TEXT NOT NULL DEFAULT 'work' CHECK(role IN ('plan','work','orchestrator')),
     created_at   INTEGER NOT NULL
 );
 `)
@@ -120,5 +121,71 @@ CREATE TABLE IF NOT EXISTS pools (
 			return err
 		}
 	}
+	// Issue #39: role tag on each pool. Idempotent additive column with default
+	// 'work' so pre-#39 rows continue to behave as work pools.
+	if _, err := s.DB.Exec(`ALTER TABLE pools ADD COLUMN role TEXT NOT NULL DEFAULT 'work'`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
+	if err := s.ensurePoolsRoleCheck(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// ensurePoolsRoleCheck rebuilds the pools table once with a CHECK constraint
+// on role. SQLite's ALTER TABLE can't add a CHECK to an existing column, so
+// the standard CREATE NEW + INSERT … SELECT + DROP + RENAME swap is gated on a
+// one-time settings flag.
+func (s *Store) ensurePoolsRoleCheck() error {
+	done, _ := s.GetSetting("pools_role_check_v1")
+	if done == "1" {
+		return nil
+	}
+	var ddl string
+	if err := s.DB.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='pools'`).Scan(&ddl); err != nil {
+		return err
+	}
+	if strings.Contains(ddl, "CHECK(role IN") {
+		return s.SetSetting("pools_role_check_v1", "1")
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	rollback := func() { _ = tx.Rollback() }
+	_, err = tx.Exec(`CREATE TABLE pools_new (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    provider     TEXT NOT NULL,
+    endpoint     TEXT NOT NULL DEFAULT '',
+    model        TEXT NOT NULL,
+    capacity     INTEGER NOT NULL DEFAULT 1,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    api_key      TEXT NOT NULL DEFAULT '',
+    role         TEXT NOT NULL CHECK(role IN ('plan','work','orchestrator')),
+    created_at   INTEGER NOT NULL
+)`)
+	if err != nil {
+		rollback()
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO pools_new (id,name,provider,endpoint,model,capacity,enabled,api_key,role,created_at)
+        SELECT id,name,provider,endpoint,model,capacity,enabled,api_key,COALESCE(role,'work'),created_at FROM pools`); err != nil {
+		rollback()
+		return err
+	}
+	if _, err := tx.Exec(`DROP TABLE pools`); err != nil {
+		rollback()
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE pools_new RENAME TO pools`); err != nil {
+		rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.SetSetting("pools_role_check_v1", "1")
 }

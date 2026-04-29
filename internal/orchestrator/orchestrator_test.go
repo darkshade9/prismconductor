@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"context"
 	"testing"
 
 	"prismconductor/internal/eventbus"
@@ -10,8 +11,8 @@ import (
 // stubStore satisfies the Store interface; only ListGoals/ListIssues are
 // reached by autoPull's happy path.
 type stubStore struct {
-	goals       []types.Goal
-	issues      []types.Issue
+	goals          []types.Goal
+	issues         []types.Issue
 	listGoalsHits  int
 	listIssuesHits int
 }
@@ -25,11 +26,11 @@ func (s *stubStore) ListGoals() ([]types.Goal, error) {
 	s.listGoalsHits++
 	return s.goals, nil
 }
-func (s *stubStore) GetGoal(string) (types.Goal, error)             { return types.Goal{}, nil }
+func (s *stubStore) GetGoal(string) (types.Goal, error) { return types.Goal{}, nil }
 func (s *stubStore) DepCacheGet(string, int, string, string) (string, bool, error) {
 	return "", false, nil
 }
-func (s *stubStore) DepCachePut(string, int, string, string, any) error { return nil }
+func (s *stubStore) DepCachePut(string, int, string, string, any) error    { return nil }
 func (s *stubStore) MoveIssueColumn(string, int, types.BoardColumn) error { return nil }
 
 type stubPool struct {
@@ -39,8 +40,8 @@ type stubPool struct {
 	freeHits    int
 }
 
-func (p *stubPool) FreeForSpawn() int { p.freeHits++; return p.free }
-func (p *stubPool) AcquireFor(types.Workspace) (string, bool) {
+func (p *stubPool) FreePlanSlots() int { p.freeHits++; return p.free }
+func (p *stubPool) AcquireForPlan(types.Workspace) (string, bool) {
 	p.tryAcquires++
 	if p.free <= 0 {
 		return "", false
@@ -120,5 +121,59 @@ func TestAutoPullProceedsWhenNotPaused(t *testing.T) {
 	}
 	if spawnHits != 1 {
 		t.Errorf("unpaused autoPull spawned %d times, want 1", spawnHits)
+	}
+}
+
+// fakeLLM lets runRank tests inject a deterministic response without HTTP.
+type fakeLLM struct {
+	called bool
+	resp   string
+	err    error
+}
+
+func (f *fakeLLM) Generate(_ context.Context, _, _ string) (string, error) {
+	f.called = true
+	return f.resp, f.err
+}
+
+// TestRunRank_NoOrchestratorPool_NoOps verifies that with a nil resolver (or
+// a resolver that returns nil), runRank no-ops cleanly without erroring —
+// matches today's "no Ollama" degraded behavior.
+func TestRunRank_NoOrchestratorPool_NoOps(t *testing.T) {
+	st := &stubStore{
+		goals: []types.Goal{
+			{ID: "g1", WorkspaceID: "ws1", Status: types.GoalActive, Title: "t"},
+		},
+		issues: []types.Issue{
+			{WorkspaceID: "ws1", Number: 1, State: "open", Title: "issue", Column: types.ColTodo},
+		},
+	}
+	o := New(eventbus.New(), func() LLM { return nil })
+	o.SetStore(st)
+	if err := o.runRank("test"); err != nil {
+		t.Fatalf("runRank with nil LLM should not error, got %v", err)
+	}
+}
+
+// TestRunRank_ResolverHit invokes the LLM only when the resolver returns a
+// non-nil client. Confirms the resolver is consulted on every call (not at
+// construction time).
+func TestRunRank_ResolverHit(t *testing.T) {
+	st := &stubStore{
+		goals: []types.Goal{
+			{ID: "g1", WorkspaceID: "ws1", Status: types.GoalActive, Title: "t"},
+		},
+		issues: []types.Issue{
+			{WorkspaceID: "ws1", Number: 1, State: "open", Title: "issue", Column: types.ColTodo, Body: "x"},
+		},
+	}
+	llm := &fakeLLM{resp: `{"ordering":[1],"primitives":[1],"dependencies":[],"rationale":"r"}`}
+	o := New(eventbus.New(), func() LLM { return llm })
+	o.SetStore(st)
+	if err := o.runRank("test"); err != nil {
+		t.Fatalf("runRank: %v", err)
+	}
+	if !llm.called {
+		t.Fatal("resolver-returned LLM was never called by runRank")
 	}
 }
