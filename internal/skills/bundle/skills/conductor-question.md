@@ -5,7 +5,7 @@ description: Helper invoked inline when a worker needs to ask the user a structu
 
 # conductor-question
 
-Bundled by PrismConductor (PRISMCONDUCTOR_PLAN.md §15.7).
+Bundled by PrismConductor (PRISMCONDUCTOR_PLAN.md §15.7, issue #17).
 
 ## Inputs
 
@@ -17,8 +17,34 @@ Bundled by PrismConductor (PRISMCONDUCTOR_PLAN.md §15.7).
 
 ## Behavior
 
-1. Generate a UUID for the question id.
-2. Write `.prismconductor/questions/<id>.json` matching the §6.4 Question schema. Populate `default` from the `--default` input.
-3. Print `Question: <prompt>` so the PTY parser flips state to waiting_for_input (§10.3).
-4. Block on the matching answer file `.prismconductor/answers/<id>.json` (poll every 2s).
-5. Read the answer and return it on stdout for the calling skill.
+The execute worker runs in `claude -p` (one-shot) mode and cannot block on user input. Mid-run questions are persisted to disk; the conductor pauses the session, surfaces the question to the user, and re-spawns a fresh execute worker on the same branch once the answer arrives. This skill writes the question + sidecar and exits.
+
+1. Generate a UUID `<id>` for the question.
+2. Write `.prismconductor/questions/<id>.json` matching the §6.4 Question schema:
+   ```json
+   {
+     "id": "<id>",
+     "type": "<type>",
+     "prompt": "<prompt>",
+     "options": ["<opt1>", "..."],
+     "default": "<default>",
+     "required": true
+   }
+   ```
+3. Write `.prismconductor/questions/<id>.context.json` with the minimal sidecar the resume worker needs:
+   ```json
+   {
+     "issue_number": <num>,
+     "workspace_id": "<wsID>",
+     "revision": <N>,
+     "branch": "<feat/issue-<num>-<slug>>",
+     "plan_path": ".prismconductor/plans/<num>-rev<N>.json",
+     "scratch": "<free-text notes for your future self — what you were doing, why you're stuck>"
+   }
+   ```
+4. Print exactly `QUESTION_PENDING: <id>` on its own line. The conductor's PTY parser flips the session state to `paused_for_question` (NOT `failed`).
+5. Exit 0.
+
+**Do NOT** poll for the answer file (the parent worker is `claude -p` and exits with you). **Do NOT** print `BLOCKED:` (this is not a failure — it's a pause). **Do NOT** print `Question:` (that sentinel is reserved for plan-mode and would double-fire the wrong UI path).
+
+After the user answers via the conductor UI, a fresh execute worker is spawned with `/conductor-execute --resume-question <id>`. That worker reads the context sidecar, switches back to the same branch, and continues.

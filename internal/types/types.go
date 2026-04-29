@@ -171,17 +171,27 @@ const (
 // --- Session (§6.5) ---
 
 type Session struct {
-	ID            string       `json:"id"`
-	WorkspaceID   string       `json:"workspace_id"`
-	IssueNumber   int          `json:"issue_number"`
-	Mode          SessionMode  `json:"mode"`
-	State         SessionState `json:"state"`
-	StartedAt     time.Time    `json:"started_at"`
-	EndedAt       *time.Time   `json:"ended_at,omitempty"`
-	PID           int          `json:"pid"`
-	Transcript    string       `json:"-"`
-	LastPrompt    string       `json:"last_prompt"`
-	BlockedReason string       `json:"blocked_reason,omitempty"`
+	ID                string       `json:"id"`
+	WorkspaceID       string       `json:"workspace_id"`
+	IssueNumber       int          `json:"issue_number"`
+	Mode              SessionMode  `json:"mode"`
+	State             SessionState `json:"state"`
+	StartedAt         time.Time    `json:"started_at"`
+	EndedAt           *time.Time   `json:"ended_at,omitempty"`
+	PID               int          `json:"pid"`
+	Transcript        string       `json:"-"`
+	LastPrompt        string       `json:"last_prompt"`
+	BlockedReason     string       `json:"blocked_reason,omitempty"`
+	PendingQuestionID string       `json:"pending_question_id,omitempty"`
+}
+
+// MidRunAnswer is the §6.4-shaped answer payload for a mid-run question
+// (issue #17). One question per call; symmetry with the multi-question
+// AnswerSubmission shape is intentionally not preserved.
+type MidRunAnswer struct {
+	QuestionID string   `json:"question_id"`
+	Answer     string   `json:"answer"`
+	Multi      []string `json:"multi,omitempty"`
 }
 
 // SessionActivity is the per-tick liveness payload emitted on the
@@ -206,9 +216,10 @@ const (
 type SessionState string
 
 const (
-	StateRunning         SessionState = "running"
-	StateWaitingForInput SessionState = "waiting_for_input"
-	StateBlocked         SessionState = "blocked"
-	StateCompleted       SessionState = "completed"
-	StateFailed          SessionState = "failed"
+	StateRunning            SessionState = "running"
+	StateWaitingForInput    SessionState = "waiting_for_input"
+	StateBlocked            SessionState = "blocked"
+	StateCompleted          SessionState = "completed"
+	StateFailed             SessionState = "failed"
+	StatePausedForQuestion  SessionState = "paused_for_question"
 )

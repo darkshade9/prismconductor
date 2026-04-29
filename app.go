@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -52,6 +53,8 @@ type App struct {
 	poller  *pcgithub.Poller
 	logs    *logbuffer.Ring
 	cfgDir  string
+
+	answerWatcher *store.AnswerWatcher
 
 	pendingDevice *githubauth.DeviceCode
 
@@ -172,6 +175,29 @@ func (a *App) startup(ctx context.Context) {
 		})
 	}
 
+	// Issue #17: answer-file watcher. Polls each enabled workspace's
+	// .prismconductor/answers/ directory on a 1s ticker; when an answer file
+	// matches a session paused on that question, fire the resume callback. The
+	// watcher does NOT distinguish "answer arrived live" from "answer was
+	// already on disk at startup" — the first tick post-restart auto-resumes
+	// any pre-existing match (Q4=A).
+	if a.store != nil && a.wsReg != nil {
+		a.answerWatcher = store.NewAnswerWatcher(
+			time.Second,
+			func() []types.Workspace { return a.wsReg.List() },
+			func() []store.PausedSession {
+				ps, err := a.store.ListPausedForQuestionSessions()
+				if err != nil {
+					log.Printf("answer watcher: list paused sessions: %v", err)
+					return nil
+				}
+				return ps
+			},
+			a.handleMidRunAnswerArrived,
+		)
+		go a.answerWatcher.Run(a.ctx)
+	}
+
 	// Re-attach to sessions that were live at last shutdown (§15.3).
 	if a.store != nil {
 		if running, _, err := a.store.LoadRunningSessions(); err == nil {
@@ -214,7 +240,7 @@ func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionSta
 		return
 	}
 	switch sess.State {
-	case types.StateWaitingForInput, types.StateBlocked, types.StateCompleted, types.StateFailed:
+	case types.StateWaitingForInput, types.StatePausedForQuestion, types.StateBlocked, types.StateCompleted, types.StateFailed:
 		// One notification per transition; dedupe identical kicks within 2s.
 		key := sess.ID + ":" + string(sess.State)
 		a.notifyMu.Lock()
@@ -329,6 +355,8 @@ func notifyBody(sess types.Session) string {
 	switch sess.State {
 	case types.StateWaitingForInput:
 		return prefix + "needs input"
+	case types.StatePausedForQuestion:
+		return prefix + "needs answer mid-run"
 	case types.StateBlocked:
 		return prefix + "is blocked"
 	case types.StateCompleted:
@@ -1203,6 +1231,119 @@ func (a *App) ListPendingPlans() ([]store.PendingPlan, error) {
 		return nil, fmt.Errorf("store unavailable")
 	}
 	return a.store.ListPendingPlans()
+}
+
+// midRunQuestionContext mirrors the sidecar the conductor-question skill writes
+// alongside `<id>.json`. The plan_path is repo-relative; the resume callback
+// uses revision to look up the plan in the store.
+type midRunQuestionContext struct {
+	IssueNumber int    `json:"issue_number"`
+	WorkspaceID string `json:"workspace_id"`
+	Revision    int    `json:"revision"`
+	Branch      string `json:"branch"`
+	PlanPath    string `json:"plan_path"`
+	Scratch     string `json:"scratch"`
+}
+
+// handleMidRunAnswerArrived is the watcher callback (#17). Loads the plan +
+// issue, spawns a resume execute worker on the same branch, and clears the
+// pending_question_id on the OLD session row so subsequent ticks don't re-fire
+// on the stale match.
+func (a *App) handleMidRunAnswerArrived(ps store.PausedSession) {
+	if a.wsReg == nil || a.store == nil || a.mgr == nil {
+		return
+	}
+	ws, ok := a.wsReg.Get(ps.WorkspaceID)
+	if !ok {
+		log.Printf("answer arrived for unknown workspace %q (session %s)", ps.WorkspaceID, ps.SessionID)
+		return
+	}
+	ctxPath := filepath.Join(ws.RepoPath, ".prismconductor", "questions", ps.QuestionID+".context.json")
+	raw, err := os.ReadFile(ctxPath)
+	if err != nil {
+		log.Printf("answer arrived but context sidecar unreadable at %s: %v", ctxPath, err)
+		return
+	}
+	var ctx midRunQuestionContext
+	if err := json.Unmarshal(raw, &ctx); err != nil {
+		log.Printf("invalid context sidecar at %s: %v", ctxPath, err)
+		return
+	}
+	plan, err := a.store.GetPlan(ws.ID, ps.IssueNumber, ctx.Revision)
+	if err != nil {
+		log.Printf("answer resume: load plan rev %d for #%d: %v", ctx.Revision, ps.IssueNumber, err)
+		return
+	}
+	issue, err := a.store.LoadIssue(ws.ID, ps.IssueNumber)
+	if err != nil {
+		log.Printf("answer resume: load issue #%d (%v); falling back to stub", ps.IssueNumber, err)
+		issue = types.Issue{Number: ps.IssueNumber, WorkspaceID: ws.ID}
+	}
+	// Clear the pending_question_id on the OLD session BEFORE spawning so the
+	// watcher's next tick doesn't see this paused row again. The new session
+	// is the source of truth from here on.
+	if err := a.store.UpdateSessionPendingQuestion(ps.SessionID, ""); err != nil {
+		log.Printf("answer resume: clear pending_question_id on %s: %v", ps.SessionID, err)
+	}
+	if _, err := a.mgr.SpawnExecuteResume(ws, issue, plan, ps.QuestionID); err != nil {
+		log.Printf("answer resume: SpawnExecuteResume #%d: %v", ps.IssueNumber, err)
+		return
+	}
+	log.Printf("answer resume: spawned execute worker for #%d on branch %s (qid=%s)",
+		ps.IssueNumber, ctx.Branch, ps.QuestionID)
+}
+
+// SubmitMidRunAnswer writes the user's answer for a mid-run question (#17).
+// One question per call; the file lives at
+// `<RepoPath>/.prismconductor/answers/<question_id>.json` (NOT keyed by issue
+// or revision — mid-run questions are indexed by their own UUID). The
+// AnswerWatcher trips the resume on its next tick.
+func (a *App) SubmitMidRunAnswer(workspaceID string, issueNumber int, answer types.MidRunAnswer) error {
+	if a.wsReg == nil {
+		return fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	if answer.QuestionID == "" {
+		return fmt.Errorf("question_id required")
+	}
+	dir := filepath.Join(ws.RepoPath, ".prismconductor", "answers")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(answer, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, answer.QuestionID+".json"), b, 0o644)
+}
+
+// GetMidRunQuestion reads the on-disk question definition (#17) so the
+// frontend modal can render without direct fs access. The question lives at
+// `<RepoPath>/.prismconductor/questions/<question_id>.json`.
+func (a *App) GetMidRunQuestion(workspaceID string, issueNumber int, questionID string) (types.Question, error) {
+	if a.wsReg == nil {
+		return types.Question{}, fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return types.Question{}, fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	if questionID == "" {
+		return types.Question{}, fmt.Errorf("question_id required")
+	}
+	path := filepath.Join(ws.RepoPath, ".prismconductor", "questions", questionID+".json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return types.Question{}, err
+	}
+	var q types.Question
+	if err := json.Unmarshal(raw, &q); err != nil {
+		return types.Question{}, fmt.Errorf("invalid question JSON at %s: %w", path, err)
+	}
+	return q, nil
 }
 
 // AnswerSubmission is the frontend's payload for the answers form.

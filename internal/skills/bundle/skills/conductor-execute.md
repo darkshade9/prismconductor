@@ -18,6 +18,7 @@ Bundled by PrismConductor (PRISMCONDUCTOR_PLAN.md §15.7).
 - `--revision <N>` (required — which approved plan to execute)
 - `--repo <path>` (defaults to cwd)
 - `--native-cmd <command>` (Hybrid: hands off to a repo's own execute skill, with the conductor still owning JSON I/O)
+- `--resume-question <id>` (#17 — resume mode: continue an earlier execute on the same branch after a mid-run question was answered. When set, the steps below diverge as noted under **Resume mode**.)
 
 ## Behavior
 
@@ -38,7 +39,8 @@ These steps are mandatory and must run in this order. Do **not** edit any files 
    branch. Do NOT `git stash`, do NOT `git reset` — the working tree was just
    created clean. Sanity check ONLY:
    ```
-   git status --short            # should be empty
+   git status --short            # should be empty (or contain only the prior
+                                 #   worker's edits, in resume mode)
    git branch --show-current     # should start with feat/issue-<num>-
    ```
    If either check fails: print `BLOCKED: worktree integrity check failed — <reason>` and exit. Do not attempt to recover.
@@ -47,6 +49,8 @@ These steps are mandatory and must run in this order. Do **not** edit any files 
 
 7. Implement the plan: edit files listed in `files_to_modify`, follow the conventions discovered in step 3.
 8. **For every `add` intent in the plan, write at least one test exercising the new code.** If the plan adds a Go function `Foo`, add a `TestFoo` (or table test) in the appropriate `_test.go`. If the plan adds a React component or hook, add a Vitest/Jest test (or at minimum a render-doesn't-throw smoke test). Skipping this with "no test framework yet" is only acceptable if the repo genuinely has no test infrastructure AND you note it explicitly in the PR body.
+
+If you hit a question the plan didn't cover, invoke `/conductor-question` (writes a structured question, prints `QUESTION_PENDING: <id>`, exits 0). The conductor pauses the card on `paused_for_question`, surfaces the question to the user, and re-spawns this skill with `--resume-question <id>` once they answer. **Use this BEFORE you start committing partial work** — once you've staged changes, drive the work to completion instead.
 
 ### 4. Verification gates (NON-NEGOTIABLE — block on failure)
 
@@ -69,17 +73,17 @@ These run before commit. Failures here are **stop-the-world** events: print `BLO
 
 ### 5. Commit + push + PR (NON-NEGOTIABLE)
 
-12. `git add` only the files you modified (avoid `git add -A` — never commit unrelated WIP that may be in the tree from another task).
+12. `git add` only the files you modified (avoid `git add -A` — never commit unrelated WIP that may be in the tree from another task). If `git status` shows nothing staged AND nothing modified (the prior worker already committed before pausing), skip the commit step cleanly and proceed to the PR check.
 13. `git commit -m "<short subject>\n\nCloses #<num>\n\nCo-Authored-By: PrismConductor worker <noreply@anthropic.com>"`. Subject must reference the issue number; body must include `Closes #<num>` so the PR auto-closes the issue on merge.
 14. `git push -u origin HEAD`.
-15. `gh pr create --draft --base <BASE> --title "<short subject> (#<num>)" --body-file -` — pipe a body containing:
+15. **Single-PR enforcement (#17, Q6):** before `gh pr create`, run `gh pr list --head <branch> --json number,url`. If non-empty, an earlier resume already opened the PR — append a follow-up comment via `gh pr comment <num> --body-file -` summarizing this leg's work, capture the existing URL, and SKIP `gh pr create`. Otherwise: `gh pr create --draft --base <BASE> --title "<short subject> (#<num>)" --body-file -`. The body should contain:
     - A 1-2 sentence summary
     - The list of files modified
     - **Verification:** lint command + result, build command + result, test command + result with pass/fail counts
     - Anything skipped or flagged for human review
     - `Workspace mode: per-execute worktree at <pwd>` — surfaces the conductor isolation mode for reviewers (run `pwd` to fill the path).
     - The literal trailer line `Closes #<num>`
-16. Capture the PR URL from the `gh pr create` output.
+16. Capture the PR URL from `gh pr create` (or `gh pr list` in the reuse case).
 
 ### 6. Sentinels for the conductor
 
@@ -98,6 +102,18 @@ If you cannot complete this skill for ANY reason — permission denial, command 
 
 `Work complete.` and `PR_OPENED:` are reserved for the success path only — never print them on a failure.
 
+## Resume mode (`--resume-question <id>`)
+
+Issue #17. The previous execute worker invoked `/conductor-question` and exited; the user has now answered, and you've been re-spawned to continue.
+
+- **Skip steps 1-3.** Instead read:
+  - `.prismconductor/questions/<id>.context.json` — minimal sidecar (`issue_number`, `workspace_id`, `revision`, `branch`, `plan_path`, `scratch`).
+  - `.prismconductor/answers/<id>.json` — the user's answer in `MidRunAnswer` shape: `{question_id, answer, multi}`.
+  - The plan referenced by `context.plan_path`.
+- **Branch hygiene:** the worktree already exists with the prior worker's edits. `git status --short` MAY be non-empty. Verify `git branch --show-current` matches `context.branch`; if not, print `BLOCKED: branch mismatch — expected <ctx.branch>, got <current>` and exit. Do NOT create a new branch and do NOT discard existing changes.
+- **Continue the work** that the prior worker paused on, using the user's answer as guidance. The `scratch` field in the context sidecar is your prior self's note about what to do next.
+- The rest of the flow (verification, commit, push, PR) is identical — except the single-PR enforcement at step 15 is the load-bearing rule that keeps a multi-pause issue from opening multiple draft PRs.
+
 ## Mid-execution questions
 
-If the agent gets stuck on something the plan didn't cover, invoke `/conductor-question` (writes a structured question, pauses for answer). Do this before step 4 if possible — once a feature branch exists, you should drive the work to completion.
+If the agent gets stuck on something the plan didn't cover, invoke `/conductor-question` (writes a structured question, pauses for answer). Do this before staging changes if possible — once edits are queued, you should drive the work to completion or commit a partial WIP first.

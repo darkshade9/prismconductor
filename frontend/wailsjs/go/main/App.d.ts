@@ -30,6 +30,8 @@ export function GCWorktrees(arg1:string):Promise<number>;
 
 export function GetAutoPullPaused():Promise<boolean>;
 
+export function GetMidRunQuestion(arg1:string,arg2:number,arg3:string):Promise<types.Question>;
+
 export function GetNotifyPrefs():Promise<main.NotifyPrefs>;
 
 export function GetOllamaConfig():Promise<main.OllamaConfig>;
@@ -123,6 +125,8 @@ export function SpawnDemo():Promise<types.Session>;
 export function SpawnPlanForIssue(arg1:string,arg2:number):Promise<types.Session>;
 
 export function SubmitAnswers(arg1:main.AnswerSubmission):Promise<void>;
+
+export function SubmitMidRunAnswer(arg1:string,arg2:number,arg3:types.MidRunAnswer):Promise<void>;
 
 export function UnarchiveAll(arg1:string):Promise<void>;
 

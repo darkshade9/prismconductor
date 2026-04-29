@@ -9,6 +9,7 @@ import { usePlanReadyStore } from "../stores/planReadyStore";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
 import { getContrastText } from "../lib/contrast";
 import { LabelManagePopover } from "./LabelManagePopover";
+import { MidRunQuestionModal } from "./MidRunQuestionModal";
 import { cn } from "../lib/cn";
 
 export type CardProps = {
@@ -33,15 +34,22 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   // Live state: subscribe to the *whole* sessions table so we re-render when any
   // session changes.
   const allSessions = useSessionStore((s) => s.sessions);
-  const { activeSession, activity, lastFailure } = (() => {
+  const { activeSession, activity, lastFailure, pausedSession } = (() => {
     let active: types.Session | null = null;
     let activeAct: SessionActivity | null = null;
     let lastFail: types.Session | null = null;
+    let paused: types.Session | null = null;
     for (const view of Object.values(allSessions)) {
       const m = view.meta;
       if (!m) continue;
       if (m.workspace_id !== issue.workspace_id || m.issue_number !== issue.number) continue;
-      if (m.state === "running" || m.state === "waiting_for_input" || m.state === "blocked") {
+      if (m.state === "paused_for_question") {
+        // Paused for a mid-run question (#17). Track separately so it overrides
+        // both running/active and last-failure rendering.
+        if (!paused || String(m.started_at ?? "") > String(paused.started_at ?? "")) {
+          paused = m;
+        }
+      } else if (m.state === "running" || m.state === "waiting_for_input" || m.state === "blocked") {
         if (!active) {
           active = m;
           activeAct = view.activity ?? null;
@@ -53,7 +61,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         }
       }
     }
-    return { activeSession: active, activity: activeAct, lastFailure: lastFail };
+    return { activeSession: active, activity: activeAct, lastFailure: lastFail, pausedSession: paused };
   })();
   if (activeSession) {
     // Visible in DevTools (Cmd+Opt+I in the Wails window) — confirms the
@@ -69,6 +77,8 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   const blocked = (issue.dependencies ?? []).length > 0;
   const isPrimitive = !blocked && (issue.priority ?? 0) >= 0.7;
 
+  const [midRunOpen, setMidRunOpen] = useState(false);
+
   return (
     <div
       ref={setNodeRef}
@@ -77,14 +87,22 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
       {...listeners}
       onClick={(e) => {
         if (isDragging) return;
+        if (pausedSession) {
+          setMidRunOpen(true);
+          e.stopPropagation();
+          return;
+        }
         onClick?.();
         e.stopPropagation();
       }}
       className={cn(
         "w-full text-left rounded-md border bg-slate-800/70 hover:bg-slate-800 px-3 py-2 mb-2",
         "shadow-sm transition-colors cursor-grab active:cursor-grabbing select-none",
-        // Blocked beats mode color — failure signal must be unmistakable.
-        activeSession && activeSession.state === "blocked"
+        // Paused-for-question (#17) beats mode color so a pending question is
+        // always visually distinct from a running execute.
+        pausedSession
+          ? "border-amber-500 card-glow-ready"
+          : activeSession && activeSession.state === "blocked"
           ? "border-red-500 card-glow-blocked"
           : !activeSession && lastFailure
           ? "border-red-500 card-glow-blocked"
@@ -128,6 +146,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         activeSession={activeSession}
         activity={activity}
         lastFailure={lastFailure}
+        pausedSession={pausedSession}
         planReady={planReady}
         blocked={blocked}
         isPrimitive={isPrimitive}
@@ -136,6 +155,15 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         workspaceID={issue.workspace_id}
         issueNumber={issue.number}
       />
+      {pausedSession && pausedSession.pending_question_id && (
+        <MidRunQuestionModal
+          open={midRunOpen}
+          onClose={() => setMidRunOpen(false)}
+          workspaceID={issue.workspace_id}
+          issueNumber={issue.number}
+          questionID={pausedSession.pending_question_id}
+        />
+      )}
     </div>
   );
 }
@@ -153,6 +181,7 @@ function StatusRow({
   activeSession,
   activity,
   lastFailure,
+  pausedSession,
   planReady,
   blocked,
   isPrimitive,
@@ -164,6 +193,7 @@ function StatusRow({
   activeSession: types.Session | null;
   activity: SessionActivity | null;
   lastFailure: types.Session | null;
+  pausedSession: types.Session | null;
   planReady: { revision: number } | null;
   blocked: boolean;
   isPrimitive: boolean;
@@ -172,6 +202,15 @@ function StatusRow({
   workspaceID: string;
   issueNumber: number;
 }) {
+  if (pausedSession) {
+    return (
+      <div className="text-[11px] mt-1.5 flex items-center gap-1.5 flex-wrap">
+        <Pulse className="bg-amber-400" />
+        <span className="text-amber-300">❓ awaiting answer</span>
+        <span className="text-slate-500">— click to answer</span>
+      </div>
+    );
+  }
   if (activeSession) {
     const planMode = activeSession.mode === "plan";
     const isBlocked = activeSession.state === "blocked";

@@ -28,6 +28,7 @@ type LineHandler func(sessionID string, line string)
 type Persister interface {
 	SaveSession(sess *types.Session, transcriptPath string) error
 	UpdateSessionState(id string, state types.SessionState) error
+	UpdateSessionPendingQuestion(id, questionID string) error
 }
 
 // StateChangeHandler is fired on every state transition. Used by the App layer
@@ -168,6 +169,23 @@ func (m *Manager) SpawnExecute(ws types.Workspace, issue types.Issue, plan types
 		return nil, err
 	}
 	return sess, nil
+}
+
+// SpawnExecuteResume re-enters an execute worker on an existing worktree to
+// continue work after a mid-run question (#17, Q5/Q6). The branch and
+// worktree are expected to already exist on disk — this is the second leg of
+// a paused-for-question flow, NOT a fresh execute. Returns an error if the
+// worktree is missing so the caller can surface it on the OLD session row.
+func (m *Manager) SpawnExecuteResume(ws types.Workspace, issue types.Issue, plan types.Plan, questionID string) (*types.Session, error) {
+	slug := branchSlug(issue.Title)
+	branch := fmt.Sprintf("feat/issue-%d-%s", issue.Number, slug)
+	worktreeDir := filepath.Join(ws.RepoPath, ".prismconductor", "worktrees",
+		fmt.Sprintf("%s-%d", ws.ID, issue.Number))
+	if _, err := os.Stat(worktreeDir); err != nil {
+		return nil, fmt.Errorf("resume worktree missing at %s: %w", worktreeDir, err)
+	}
+	args := buildExecuteResumeCommand(ws, issue, plan, questionID)
+	return m.spawnWithDir(ws, issue, types.ModeExecute, args, worktreeDir, branch)
 }
 
 // branchSlug derives a kebab-case branch suffix from an issue title, lowering
@@ -388,22 +406,7 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 		}
 	}
 	prev := rs.sess.State
-	if err := rs.cmd.Wait(); err != nil {
-		rs.sess.State = types.StateFailed
-	} else {
-		// Worker exited cleanly. Pattern-set transient states map to terminal:
-		//   Running          → Completed (PatternComplete didn't fire but
-		//                      exit was clean — count it as done)
-		//   Blocked          → Failed (worker emitted BLOCKED: and bailed)
-		//   WaitingForInput  → Failed (worker asked Question: then exited
-		//                      before any answer arrived; -p mode does this)
-		switch rs.sess.State {
-		case types.StateRunning:
-			rs.sess.State = types.StateCompleted
-		case types.StateBlocked, types.StateWaitingForInput:
-			rs.sess.State = types.StateFailed
-		}
-	}
+	rs.sess.State = mapTerminalState(rs.sess.State, rs.cmd.Wait())
 	end := time.Now()
 	rs.sess.EndedAt = &end
 	if m.store != nil {
@@ -422,6 +425,9 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 	//         deterministic state with no goroutine fanout. A leftover from a
 	//         transient failure is reclaimed by the next startup Prune.
 	//   q3=A: Completed → leave on disk; the 24h GC walk reclaims it later.
+	// Issue #17: PausedForQuestion must also keep the worktree on disk so the
+	// resume worker can `git switch` back into it. The 24h GC reclaims if the
+	// user never answers.
 	if rs.worktreeDir != "" {
 		switch rs.sess.State {
 		case types.StateBlocked, types.StateFailed:
@@ -439,9 +445,60 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 	m.mu.Unlock()
 }
 
+// mapTerminalState collapses an in-flight session state to its terminal value
+// once the worker process exits. Pure function so it's unit-testable without a
+// real PTY. Issue #17 added the StatePausedForQuestion arm: a paused session
+// that exits cleanly stays paused (the QUESTION_PENDING sentinel already
+// committed the pause), and a paused session that exits non-zero is also kept
+// paused — the worker's exit code doesn't change the fact that the user owes
+// an answer.
+func mapTerminalState(prev types.SessionState, waitErr error) types.SessionState {
+	if prev == types.StatePausedForQuestion {
+		return types.StatePausedForQuestion
+	}
+	if waitErr != nil {
+		return types.StateFailed
+	}
+	switch prev {
+	case types.StateRunning:
+		return types.StateCompleted
+	case types.StateBlocked, types.StateWaitingForInput:
+		return types.StateFailed
+	}
+	return prev
+}
+
 func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 	prev := rs.sess.State
 	switch {
+	case strings.Contains(line, PatternQuestionPending):
+		// Mid-run question (#17). Capture the trailing UUID; flip the session
+		// to paused_for_question so the answer-file watcher can pick it up.
+		// Order matters: this arm must run BEFORE PatternQuestion (which only
+		// fires for legacy plan-mode "Question: " lines). The two prefixes
+		// don't collide on case-sensitive contains, but listing this case
+		// first is the safer ordering if either ever changes.
+		idx := strings.Index(line, PatternQuestionPending)
+		qid := strings.TrimSpace(line[idx+len(PatternQuestionPending):])
+		if qid == "" {
+			log.Printf("QUESTION_PENDING sentinel with empty id on session %s", rs.sess.ID)
+			break
+		}
+		// One-in-flight: ignore a second QUESTION_PENDING while a question is
+		// already pending. Concurrent mid-run questions on the same issue are
+		// out of scope per the issue body's Non-goals.
+		if rs.sess.PendingQuestionID != "" {
+			log.Printf("session %s: ignoring second QUESTION_PENDING %s (already pending %s)",
+				rs.sess.ID, qid, rs.sess.PendingQuestionID)
+			break
+		}
+		rs.sess.State = types.StatePausedForQuestion
+		rs.sess.PendingQuestionID = qid
+		// Persist both. UpdateSessionState only writes one column, so we save
+		// the full row to capture the new id and the JSON blob.
+		if m.store != nil {
+			_ = m.store.SaveSession(rs.sess, rs.transcriptPath)
+		}
 	case strings.Contains(line, PatternQuestion):
 		rs.sess.State = types.StateWaitingForInput
 		rs.sess.LastPrompt = line
@@ -618,6 +675,13 @@ func buildExecuteCommand(ws types.Workspace, issue types.Issue, plan types.Plan)
 	return claudeArgs(executePrompt(ws, issue, plan))
 }
 
+// buildExecuteResumeCommand mirrors buildExecuteCommand but appends the
+// `--resume-question <id>` flag so the conductor-execute skill knows to skip
+// branch creation and read the mid-run question's context sidecar (#17).
+func buildExecuteResumeCommand(ws types.Workspace, issue types.Issue, plan types.Plan, questionID string) []string {
+	return claudeArgs(executeResumePrompt(ws, issue, plan, questionID))
+}
+
 func planPrompt(ws types.Workspace, issue types.Issue) string {
 	switch ws.SkillProfile.Mode {
 	case types.SkillModeNative:
@@ -638,6 +702,15 @@ func executePrompt(ws types.Workspace, issue types.Issue, plan types.Plan) strin
 	default:
 		return fmt.Sprintf("/conductor-execute --issue %d --repo %s --revision %d", issue.Number, ws.RepoPath, plan.Revision)
 	}
+}
+
+// executeResumePrompt appends the `--resume-question <id>` flag so the
+// conductor-execute skill knows to skip branch creation and read the mid-run
+// question's context sidecar (#17). Hybrid + Native variants get the same
+// suffix; the native command is expected to forward the flag through to its
+// underlying execute skill.
+func executeResumePrompt(ws types.Workspace, issue types.Issue, plan types.Plan, questionID string) string {
+	return executePrompt(ws, issue, plan) + " --resume-question " + questionID
 }
 
 func envSpecToSlice(env types.EnvSpec) []string {
