@@ -951,9 +951,9 @@ export namespace types {
 export namespace workspace {
 	
 	export class OnboardCheck {
-	    Name: string;
-	    Pass: boolean;
-	    Info: string;
+	    name: string;
+	    pass: boolean;
+	    info: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new OnboardCheck(source);
@@ -961,10 +961,54 @@ export namespace workspace {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Name = source["Name"];
-	        this.Pass = source["Pass"];
-	        this.Info = source["Info"];
+	        this.name = source["name"];
+	        this.pass = source["pass"];
+	        this.info = source["info"];
 	    }
+	}
+	export class Inspection {
+	    repo_path: string;
+	    checks: OnboardCheck[];
+	    github_owner: string;
+	    github_repo: string;
+	    default_branch: string;
+	    suggested_id: string;
+	    skill_profile: types.SkillProfile;
+	    conventions: types.ConventionHints;
+	
+	    static createFrom(source: any = {}) {
+	        return new Inspection(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.repo_path = source["repo_path"];
+	        this.checks = this.convertValues(source["checks"], OnboardCheck);
+	        this.github_owner = source["github_owner"];
+	        this.github_repo = source["github_repo"];
+	        this.default_branch = source["default_branch"];
+	        this.suggested_id = source["suggested_id"];
+	        this.skill_profile = this.convertValues(source["skill_profile"], types.SkillProfile);
+	        this.conventions = this.convertValues(source["conventions"], types.ConventionHints);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }

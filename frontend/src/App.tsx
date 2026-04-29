@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { EventsOn } from "../wailsjs/runtime/runtime";
 import { SpawnDemo } from "../wailsjs/go/main/App";
 import { useSessionStore } from "./stores/sessionStore";
+import { useWorkspaceStore } from "./stores/workspaceStore";
 import { Board } from "./components/Board";
 import { GoalPane } from "./components/GoalPane";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
@@ -13,19 +14,21 @@ import { LoginButton } from "./components/LoginButton";
 function App() {
   const appendLine = useSessionStore((s) => s.appendLine);
   const setActive = useSessionStore((s) => s.setActive);
+  const refreshWorkspaces = useWorkspaceStore((s) => s.refresh);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    refreshWorkspaces();
     const off = EventsOn("session.line", (data: { session_id: string; line: string }) => {
       appendLine(data.session_id, data.line);
     });
     return () => {
       if (typeof off === "function") off();
     };
-  }, [appendLine]);
+  }, [appendLine, refreshWorkspaces]);
 
   async function spawnDemo() {
     setBusy(true);

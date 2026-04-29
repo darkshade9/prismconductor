@@ -96,6 +96,46 @@ func (a *App) OnboardCheck(path string) []workspace.OnboardCheck {
 	return workspace.Onboard(path)
 }
 
+// InspectRepo returns onboarding checks + parsed owner/repo + skill profile + conventions
+// for a candidate path. Used to pre-fill the Add Workspace form.
+func (a *App) InspectRepo(path string) workspace.Inspection {
+	return workspace.Inspect(path)
+}
+
+// PickRepoPath opens the native folder picker.
+func (a *App) PickRepoPath() (string, error) {
+	return wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{
+		Title: "Select repo for workspace",
+	})
+}
+
+// AddWorkspace registers a new workspace.
+func (a *App) AddWorkspace(ws types.Workspace) error {
+	if a.wsReg == nil {
+		return fmt.Errorf("workspace registry unavailable")
+	}
+	if !ws.Enabled {
+		ws.Enabled = true
+	}
+	return a.wsReg.Add(ws)
+}
+
+// UpdateWorkspace replaces a workspace's record.
+func (a *App) UpdateWorkspace(ws types.Workspace) error {
+	if a.wsReg == nil {
+		return fmt.Errorf("workspace registry unavailable")
+	}
+	return a.wsReg.Update(ws)
+}
+
+// RemoveWorkspace removes a workspace by ID.
+func (a *App) RemoveWorkspace(id string) error {
+	if a.wsReg == nil {
+		return fmt.Errorf("workspace registry unavailable")
+	}
+	return a.wsReg.Remove(id)
+}
+
 // SpawnDemo runs `claude --version` in the cwd and streams output to the frontend.
 // Day-1 deliverable per §18.
 func (a *App) SpawnDemo() (*types.Session, error) {
