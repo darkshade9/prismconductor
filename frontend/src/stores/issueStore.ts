@@ -1,9 +1,12 @@
 import { create } from "zustand";
 import {
+  ListArchivedIssues,
   ListIssues,
   MoveIssueColumn,
   RemoveIssue,
   ReorderIssues,
+  UnarchiveAll,
+  UnarchiveIssue,
 } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 
@@ -73,4 +76,42 @@ export const useIssueStore = create<State>((set, get) => ({
       const others = s.issues.filter((i) => !(i.workspace_id === workspaceID && i.column === column));
       return { issues: [...others, ...inCol] };
     }),
+}));
+
+// Archived list lives in its own store so the live `issues` array doesn't
+// collide on set({issues}). Workspace-scoped (#34 q3): the (N) badge counts
+// every archived issue in the active workspace regardless of any active
+// IssueQuery / goal filter.
+type ArchivedState = {
+  archived: types.Issue[];
+  loading: boolean;
+  refresh: (workspaceID?: string) => Promise<void>;
+  unarchive: (workspaceID: string, number: number) => Promise<void>;
+  unarchiveAll: (workspaceID: string) => Promise<void>;
+};
+
+export const useArchivedStore = create<ArchivedState>((set) => ({
+  archived: [],
+  loading: false,
+  refresh: async (workspaceID) => {
+    set({ loading: true });
+    try {
+      const list = await ListArchivedIssues(workspaceID ?? "");
+      set({ archived: list ?? [], loading: false });
+    } catch {
+      set({ loading: false });
+    }
+  },
+  unarchive: async (workspaceID, number) => {
+    await UnarchiveIssue(workspaceID, number);
+    set((s) => ({
+      archived: s.archived.filter(
+        (i) => !(i.workspace_id === workspaceID && i.number === number),
+      ),
+    }));
+  },
+  unarchiveAll: async (workspaceID) => {
+    await UnarchiveAll(workspaceID);
+    set({ archived: [] });
+  },
 }));

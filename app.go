@@ -534,13 +534,81 @@ func (a *App) ActivateGoal(id string) error {
 
 // --- Issues / Board ---
 
-// ListIssues returns all issues, optionally filtered by workspace ID.
-// Empty workspaceID = all workspaces.
+// ListIssues returns all non-archived issues, optionally filtered by workspace ID.
+// Empty workspaceID = all workspaces. Archived rows (#34) are excluded; use
+// ListArchivedIssues for the drawer.
 func (a *App) ListIssues(workspaceID string) ([]types.Issue, error) {
 	if a.store == nil {
 		return nil, fmt.Errorf("store unavailable")
 	}
 	return a.store.ListIssues(workspaceID)
+}
+
+// ListArchivedIssues returns archived rows for the drawer (#34). Empty
+// workspaceID returns archived rows across every workspace.
+func (a *App) ListArchivedIssues(workspaceID string) ([]types.Issue, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store unavailable")
+	}
+	return a.store.ListArchivedIssues(workspaceID)
+}
+
+// ArchiveDone flags every DONE row in the workspace as archived (#34). Returns
+// the count archived. Empty workspaceID archives across every workspace
+// (matches the All switcher case). Publishes EvtIssuesArchived when n > 0 so
+// the live list and the drawer's (N) badge both refresh.
+func (a *App) ArchiveDone(workspaceID string) (int, error) {
+	if a.store == nil {
+		return 0, fmt.Errorf("store unavailable")
+	}
+	n, err := a.store.ArchiveDone(workspaceID)
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 && a.bus != nil {
+		a.bus.Publish(eventbus.EvtIssuesArchived, map[string]any{
+			"workspace_id": workspaceID,
+			"count":        n,
+		})
+	}
+	return n, nil
+}
+
+// UnarchiveIssue clears archived_at for a single row (#34) and publishes
+// EvtIssuesArchived so the live list and drawer both refresh.
+func (a *App) UnarchiveIssue(workspaceID string, number int) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.UnarchiveIssue(workspaceID, number); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtIssuesArchived, map[string]any{
+			"workspace_id": workspaceID,
+			"number":       number,
+			"count":        -1,
+		})
+	}
+	return nil
+}
+
+// UnarchiveAll clears archived_at across the workspace (#34). Empty
+// workspaceID restores everything across every workspace.
+func (a *App) UnarchiveAll(workspaceID string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.UnarchiveAll(workspaceID); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtIssuesArchived, map[string]any{
+			"workspace_id": workspaceID,
+			"count":        -1,
+		})
+	}
+	return nil
 }
 
 // MoveIssueColumn moves an issue card between columns. Emits EvtCardMovedManually
@@ -837,7 +905,7 @@ func (a *App) SetIssueLabels(workspaceID string, issueNumber int, names []string
 				continue
 			}
 			iss.Labels = append([]string(nil), names...)
-			if err := a.store.SaveIssue(iss); err != nil {
+			if _, err := a.store.SaveIssue(iss); err != nil {
 				log.Printf("optimistic label save #%d: %v", issueNumber, err)
 			}
 			break
@@ -871,7 +939,7 @@ func (a *App) AddManualIssue(workspaceID string, number int, title, body string,
 		State:       "open",
 		Column:      types.BoardColumn(column),
 	}
-	if err := a.store.SaveIssue(iss); err != nil {
+	if _, err := a.store.SaveIssue(iss); err != nil {
 		return nil, err
 	}
 	a.bus.Publish(eventbus.EvtIssueAdded, map[string]any{

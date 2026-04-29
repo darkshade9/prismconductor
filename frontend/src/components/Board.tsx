@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 import {
   CollisionDetection,
@@ -14,7 +14,7 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
-import { FilterIssuesByActiveGoal } from "../../wailsjs/go/main/App";
+import { ArchiveDone, FilterIssuesByActiveGoal } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 import { useIssueStore, Column as ColumnID } from "../stores/issueStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
@@ -225,6 +225,15 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
 
   const activeIssue = activeId ? findIssue(activeId) : null;
 
+  const archiveDone = useCallback(async () => {
+    const items = grouped.done ?? [];
+    const count = items.length;
+    if (count === 0) return;
+    if (count > 5 && !window.confirm(`Archive ${count} cards from DONE?`)) return;
+    await ArchiveDone(selectedID ?? "");
+    refresh(selectedID ?? "");
+  }, [grouped.done, selectedID, refresh]);
+
   return (
     <DndContext
       sensors={sensors}
@@ -240,8 +249,25 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
       <div className="flex gap-3 px-4 pb-4 overflow-x-auto h-full">
         {COLUMNS.map((c) => {
           const items = grouped[c.id] ?? [];
+          const headerExtra =
+            c.id === "done" && items.length > 0 ? (
+              <button
+                onClick={archiveDone}
+                title={`Archive all ${items.length} DONE card${items.length === 1 ? "" : "s"}`}
+                className="text-[10px] text-slate-500 hover:text-slate-200 px-1.5 py-0.5 rounded border border-slate-800 hover:border-slate-600"
+              >
+                📦 Archive {items.length}
+              </button>
+            ) : undefined;
           return (
-            <Column key={c.id} id={c.id} title={c.title} count={items.length} itemIDs={items.map(cardID)}>
+            <Column
+              key={c.id}
+              id={c.id}
+              title={c.title}
+              count={items.length}
+              itemIDs={items.map(cardID)}
+              headerExtra={headerExtra}
+            >
               {items.map((iss) => {
                 const meta = wsMeta.get(iss.workspace_id);
                 return (

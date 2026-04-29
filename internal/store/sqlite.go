@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -90,5 +91,15 @@ CREATE TABLE IF NOT EXISTS labels (
     PRIMARY KEY (workspace_id, name)
 );
 `)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Idempotent additive column for issue archiving (#34). Unix seconds; NULL = not archived.
+	if _, err := s.DB.Exec(`ALTER TABLE issues ADD COLUMN archived_at INTEGER`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
+	return nil
 }

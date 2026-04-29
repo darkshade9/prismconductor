@@ -9,12 +9,14 @@ export function Column({
   count,
   itemIDs,
   children,
+  headerExtra,
 }: {
   id: string;
   title: string;
   count: number;
   itemIDs: string[];
   children?: ReactNode;
+  headerExtra?: ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id, data: { column: id } });
 
@@ -26,8 +28,11 @@ export function Column({
         isOver ? "bg-slate-800/60 border-emerald-700" : "bg-slate-900/40 border-slate-800",
       )}
     >
-      <div className="text-xs uppercase tracking-wide text-slate-400 mb-2 px-1">
-        {title} <span className="text-slate-500">({count})</span>
+      <div className="flex items-center text-xs uppercase tracking-wide text-slate-400 mb-2 px-1">
+        <span>
+          {title} <span className="text-slate-500">({count})</span>
+        </span>
+        {headerExtra && <span className="ml-auto">{headerExtra}</span>}
       </div>
       <SortableContext items={itemIDs} strategy={verticalListSortingStrategy}>
         <div className="space-y-1 min-h-[40px]">{children}</div>

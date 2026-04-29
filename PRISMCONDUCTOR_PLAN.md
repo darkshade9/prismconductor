@@ -268,6 +268,7 @@ type Issue struct {
     LastError      string          `json:"last_error,omitempty"`
     PRNumber       *int            `json:"pr_number,omitempty"` // set when execute worker emits PR_OPENED:
     PRURL          string          `json:"pr_url,omitempty"`    // canonical github.com/.../pull/N
+    ArchivedAt     *time.Time      `json:"archived_at,omitempty"` // local visual archive (#34); null = visible on board
 }
 
 type BoardColumn string
@@ -766,7 +767,7 @@ SQLite database at `~/Library/Application Support/PrismConductor/conductor.db`.
 Tables:
 - `workspaces` — registry
 - `goals` — all goals with status
-- `issues` — local mirror with conductor-managed fields
+- `issues` — local mirror with conductor-managed fields. `archived_at` (INTEGER, nullable, unix seconds) is the visual archive flag (#34); rows with `archived_at IS NOT NULL` are excluded from `ListIssues` and surface only in the Archived drawer.
 - `plans` — historical plan revisions, JSON blob
 - `sessions` — session log, transcript path
 - `events` — append-only event log for debugging

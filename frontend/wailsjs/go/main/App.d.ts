@@ -16,6 +16,8 @@ export function AddWorkspace(arg1:types.Workspace):Promise<void>;
 
 export function ApprovePlan(arg1:string,arg2:number,arg3:number):Promise<void>;
 
+export function ArchiveDone(arg1:string):Promise<number>;
+
 export function CreateLabel(arg1:string,arg2:types.Label):Promise<types.Label>;
 
 export function DeleteGoal(arg1:string):Promise<void>;
@@ -51,6 +53,8 @@ export function InspectRepo(arg1:string):Promise<workspace.Inspection>;
 export function KillSession(arg1:string):Promise<void>;
 
 export function LatestPlan(arg1:string,arg2:number):Promise<types.Plan>;
+
+export function ListArchivedIssues(arg1:string):Promise<Array<types.Issue>>;
 
 export function ListBundledSkills():Promise<Array<main.BundledSkill>>;
 
@@ -119,6 +123,10 @@ export function SpawnDemo():Promise<types.Session>;
 export function SpawnPlanForIssue(arg1:string,arg2:number):Promise<types.Session>;
 
 export function SubmitAnswers(arg1:main.AnswerSubmission):Promise<void>;
+
+export function UnarchiveAll(arg1:string):Promise<void>;
+
+export function UnarchiveIssue(arg1:string,arg2:number):Promise<void>;
 
 export function UpdateLabel(arg1:string,arg2:string,arg3:types.Label):Promise<types.Label>;
 
