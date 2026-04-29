@@ -26,24 +26,26 @@ type Store interface {
 	MoveIssueColumn(workspaceID string, number int, column types.BoardColumn) error
 }
 
-// Pool is the slice of *workerpool.Pool we need (decoupled to break import cycles).
-type Pool interface {
-	Capacity() int
-	Active() int
-	Free() int
-	TryAcquire() bool
-	Release()
+// PoolRouter is the slice of *workerpool.Registry we need (issue #27). The
+// orchestrator never compares against a specific Provider constant; routing
+// eligibility is the registry's concern.
+type PoolRouter interface {
+	AcquireFor(ws types.Workspace) (poolID string, ok bool)
+	ReleaseByPool(poolID string)
+	FreeForSpawn() int
 }
 
 // SpawnPlanFunc lets the orchestrator launch a plan worker without depending
-// on the session package directly.
-type SpawnPlanFunc func(workspaceID string, issueNumber int) error
+// on the session package directly. poolID is the pool the registry already
+// reserved a slot on; the spawn callback is responsible for resolving the row
+// and threading the Pool through to the session manager.
+type SpawnPlanFunc func(workspaceID string, issueNumber int, poolID string) error
 
 type Orchestrator struct {
 	bus   *eventbus.Bus
 	llm   LLM
 	store Store
-	pool  Pool
+	pool  PoolRouter
 	spawn SpawnPlanFunc
 
 	mu      sync.Mutex
@@ -77,10 +79,10 @@ func (o *Orchestrator) SetStore(s Store) { o.store = s }
 // SetLLM swaps the LLM client. Used when the user changes the Ollama endpoint.
 func (o *Orchestrator) SetLLM(llm LLM) { o.llm = llm }
 
-// SetAutoPull wires the worker pool + plan-spawn callback. When called, the
+// SetAutoPull wires the pool router + plan-spawn callback. When called, the
 // orchestrator will auto-pull unblocked TODO items into PLAN on slot-freed
 // and agent-count-changed events (§14 Phase 5).
-func (o *Orchestrator) SetAutoPull(pool Pool, spawn SpawnPlanFunc) {
+func (o *Orchestrator) SetAutoPull(pool PoolRouter, spawn SpawnPlanFunc) {
 	o.pool = pool
 	o.spawn = spawn
 }
@@ -109,7 +111,9 @@ func (o *Orchestrator) handle(e eventbus.Event) {
 		}()
 	case eventbus.EvtWorkerSlotFreed:
 		if o.pool != nil {
-			o.pool.Release()
+			if payload, ok := e.Payload.(eventbus.WorkerSlotFreed); ok {
+				o.pool.ReleaseByPool(payload.PoolID)
+			}
 		}
 		go o.autoPull("worker_slot_freed")
 	case eventbus.EvtAgentCountChanged:
@@ -156,21 +160,22 @@ func (o *Orchestrator) autoPull(reason string) {
 	// Order by priority desc, with blocked items last.
 	sortByOrchestratorPriority(candidates)
 
-	for o.pool.Free() > 0 {
+	for o.pool.FreeForSpawn() > 0 {
 		next := pickNextUnblocked(candidates, all)
 		if next == nil {
 			return
 		}
 		// Reserve the slot before spawning.
-		if !o.pool.TryAcquire() {
+		poolID, ok := o.pool.AcquireFor(types.Workspace{ID: next.WorkspaceID})
+		if !ok {
 			return
 		}
 		if err := o.store.MoveIssueColumn(next.WorkspaceID, next.Number, types.ColPlan); err != nil {
-			o.pool.Release()
+			o.pool.ReleaseByPool(poolID)
 			return
 		}
-		if err := o.spawn(next.WorkspaceID, next.Number); err != nil {
-			o.pool.Release()
+		if err := o.spawn(next.WorkspaceID, next.Number, poolID); err != nil {
+			o.pool.ReleaseByPool(poolID)
 			log.Printf("orchestrator: auto-pull spawn failed (reason=%s, issue=#%d): %v", reason, next.Number, err)
 			return
 		}

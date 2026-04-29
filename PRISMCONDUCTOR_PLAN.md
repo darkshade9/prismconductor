@@ -117,10 +117,19 @@ Phase 7 (Skill Studio, §13.7) provides the tooling that helps a repo graduate f
 │  │  └──────────────┘  └──────────────┘  └──────────────────┘  │  │
 │  │                                                            │  │
 │  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │  │
-│  │  │ SessionMgr   │  │ WorkerPool   │  │ OllamaClient     │  │  │
-│  │  │ - spawn PTY  │  │ - capacity   │  │ - structured JSON│  │  │
-│  │  │ - tail/parse │  │ - pull queue │  │   prompts        │  │  │
+│  │  │ SessionMgr   │  │ Pools        │  │ ProviderRegistry │  │  │
+│  │  │ - spawn PTY  │  │   (registry) │  │ - claude / openai│  │  │
+│  │  │ - tail/parse │  │ - per-pool   │  │   litellm /      │  │  │
+│  │  │              │  │   capacity   │  │   lmstudio /     │  │  │
+│  │  │              │  │ - acquire/   │  │   ollama drivers │  │  │
+│  │  │              │  │   release    │  │ - CanSpawn seam  │  │  │
 │  │  └──────────────┘  └──────────────┘  └──────────────────┘  │  │
+│  │                                                            │  │
+│  │  ┌──────────────┐                                          │  │
+│  │  │ OllamaClient │  (orchestrator-side; #39)                │  │
+│  │  │ - structured │                                          │  │
+│  │  │   JSON       │                                          │  │
+│  │  └──────────────┘                                          │  │
 │  │                                                            │  │
 │  │  ┌──────────────┐  ┌──────────────┐                        │  │
 │  │  │ Store        │  │ NotifySvc    │                        │  │
@@ -355,6 +364,41 @@ const (
     StateFailed          SessionState = "failed"
 )
 ```
+
+### 6.6 Pool (issue #27)
+
+Heterogeneous worker fleets. Each Pool is a `(provider, endpoint, model, capacity, enabled, api_key)` tuple persisted in SQLite. The Settings → Pools tab is the user surface.
+
+```go
+type Pool struct {
+    ID        string    `json:"id"`         // uuid
+    Name      string    `json:"name"`       // user-supplied display name
+    Provider  Provider  `json:"provider"`
+    Endpoint  string    `json:"endpoint"`   // "" for ProviderClaude
+    Model     string    `json:"model"`
+    Capacity  int       `json:"capacity"`
+    Enabled   bool      `json:"enabled"`
+    APIKey    string    `json:"api_key,omitempty"` // optional; empty => env-var fallback
+    CreatedAt time.Time `json:"created_at"`
+}
+
+type Provider string
+const (
+    ProviderClaude   Provider = "claude"
+    ProviderOpenAI   Provider = "openai"
+    ProviderLiteLLM  Provider = "litellm"
+    ProviderLMStudio Provider = "lmstudio"
+    ProviderOllama   Provider = "ollama"
+)
+```
+
+**Routing is provider-agnostic.** The orchestrator's `PoolRouter` interface (`AcquireFor`, `ReleaseByPool`, `FreeForSpawn`) carries no provider literals; eligibility is decided by the per-provider `Provider.CanSpawn()` predicate, threaded into `workerpool.NewRegistry` at construction. As `harness-v1` lights up OpenAI / LiteLLM / LM Studio / Ollama drivers, those providers flip `CanSpawn` → true and the registry routes to them with no code changes in `internal/orchestrator` or `internal/workerpool`.
+
+Pool **roles** (plan / work / orchestrator) belong to issue #39; this PR adds no `Pool.Role` and no per-pool `provider_compat` allowlist. #39's role assignment is required to remain provider-agnostic.
+
+`api_key` is plaintext SQLite — same trust model as `~/.claude/.credentials.json`; no keychain integration in this PR. Empty `api_key` falls back to the per-provider env var (`OPENAI_API_KEY`, `LITELLM_API_KEY`).
+
+The legacy single-int `worker_pool_capacity` setting is consumed once on first run to seed a Claude pool; the row is left readable for diagnostics. The Ollama→pool migration is deferred to #39.
 
 ---
 
@@ -846,6 +890,8 @@ Checkpoint: Add a bare repo (no `CLAUDE.md`, no `.claude/`) → click Add Worksp
 - Day 20: Pull-from-TODO logic with blocked-skip, manual override respect
 
 Checkpoint: Set agent count = 3 → top 3 unblocked issues auto-move to PLAN → as user approves and execute-mode workers run, new TODO items auto-pull in.
+
+> Issue #27 supersedes the single-int `worker_pool_capacity` knob. Capacity now lives per-pool in the §6.6 schema; users add/remove pools in Settings → Pools instead of moving a slider. Routing stays provider-agnostic via `Provider.CanSpawn()`.
 
 ### Phase 6: Polish (2-3 days)
 - Goal achievement detection + auto-advance to next goal

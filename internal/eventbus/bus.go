@@ -36,6 +36,14 @@ type Event struct {
 	Payload   any
 }
 
+// WorkerSlotFreed is the payload shape for EvtWorkerSlotFreed (issue #27). The
+// orchestrator uses PoolID to release the slot on the right pool registry
+// entry; the prior bare-string-sessionID payload is replaced.
+type WorkerSlotFreed struct {
+	SessionID string `json:"session_id"`
+	PoolID    string `json:"pool_id"`
+}
+
 type Handler func(Event)
 
 type Bus struct {

@@ -34,6 +34,10 @@ export function DeleteLabel(arg1, arg2) {
   return window['go']['main']['App']['DeleteLabel'](arg1, arg2);
 }
 
+export function DeletePool(arg1) {
+  return window['go']['main']['App']['DeletePool'](arg1);
+}
+
 export function FilterIssuesByActiveGoal(arg1) {
   return window['go']['main']['App']['FilterIssuesByActiveGoal'](arg1);
 }
@@ -60,10 +64,6 @@ export function GetOllamaConfig() {
 
 export function GetPollInterval() {
   return window['go']['main']['App']['GetPollInterval']();
-}
-
-export function GetWorkerPoolStatus() {
-  return window['go']['main']['App']['GetWorkerPoolStatus']();
 }
 
 export function GitHubAuthStatus() {
@@ -126,6 +126,14 @@ export function ListPlans(arg1, arg2) {
   return window['go']['main']['App']['ListPlans'](arg1, arg2);
 }
 
+export function ListPools() {
+  return window['go']['main']['App']['ListPools']();
+}
+
+export function ListProviders() {
+  return window['go']['main']['App']['ListProviders']();
+}
+
 export function ListSessions() {
   return window['go']['main']['App']['ListSessions']();
 }
@@ -152,6 +160,10 @@ export function OpenBundledSkill(arg1) {
 
 export function PickRepoPath() {
   return window['go']['main']['App']['PickRepoPath']();
+}
+
+export function ProbeProviderModels(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ProbeProviderModels'](arg1, arg2, arg3);
 }
 
 export function ReadTranscript(arg1) {
@@ -194,6 +206,10 @@ export function SaveGoal(arg1) {
   return window['go']['main']['App']['SaveGoal'](arg1);
 }
 
+export function SavePool(arg1) {
+  return window['go']['main']['App']['SavePool'](arg1);
+}
+
 export function SendInput(arg1, arg2) {
   return window['go']['main']['App']['SendInput'](arg1, arg2);
 }
@@ -220,10 +236,6 @@ export function SetOllamaConfig(arg1) {
 
 export function SetPollInterval(arg1) {
   return window['go']['main']['App']['SetPollInterval'](arg1);
-}
-
-export function SetWorkerPoolCapacity(arg1) {
-  return window['go']['main']['App']['SetWorkerPoolCapacity'](arg1);
 }
 
 export function SpawnDemo() {

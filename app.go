@@ -26,6 +26,7 @@ import (
 	"prismconductor/internal/goalfilter"
 	"prismconductor/internal/planio"
 	"prismconductor/internal/githubauth"
+	"prismconductor/internal/llm"
 	"prismconductor/internal/notify"
 	"prismconductor/internal/ollama"
 	"prismconductor/internal/orchestrator"
@@ -41,18 +42,19 @@ import (
 type App struct {
 	ctx context.Context
 
-	bus     *eventbus.Bus
-	store   *store.Store
-	mgr     *session.Manager
-	pool    *workerpool.Pool
-	llm     *ollama.Client
-	orch    *orchestrator.Orchestrator
-	wsReg   *workspace.Registry
-	auth    *githubauth.Client
-	gh      *pcgithub.Client
-	poller  *pcgithub.Poller
-	logs    *logbuffer.Ring
-	cfgDir  string
+	bus       *eventbus.Bus
+	store     *store.Store
+	mgr       *session.Manager
+	poolReg   *workerpool.Registry
+	providers *llm.Registry
+	llm       *ollama.Client
+	orch      *orchestrator.Orchestrator
+	wsReg     *workspace.Registry
+	auth      *githubauth.Client
+	gh        *pcgithub.Client
+	poller    *pcgithub.Poller
+	logs      *logbuffer.Ring
+	cfgDir    string
 
 	answerWatcher *store.AnswerWatcher
 
@@ -86,7 +88,14 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	a.bus = eventbus.New()
-	a.pool = workerpool.New(2)
+	a.providers = llm.NewRegistry(
+		llm.NewClaudeProvider(),
+		llm.NewOpenAIProvider(),
+		llm.NewLiteLLMProvider(),
+		llm.NewLMStudioProvider(),
+		llm.NewOllamaProvider(),
+	)
+	a.poolReg = workerpool.NewRegistry(a.providers.CanSpawn)
 	a.llm = ollama.New("", "")
 	a.orch = orchestrator.New(a.bus, a.llm)
 	a.auth = githubauth.New("")
@@ -111,13 +120,19 @@ func (a *App) startup(ctx context.Context) {
 			a.llm.Model = "google/gemma-2-27b"
 			_ = a.store.SetSetting("ollama_model", a.llm.Model)
 		}
-		if c, _ := a.store.GetSetting("worker_pool_capacity"); c != "" {
-			if n, err := strconv.Atoi(c); err == nil && n > 0 {
-				a.pool.SetCapacity(n)
-			}
-		}
 		if v, _ := a.store.GetSetting("auto_pull_paused"); v == "true" {
 			a.orch.SetPaused(true)
+		}
+		// Issue #27: seed one Claude pool from the legacy worker_pool_capacity
+		// setting on first run. Subsequent runs read whatever the user has
+		// configured in Settings → Pools.
+		if n, err := a.store.PoolsCount(); err == nil && n == 0 {
+			a.migrateClaudePoolFromLegacy()
+		}
+		if rows, err := a.store.ListPools(); err == nil {
+			a.poolReg.Sync(rows)
+		} else {
+			log.Printf("pools sync: list: %v", err)
 		}
 	}
 	if r, err := workspace.New(cfgDir); err != nil {
@@ -148,6 +163,7 @@ func (a *App) startup(ctx context.Context) {
 
 	a.mgr = session.NewManager(a.bus, a.emitLine)
 	a.mgr.Configure(filepath.Join(cfgDir, "transcripts"), a.store, a.handleSessionStateChange)
+	a.mgr.SetProviders(a.providers)
 	a.mgr.SetOnPlanReady(a.handlePlanReady)
 	a.mgr.SetOnPROpened(a.handlePROpened)
 	a.mgr.SetOnActivity(func(act types.SessionActivity) {
@@ -158,12 +174,16 @@ func (a *App) startup(ctx context.Context) {
 	// every dependency exists.
 	if a.store != nil {
 		a.orch.SetStore(a.store)
-		a.orch.SetAutoPull(a.pool, func(workspaceID string, issueNumber int) error {
+		a.orch.SetAutoPull(a.poolReg, func(workspaceID string, issueNumber int, poolID string) error {
 			ws, ok := a.wsReg.Get(workspaceID)
 			if !ok {
 				return fmt.Errorf("unknown workspace %q", workspaceID)
 			}
-			_, err := a.mgr.SpawnPlan(ws, types.Issue{Number: issueNumber, WorkspaceID: workspaceID})
+			pool, err := a.store.GetPool(poolID)
+			if err != nil {
+				return fmt.Errorf("resolve pool %q: %w", poolID, err)
+			}
+			_, err = a.mgr.SpawnPlan(ws, types.Issue{Number: issueNumber, WorkspaceID: workspaceID}, pool)
 			return err
 		})
 
@@ -677,11 +697,17 @@ func (a *App) MoveIssueColumn(workspaceID string, number int, column string) err
 				log.Printf("drag-to-PLAN: workspace %q not found", workspaceID)
 			} else {
 				log.Printf("drag-to-PLAN: spawning plan worker for %s#%d (no existing plan)", workspaceID, number)
-				sess, err := a.mgr.SpawnPlan(ws, types.Issue{Number: number, WorkspaceID: workspaceID})
-				if err != nil {
-					log.Printf("auto-spawn plan #%d FAILED: %v", number, err)
+				pool, ok := a.acquirePoolFor(ws)
+				if !ok {
+					log.Printf("auto-spawn plan #%d: no spawn-capable pool available", number)
 				} else {
-					log.Printf("drag-to-PLAN: spawn ok for #%d, session=%s pid=%d", number, sess.ID[:8], sess.PID)
+					sess, err := a.mgr.SpawnPlan(ws, types.Issue{Number: number, WorkspaceID: workspaceID}, pool)
+					if err != nil {
+						a.poolReg.ReleaseByPool(pool.ID)
+						log.Printf("auto-spawn plan #%d FAILED: %v", number, err)
+					} else {
+						log.Printf("drag-to-PLAN: spawn ok for #%d, session=%s pid=%d pool=%s", number, sess.ID[:8], sess.PID, pool.ID)
+					}
 				}
 			}
 		}
@@ -714,12 +740,17 @@ func (a *App) Replan(workspaceID string, number int) error {
 		return fmt.Errorf("plan worker already in flight for #%d", number)
 	}
 	log.Printf("Replan: spawning plan worker for %s#%d", workspaceID, number)
-	sess, err := a.mgr.SpawnPlan(ws, types.Issue{Number: number, WorkspaceID: workspaceID})
+	pool, ok := a.acquirePoolFor(ws)
+	if !ok {
+		return fmt.Errorf("no spawn-capable pool available")
+	}
+	sess, err := a.mgr.SpawnPlan(ws, types.Issue{Number: number, WorkspaceID: workspaceID}, pool)
 	if err != nil {
+		a.poolReg.ReleaseByPool(pool.ID)
 		log.Printf("Replan #%d FAILED: %v", number, err)
 		return err
 	}
-	log.Printf("Replan: spawn ok for #%d, session=%s pid=%d", number, sess.ID[:8], sess.PID)
+	log.Printf("Replan: spawn ok for #%d, session=%s pid=%d pool=%s", number, sess.ID[:8], sess.PID, pool.ID)
 	return nil
 }
 
@@ -1097,38 +1128,149 @@ func (a *App) AddManualIssue(workspaceID string, number int, title, body string,
 	return &iss, nil
 }
 
-// --- Worker pool (§14 Phase 5) ---
+// --- Pools (§6.6, issue #27) ---
 
-// WorkerPoolStatus is the user-visible pool state.
-type WorkerPoolStatus struct {
-	Capacity int `json:"capacity"`
-	Active   int `json:"active"`
+// ProviderInfo is the read-only descriptor a UI uses to render the
+// PoolEditModal's provider dropdown.
+type ProviderInfo struct {
+	Kind            types.Provider `json:"kind"`
+	DisplayName     string         `json:"display_name"`
+	DefaultEndpoint string         `json:"default_endpoint"`
+	NeedsAPIKey     bool           `json:"needs_api_key"`
+	CanSpawn        bool           `json:"can_spawn"`
 }
 
-// GetWorkerPoolStatus returns capacity + currently active worker count.
-func (a *App) GetWorkerPoolStatus() WorkerPoolStatus {
-	return WorkerPoolStatus{
-		Capacity: a.pool.Capacity(),
-		Active:   a.pool.Active(),
+// ListProviders returns one ProviderInfo per registered LLM driver.
+func (a *App) ListProviders() []ProviderInfo {
+	if a.providers == nil {
+		return nil
 	}
+	all := a.providers.All()
+	out := make([]ProviderInfo, 0, len(all))
+	for _, p := range all {
+		out = append(out, ProviderInfo{
+			Kind:            p.Kind(),
+			DisplayName:     p.DisplayName(),
+			DefaultEndpoint: p.DefaultEndpoint(),
+			NeedsAPIKey:     p.NeedsAPIKey(),
+			CanSpawn:        p.CanSpawn(),
+		})
+	}
+	return out
 }
 
-// SetWorkerPoolCapacity updates the pool. Persists across restarts. On
-// increase, publishes EvtAgentCountChanged so the orchestrator can pull more.
-func (a *App) SetWorkerPoolCapacity(n int) error {
-	if n < 1 {
-		n = 1
+// ListPools returns per-pool snapshot rows for the UI.
+func (a *App) ListPools() []workerpool.PoolStatus {
+	if a.poolReg == nil {
+		return nil
 	}
-	if n > 10 {
-		n = 10
+	return a.poolReg.Snapshot()
+}
+
+// SavePool upserts a pool row and re-syncs the registry.
+func (a *App) SavePool(p types.Pool) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
 	}
-	prev := a.pool.Capacity()
-	a.pool.SetCapacity(n)
-	if a.store != nil {
-		_ = a.store.SetSetting("worker_pool_capacity", strconv.Itoa(n))
+	if p.ID == "" {
+		p.ID = uuid.NewString()
 	}
-	a.bus.Publish(eventbus.EvtAgentCountChanged, map[string]any{"prev": prev, "new": n})
+	if p.Capacity < 0 {
+		p.Capacity = 0
+	}
+	if p.Capacity > 10 {
+		p.Capacity = 10
+	}
+	if p.CreatedAt.IsZero() {
+		p.CreatedAt = time.Now()
+	}
+	if err := a.store.SavePool(p); err != nil {
+		return err
+	}
+	rows, err := a.store.ListPools()
+	if err != nil {
+		return err
+	}
+	a.poolReg.Sync(rows)
+	a.bus.Publish(eventbus.EvtAgentCountChanged, map[string]any{"pool_id": p.ID})
 	return nil
+}
+
+// ErrPoolBusy signals that DeletePool refused because workers are still
+// running on the pool (rev4 q2).
+type ErrPoolBusy struct {
+	ID     string `json:"id"`
+	Active int    `json:"active"`
+}
+
+func (e ErrPoolBusy) Error() string {
+	return fmt.Sprintf("pool busy: %d active worker(s)", e.Active)
+}
+
+// DeletePool refuses if any worker is still active on the pool, otherwise
+// drops the row and re-syncs the registry.
+func (a *App) DeletePool(id string) error {
+	if a.store == nil || a.poolReg == nil {
+		return fmt.Errorf("store/registry unavailable")
+	}
+	if active := a.poolReg.ActiveCount(id); active > 0 {
+		return ErrPoolBusy{ID: id, Active: active}
+	}
+	if err := a.store.DeletePool(id); err != nil {
+		return err
+	}
+	rows, err := a.store.ListPools()
+	if err != nil {
+		return err
+	}
+	a.poolReg.Sync(rows)
+	a.bus.Publish(eventbus.EvtAgentCountChanged, map[string]any{"pool_id": id, "deleted": true})
+	return nil
+}
+
+// ProbeProviderModels asks the named provider to list available models against
+// the supplied endpoint + apiKey. The modal uses this both for the on-blur
+// model dropdown and the explicit Test connection button.
+func (a *App) ProbeProviderModels(provider types.Provider, endpoint, apiKey string) ([]string, error) {
+	if a.providers == nil {
+		return nil, fmt.Errorf("providers unavailable")
+	}
+	prov, ok := a.providers.Get(provider)
+	if !ok {
+		return nil, fmt.Errorf("unknown provider %q", provider)
+	}
+	pool := types.Pool{Provider: provider, Endpoint: endpoint, APIKey: apiKey}
+	return prov.ListModels(a.ctx, pool)
+}
+
+// migrateClaudePoolFromLegacy seeds one Claude pool the first time the pools
+// table is empty. Capacity comes from the legacy worker_pool_capacity setting
+// (default 2). The legacy KV row is left readable for diagnostics; #39 is
+// responsible for migrating the Ollama orchestrator-config row.
+func (a *App) migrateClaudePoolFromLegacy() {
+	if a.store == nil {
+		return
+	}
+	capacity := 2
+	if c, _ := a.store.GetSetting("worker_pool_capacity"); c != "" {
+		if n, err := strconv.Atoi(c); err == nil && n > 0 {
+			capacity = n
+		}
+	}
+	model := "claude-opus-4-7"
+	pool := types.Pool{
+		ID:        uuid.NewString(),
+		Name:      model,
+		Provider:  types.ProviderClaude,
+		Endpoint:  "",
+		Model:     model,
+		Capacity:  capacity,
+		Enabled:   true,
+		CreatedAt: time.Now(),
+	}
+	if err := a.store.SavePool(pool); err != nil {
+		log.Printf("migrate claude pool: save: %v", err)
+	}
 }
 
 // GetAutoPullPaused returns the live pause state from the orchestrator's
@@ -1410,7 +1552,13 @@ func (a *App) handleMidRunAnswerArrived(ps store.PausedSession) {
 	if err := a.store.UpdateSessionPendingQuestion(ps.SessionID, ""); err != nil {
 		log.Printf("answer resume: clear pending_question_id on %s: %v", ps.SessionID, err)
 	}
-	if _, err := a.mgr.SpawnExecuteResume(ws, issue, plan, ps.QuestionID); err != nil {
+	pool, ok := a.acquirePoolFor(ws)
+	if !ok {
+		log.Printf("answer resume: no spawn-capable pool available for #%d", ps.IssueNumber)
+		return
+	}
+	if _, err := a.mgr.SpawnExecuteResume(ws, issue, plan, pool, ps.QuestionID); err != nil {
+		a.poolReg.ReleaseByPool(pool.ID)
 		log.Printf("answer resume: SpawnExecuteResume #%d: %v", ps.IssueNumber, err)
 		return
 	}
@@ -1498,7 +1646,12 @@ func (a *App) SubmitAnswers(sub AnswerSubmission) error {
 	}
 	// Re-spawn plan worker; the bundled skill checks for an answers file at the
 	// matching revision and emits rev<N+1>.
-	if _, err := a.mgr.SpawnPlan(ws, types.Issue{Number: sub.IssueNumber, WorkspaceID: sub.WorkspaceID}); err != nil {
+	pool, ok := a.acquirePoolFor(ws)
+	if !ok {
+		return fmt.Errorf("no spawn-capable pool available")
+	}
+	if _, err := a.mgr.SpawnPlan(ws, types.Issue{Number: sub.IssueNumber, WorkspaceID: sub.WorkspaceID}, pool); err != nil {
+		a.poolReg.ReleaseByPool(pool.ID)
 		return err
 	}
 	a.bus.Publish(eventbus.EvtPlanRevised, map[string]any{
@@ -1541,7 +1694,12 @@ func (a *App) ApprovePlan(workspaceID string, issueNumber, revision int) error {
 		log.Printf("ApprovePlan: load issue #%d failed (%v); spawning with empty title", issueNumber, err)
 		issue = types.Issue{Number: issueNumber, WorkspaceID: workspaceID}
 	}
-	if _, err := a.mgr.SpawnExecute(ws, issue, plan); err != nil {
+	pool, ok := a.acquirePoolFor(ws)
+	if !ok {
+		return fmt.Errorf("no spawn-capable pool available")
+	}
+	if _, err := a.mgr.SpawnExecute(ws, issue, plan, pool); err != nil {
+		a.poolReg.ReleaseByPool(pool.ID)
 		return err
 	}
 	a.bus.Publish(eventbus.EvtPlanApproved, map[string]any{
@@ -1655,6 +1813,27 @@ func (a *App) SpawnDemo() (*types.Session, error) {
 	return a.mgr.SpawnRaw(ws, "claude", []string{"--version"})
 }
 
+// acquirePoolFor reserves a slot on the first eligible pool and returns the
+// resolved row. Callers MUST poolReg.ReleaseByPool(pool.ID) on spawn failure.
+// Returns ok=false when no pool is enabled with capacity > 0 and a
+// spawn-capable provider — the caller surfaces this as a user-visible error.
+func (a *App) acquirePoolFor(ws types.Workspace) (types.Pool, bool) {
+	if a.poolReg == nil || a.store == nil {
+		return types.Pool{}, false
+	}
+	id, ok := a.poolReg.AcquireFor(ws)
+	if !ok {
+		return types.Pool{}, false
+	}
+	pool, err := a.store.GetPool(id)
+	if err != nil {
+		a.poolReg.ReleaseByPool(id)
+		log.Printf("acquirePoolFor: GetPool(%s): %v", id, err)
+		return types.Pool{}, false
+	}
+	return pool, true
+}
+
 // SpawnPlanForIssue spawns a plan-mode worker for the given issue in the given workspace.
 // Triggered by drag-to-PLAN once the board is wired (issue #3) — exposed now so flows can be tested.
 func (a *App) SpawnPlanForIssue(workspaceID string, issueNumber int) (*types.Session, error) {
@@ -1665,7 +1844,16 @@ func (a *App) SpawnPlanForIssue(workspaceID string, issueNumber int) (*types.Ses
 	if !ok {
 		return nil, fmt.Errorf("unknown workspace %q", workspaceID)
 	}
-	return a.mgr.SpawnPlan(ws, types.Issue{Number: issueNumber, WorkspaceID: workspaceID})
+	pool, ok := a.acquirePoolFor(ws)
+	if !ok {
+		return nil, fmt.Errorf("no spawn-capable pool available")
+	}
+	sess, err := a.mgr.SpawnPlan(ws, types.Issue{Number: issueNumber, WorkspaceID: workspaceID}, pool)
+	if err != nil {
+		a.poolReg.ReleaseByPool(pool.ID)
+		return nil, err
+	}
+	return sess, nil
 }
 
 // ListSessions returns the live in-process sessions plus any running rows
