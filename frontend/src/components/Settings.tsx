@@ -2,12 +2,12 @@ import { useState } from "react";
 import { WorkspacesPanel } from "./WorkspacesPanel";
 import { OllamaPanel } from "./OllamaPanel";
 import { BundledSkillsViewer } from "./BundledSkillsViewer";
-import { WorkerPoolPanel } from "./WorkerPoolPanel";
+import { PoolsPanel } from "./PoolsPanel";
 import { NotifyPanel } from "./NotifyPanel";
 import { LogsPanel } from "./LogsPanel";
 import { LabelsPanel } from "./LabelsPanel";
 
-type Tab = "workspaces" | "agents" | "ollama" | "skills" | "labels" | "notify" | "logs";
+type Tab = "workspaces" | "pools" | "ollama" | "skills" | "labels" | "notify" | "logs";
 
 export function Settings({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [tab, setTab] = useState<Tab>("workspaces");
@@ -24,7 +24,7 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
             {(
               [
                 ["workspaces", "Workspaces"],
-                ["agents", "Worker pool"],
+                ["pools", "Pools"],
                 ["ollama", "Ollama"],
                 ["skills", "Bundled skills"],
                 ["labels", "Labels"],
@@ -46,7 +46,7 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
           </nav>
           <div className="flex-1 p-4 overflow-y-auto">
             {tab === "workspaces" && <WorkspacesPanel />}
-            {tab === "agents" && <WorkerPoolPanel />}
+            {tab === "pools" && <PoolsPanel />}
             {tab === "ollama" && <OllamaPanel />}
             {tab === "skills" && <BundledSkillsViewer />}
             {tab === "labels" && <LabelsPanel />}
@@ -57,8 +57,4 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
       </div>
     </div>
   );
-}
-
-function Stub({ label }: { label: string }) {
-  return <div className="text-sm text-slate-500">{label}</div>;
 }

@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { EventsOn } from "../wailsjs/runtime/runtime";
 import {
   GetAutoPullPaused,
-  GetWorkerPoolStatus,
   ListArchivedIssues,
   ListPendingPlans,
+  ListPools,
   ListSessions,
   RefreshIssuesNow,
   SetAutoPullPaused,
@@ -41,7 +41,7 @@ function App() {
   const markPlanReady = usePlanReadyStore((s) => s.markReady);
   const clearPlanReady = usePlanReadyStore((s) => s.clearReady);
   const issues = useIssueStore((s) => s.issues);
-  const [poolStatus, setPoolStatus] = useState({ active: 0, capacity: 2 });
+  const [poolStatus, setPoolStatus] = useState({ active: 0, capacity: 0 });
   const [autoPaused, setAutoPaused] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -155,7 +155,17 @@ function App() {
         }
       },
     );
-    const refreshPool = () => GetWorkerPoolStatus().then(setPoolStatus).catch(() => {});
+    const refreshPool = () =>
+      ListPools()
+        .then((rows) => {
+          const active = (rows ?? []).reduce((s, r) => s + (r.active ?? 0), 0);
+          const capacity = (rows ?? []).reduce(
+            (s, r) => s + (r.pool.enabled ? r.pool.capacity : 0),
+            0,
+          );
+          setPoolStatus({ active, capacity });
+        })
+        .catch(() => {});
     refreshPool();
     const offPoolFreed = EventsOn("bus.worker_slot_freed", refreshPool);
     const offPoolChanged = EventsOn("bus.agent_count_changed", refreshPool);

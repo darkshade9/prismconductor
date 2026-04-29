@@ -60,6 +60,30 @@ type ConventionHints struct {
 	PackageManager string `json:"package_manager"`
 }
 
+// --- Pool (heterogeneous worker fleets, §6.6 / issue #27) ---
+
+type Pool struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Provider  Provider  `json:"provider"`
+	Endpoint  string    `json:"endpoint"`
+	Model     string    `json:"model"`
+	Capacity  int       `json:"capacity"`
+	Enabled   bool      `json:"enabled"`
+	APIKey    string    `json:"api_key,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Provider string
+
+const (
+	ProviderClaude   Provider = "claude"
+	ProviderOpenAI   Provider = "openai"
+	ProviderLiteLLM  Provider = "litellm"
+	ProviderLMStudio Provider = "lmstudio"
+	ProviderOllama   Provider = "ollama"
+)
+
 // --- Goal (§6.2) ---
 
 type Goal struct {

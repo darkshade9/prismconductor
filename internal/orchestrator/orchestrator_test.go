@@ -39,18 +39,16 @@ type stubPool struct {
 	freeHits    int
 }
 
-func (p *stubPool) Capacity() int { return 2 }
-func (p *stubPool) Active() int   { return 0 }
-func (p *stubPool) Free() int     { p.freeHits++; return p.free }
-func (p *stubPool) TryAcquire() bool {
+func (p *stubPool) FreeForSpawn() int { p.freeHits++; return p.free }
+func (p *stubPool) AcquireFor(types.Workspace) (string, bool) {
 	p.tryAcquires++
 	if p.free <= 0 {
-		return false
+		return "", false
 	}
 	p.free--
-	return true
+	return "stub-pool", true
 }
-func (p *stubPool) Release() { p.releases++; p.free++ }
+func (p *stubPool) ReleaseByPool(string) { p.releases++; p.free++ }
 
 func TestSetPausedToggles(t *testing.T) {
 	o := New(eventbus.New(), nil)
@@ -78,7 +76,7 @@ func TestAutoPullShortCircuitsWhenPaused(t *testing.T) {
 	}
 	pool := &stubPool{free: 1}
 	spawnHits := 0
-	spawn := func(string, int) error { spawnHits++; return nil }
+	spawn := func(string, int, string) error { spawnHits++; return nil }
 
 	o := New(eventbus.New(), nil)
 	o.SetStore(st)
@@ -109,7 +107,7 @@ func TestAutoPullProceedsWhenNotPaused(t *testing.T) {
 	}
 	pool := &stubPool{free: 1}
 	spawnHits := 0
-	spawn := func(string, int) error { spawnHits++; return nil }
+	spawn := func(string, int, string) error { spawnHits++; return nil }
 
 	o := New(eventbus.New(), nil)
 	o.SetStore(st)

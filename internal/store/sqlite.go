@@ -91,6 +91,17 @@ CREATE TABLE IF NOT EXISTS labels (
     description  TEXT,
     PRIMARY KEY (workspace_id, name)
 );
+CREATE TABLE IF NOT EXISTS pools (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    provider     TEXT NOT NULL,
+    endpoint     TEXT NOT NULL DEFAULT '',
+    model        TEXT NOT NULL,
+    capacity     INTEGER NOT NULL DEFAULT 1,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    api_key      TEXT NOT NULL DEFAULT '',
+    created_at   INTEGER NOT NULL
+);
 `)
 	if err != nil {
 		return err

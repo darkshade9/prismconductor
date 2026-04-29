@@ -17,6 +17,7 @@ import (
 
 	"prismconductor/internal/eventbus"
 	pcgit "prismconductor/internal/git"
+	"prismconductor/internal/llm"
 	"prismconductor/internal/types"
 )
 
@@ -60,6 +61,7 @@ type Manager struct {
 	onPlanReady   PlanReadyHandler
 	onPROpened    PROpenedHandler
 	onActivity    ActivityHandler
+	providers     *llm.Registry
 
 	mu       sync.RWMutex
 	sessions map[string]*runtimeSession
@@ -86,6 +88,10 @@ type runtimeSession struct {
 	worktreeDir string
 	branch      string
 	repoPath    string
+
+	// Issue #27: pool the slot was reserved against. Threaded through to the
+	// EvtWorkerSlotFreed payload so the orchestrator releases the right pool.
+	poolID string
 }
 
 func NewManager(bus *eventbus.Bus, emit LineHandler) *Manager {
@@ -111,10 +117,19 @@ func (m *Manager) SetOnPROpened(h PROpenedHandler) { m.onPROpened = h }
 // to ~2/sec/session). Used to drive the UI's per-card liveness indicator.
 func (m *Manager) SetOnActivity(h ActivityHandler) { m.onActivity = h }
 
-// SpawnPlan launches a plan-mode worker per §10.1 / §10.4.
-func (m *Manager) SpawnPlan(ws types.Workspace, issue types.Issue) (*types.Session, error) {
-	args := buildPlanCommand(ws, issue)
-	return m.spawn(ws, issue, types.ModePlan, args)
+// SetProviders wires the LLM provider registry. Required before SpawnPlan /
+// SpawnExecute since those resolve the per-pool argv via prov.SpawnArgs.
+func (m *Manager) SetProviders(r *llm.Registry) { m.providers = r }
+
+// SpawnPlan launches a plan-mode worker per §10.1 / §10.4. The pool's provider
+// determines the argv via Provider.SpawnArgs — Claude pools today, additional
+// providers when harness-v1 lands.
+func (m *Manager) SpawnPlan(ws types.Workspace, issue types.Issue, pool types.Pool) (*types.Session, error) {
+	args, err := m.buildPlanCommand(ws, issue, pool)
+	if err != nil {
+		return nil, err
+	}
+	return m.spawn(ws, issue, types.ModePlan, args, pool.ID)
 }
 
 // SpawnExecute launches an execute-mode worker per §10.2.
@@ -124,7 +139,7 @@ func (m *Manager) SpawnPlan(ws types.Workspace, issue types.Issue) (*types.Sessi
 // worktree's lifecycle: created here before pty.Start, torn down by
 // tailAndParse on Blocked/Failed (immediate, q2=A) or by the 24h GC walk on
 // Completed (q3=A).
-func (m *Manager) SpawnExecute(ws types.Workspace, issue types.Issue, plan types.Plan) (*types.Session, error) {
+func (m *Manager) SpawnExecute(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool) (*types.Session, error) {
 	base := ws.DefaultBranch
 	if base == "" {
 		base = "main"
@@ -162,8 +177,12 @@ func (m *Manager) SpawnExecute(ws types.Workspace, issue types.Issue, plan types
 		return nil, fmt.Errorf("mirror plan artifacts: %w", err)
 	}
 
-	args := buildExecuteCommand(ws, issue, plan)
-	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute, args, worktreeDir, branch)
+	args, err := m.buildExecuteCommand(ws, issue, plan, pool)
+	if err != nil {
+		_ = pcgit.Remove(ws.RepoPath, worktreeDir)
+		return nil, err
+	}
+	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute, args, worktreeDir, branch, pool.ID)
 	if err != nil {
 		_ = pcgit.Remove(ws.RepoPath, worktreeDir)
 		return nil, err
@@ -176,7 +195,7 @@ func (m *Manager) SpawnExecute(ws types.Workspace, issue types.Issue, plan types
 // worktree are expected to already exist on disk — this is the second leg of
 // a paused-for-question flow, NOT a fresh execute. Returns an error if the
 // worktree is missing so the caller can surface it on the OLD session row.
-func (m *Manager) SpawnExecuteResume(ws types.Workspace, issue types.Issue, plan types.Plan, questionID string) (*types.Session, error) {
+func (m *Manager) SpawnExecuteResume(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool, questionID string) (*types.Session, error) {
 	slug := branchSlug(issue.Title)
 	branch := fmt.Sprintf("feat/issue-%d-%s", issue.Number, slug)
 	worktreeDir := filepath.Join(ws.RepoPath, ".prismconductor", "worktrees",
@@ -184,8 +203,11 @@ func (m *Manager) SpawnExecuteResume(ws types.Workspace, issue types.Issue, plan
 	if _, err := os.Stat(worktreeDir); err != nil {
 		return nil, fmt.Errorf("resume worktree missing at %s: %w", worktreeDir, err)
 	}
-	args := buildExecuteResumeCommand(ws, issue, plan, questionID)
-	return m.spawnWithDir(ws, issue, types.ModeExecute, args, worktreeDir, branch)
+	args, err := m.buildExecuteResumeCommand(ws, issue, plan, pool, questionID)
+	if err != nil {
+		return nil, err
+	}
+	return m.spawnWithDir(ws, issue, types.ModeExecute, args, worktreeDir, branch, pool.ID)
 }
 
 // branchSlug derives a kebab-case branch suffix from an issue title, lowering
@@ -262,17 +284,17 @@ func mirrorPlanArtifacts(repoPath, worktreeDir string, num, rev int) error {
 func (m *Manager) SpawnRaw(ws types.Workspace, name string, args []string) (*types.Session, error) {
 	demoIssue := types.Issue{Number: 0, WorkspaceID: ws.ID}
 	full := append([]string{name}, args...)
-	return m.spawn(ws, demoIssue, types.ModePlan, full)
+	return m.spawn(ws, demoIssue, types.ModePlan, full, "")
 }
 
-func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string) (*types.Session, error) {
-	return m.spawnWithDir(ws, issue, mode, argv, "", "")
+func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, poolID string) (*types.Session, error) {
+	return m.spawnWithDir(ws, issue, mode, argv, "", "", poolID)
 }
 
 // spawnWithDir is the canonical spawn path. When worktreeDir is non-empty the
 // child process runs there instead of ws.RepoPath, and the worktree metadata
 // is captured on the runtimeSession for the cleanup hook in tailAndParse.
-func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, worktreeDir, branch string) (*types.Session, error) {
+func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, worktreeDir, branch, poolID string) (*types.Session, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("empty command")
 	}
@@ -310,6 +332,7 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 		worktreeDir: worktreeDir,
 		branch:      branch,
 		repoPath:    ws.RepoPath,
+		poolID:      poolID,
 	}
 
 	if m.transcriptDir != "" {
@@ -416,7 +439,10 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 		m.onStateChange(*rs.sess, prev)
 	}
 	if m.bus != nil {
-		m.bus.Publish(eventbus.EvtWorkerSlotFreed, rs.sess.ID)
+		m.bus.Publish(eventbus.EvtWorkerSlotFreed, eventbus.WorkerSlotFreed{
+			SessionID: rs.sess.ID,
+			PoolID:    rs.poolID,
+		})
 	}
 
 	// Issue #22: per-execute worktree teardown.
@@ -638,48 +664,36 @@ func (m *Manager) Snapshot() []types.Session {
 
 // --- §10.4 dispatch ---
 //
-// `claude` parses positional args as the prompt; with -p (print mode) it runs
-// non-interactively, emits clean line-buffered output, and exits when the
-// prompt completes. That's exactly what plan- and execute-mode workers want
-// per §10.1 / §10.2 — they're one-shot operations.
+// Worker argv is provided by the LLM provider registry: each pool's Provider
+// returns the argv via SpawnArgs(pool, prompt). Today only the Claude provider
+// returns a working argv; the others return llm.ErrNotSupported until
+// harness-v1 lands. The prompt itself is mode-specific (plan / execute) and
+// shaped here.
 
-// claudeArgs are the universal flags every conductor-spawned worker uses:
-//   - -p: non-interactive print mode (one-shot worker).
-//   - --output-format stream-json + --include-partial-messages + --verbose:
-//     emits a JSON event per token / tool call so the UI shows live progress
-//     instead of waiting silently for the final response.
-//   - --permission-mode bypassPermissions: the worker is fully agentic. The
-//     plan skill needs `gh issue view`, `gh label list`, `git grep`; the
-//     execute skill needs `git switch`, `gh pr create`, the project's lint /
-//     build / test commands. acceptEdits only auto-approves Edit/Write tool
-//     calls — every Bash invocation still asks for approval, which a -p
-//     worker can't answer, so it halts. bypass is the right level for a
-//     hands-off conductor where the user already approved the plan.
-func claudeArgs(prompt string) []string {
-	return []string{
-		"claude",
-		"-p",
-		"--output-format", "stream-json",
-		"--include-partial-messages",
-		"--verbose",
-		"--permission-mode", "bypassPermissions",
-		prompt,
-	}
+func (m *Manager) buildPlanCommand(ws types.Workspace, issue types.Issue, pool types.Pool) ([]string, error) {
+	return m.providerArgs(pool, planPrompt(ws, issue))
 }
 
-func buildPlanCommand(ws types.Workspace, issue types.Issue) []string {
-	return claudeArgs(planPrompt(ws, issue))
-}
-
-func buildExecuteCommand(ws types.Workspace, issue types.Issue, plan types.Plan) []string {
-	return claudeArgs(executePrompt(ws, issue, plan))
+func (m *Manager) buildExecuteCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool) ([]string, error) {
+	return m.providerArgs(pool, executePrompt(ws, issue, plan))
 }
 
 // buildExecuteResumeCommand mirrors buildExecuteCommand but appends the
 // `--resume-question <id>` flag so the conductor-execute skill knows to skip
 // branch creation and read the mid-run question's context sidecar (#17).
-func buildExecuteResumeCommand(ws types.Workspace, issue types.Issue, plan types.Plan, questionID string) []string {
-	return claudeArgs(executeResumePrompt(ws, issue, plan, questionID))
+func (m *Manager) buildExecuteResumeCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool, questionID string) ([]string, error) {
+	return m.providerArgs(pool, executeResumePrompt(ws, issue, plan, questionID))
+}
+
+func (m *Manager) providerArgs(pool types.Pool, prompt string) ([]string, error) {
+	if m.providers == nil {
+		return nil, fmt.Errorf("session manager: provider registry not configured")
+	}
+	prov, ok := m.providers.Get(pool.Provider)
+	if !ok {
+		return nil, fmt.Errorf("session manager: unknown provider %q for pool %s", pool.Provider, pool.ID)
+	}
+	return prov.SpawnArgs(pool, prompt)
 }
 
 func planPrompt(ws types.Workspace, issue types.Issue) string {

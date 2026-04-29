@@ -6,6 +6,7 @@ import {githubauth} from '../models';
 import {github} from '../models';
 import {workspace} from '../models';
 import {store} from '../models';
+import {workerpool} from '../models';
 import {logbuffer} from '../models';
 
 export function ActivateGoal(arg1:string):Promise<void>;
@@ -24,6 +25,8 @@ export function DeleteGoal(arg1:string):Promise<void>;
 
 export function DeleteLabel(arg1:string,arg2:string):Promise<void>;
 
+export function DeletePool(arg1:string):Promise<void>;
+
 export function FilterIssuesByActiveGoal(arg1:Array<types.Issue>):Promise<Array<types.Issue>>;
 
 export function GCWorktrees(arg1:string):Promise<number>;
@@ -37,8 +40,6 @@ export function GetNotifyPrefs():Promise<main.NotifyPrefs>;
 export function GetOllamaConfig():Promise<main.OllamaConfig>;
 
 export function GetPollInterval():Promise<number>;
-
-export function GetWorkerPoolStatus():Promise<main.WorkerPoolStatus>;
 
 export function GitHubAuthStatus():Promise<githubauth.User>;
 
@@ -70,6 +71,10 @@ export function ListPendingPlans():Promise<Array<store.PendingPlan>>;
 
 export function ListPlans(arg1:string,arg2:number):Promise<Array<types.Plan>>;
 
+export function ListPools():Promise<Array<workerpool.PoolStatus>>;
+
+export function ListProviders():Promise<Array<main.ProviderInfo>>;
+
 export function ListSessions():Promise<Array<types.Session>>;
 
 export function ListWorkspaces():Promise<Array<types.Workspace>>;
@@ -83,6 +88,8 @@ export function OnboardCheck(arg1:string):Promise<Array<workspace.OnboardCheck>>
 export function OpenBundledSkill(arg1:string):Promise<void>;
 
 export function PickRepoPath():Promise<string>;
+
+export function ProbeProviderModels(arg1:types.Provider,arg2:string,arg3:string):Promise<Array<string>>;
 
 export function ReadTranscript(arg1:string):Promise<string>;
 
@@ -104,6 +111,8 @@ export function RunOrchestrator():Promise<void>;
 
 export function SaveGoal(arg1:types.Goal):Promise<void>;
 
+export function SavePool(arg1:types.Pool):Promise<void>;
+
 export function SendInput(arg1:string,arg2:string):Promise<void>;
 
 export function SetAutoPullPaused(arg1:boolean):Promise<void>;
@@ -117,8 +126,6 @@ export function SetNotifyPrefs(arg1:main.NotifyPrefs):Promise<void>;
 export function SetOllamaConfig(arg1:main.OllamaConfig):Promise<void>;
 
 export function SetPollInterval(arg1:number):Promise<void>;
-
-export function SetWorkerPoolCapacity(arg1:number):Promise<void>;
 
 export function SpawnDemo():Promise<types.Session>;
 

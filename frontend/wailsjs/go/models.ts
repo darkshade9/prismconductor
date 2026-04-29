@@ -895,18 +895,24 @@ export namespace main {
 	        this.available = source["available"];
 	    }
 	}
-	export class WorkerPoolStatus {
-	    capacity: number;
-	    active: number;
+	export class ProviderInfo {
+	    kind: string;
+	    display_name: string;
+	    default_endpoint: string;
+	    needs_api_key: boolean;
+	    can_spawn: boolean;
 	
 	    static createFrom(source: any = {}) {
-	        return new WorkerPoolStatus(source);
+	        return new ProviderInfo(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.capacity = source["capacity"];
-	        this.active = source["active"];
+	        this.kind = source["kind"];
+	        this.display_name = source["display_name"];
+	        this.default_endpoint = source["default_endpoint"];
+	        this.needs_api_key = source["needs_api_key"];
+	        this.can_spawn = source["can_spawn"];
 	    }
 	}
 
@@ -1237,6 +1243,53 @@ export namespace types {
 	    }
 	}
 	
+	export class Pool {
+	    id: string;
+	    name: string;
+	    provider: string;
+	    endpoint: string;
+	    model: string;
+	    capacity: number;
+	    enabled: boolean;
+	    api_key?: string;
+	    // Go type: time
+	    created_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Pool(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.provider = source["provider"];
+	        this.endpoint = source["endpoint"];
+	        this.model = source["model"];
+	        this.capacity = source["capacity"];
+	        this.enabled = source["enabled"];
+	        this.api_key = source["api_key"];
+	        this.created_at = this.convertValues(source["created_at"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	export class Session {
 	    id: string;
@@ -1348,6 +1401,43 @@ export namespace types {
 	        this.skill_profile = this.convertValues(source["skill_profile"], SkillProfile);
 	        this.conventions = this.convertValues(source["conventions"], ConventionHints);
 	        this.enabled = source["enabled"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
+export namespace workerpool {
+	
+	export class PoolStatus {
+	    pool: types.Pool;
+	    active: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PoolStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pool = this.convertValues(source["pool"], types.Pool);
+	        this.active = source["active"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
