@@ -276,7 +276,20 @@ function LabelsSection({
   }, [cache]);
 
   const current = issue.labels ?? [];
-  const suggestions = (plan.suggested_labels ?? []).filter((n) => !current.includes(n));
+  // Issue #24: keep ALL planner suggestions rendered. Applied ones get an
+  // (auto-applied) badge; unapplied ones keep the dashed Apply chip.
+  const suggestions = plan.suggested_labels ?? [];
+
+  async function removeApplied(name: string) {
+    onError(null);
+    const next = current.filter((n) => n !== name);
+    try {
+      await SetIssueLabels(issue.workspace_id, issue.number, next);
+      await onIssueRefresh();
+    } catch (e: any) {
+      onError(String(e?.message ?? e));
+    }
+  }
 
   async function applySuggestion(name: string) {
     const exists = cacheByName.has(name);
@@ -331,8 +344,23 @@ function LabelsSection({
           <div className="flex flex-wrap items-center gap-1.5">
             {suggestions.map((name) => {
               const exists = cacheByName.has(name);
+              const applied = current.includes(name);
               const color = cacheByName.get(name)?.color ?? "475569";
               const fg = getContrastText(color);
+              if (applied) {
+                return (
+                  <button
+                    key={name}
+                    onClick={() => removeApplied(name)}
+                    className="px-1.5 py-0.5 rounded text-[11px] font-medium hover:opacity-80"
+                    style={{ backgroundColor: `#${color}`, color: fg }}
+                    title="Auto-applied by planner — click to remove"
+                  >
+                    {name}
+                    <span className="ml-1 opacity-70">(auto-applied)</span>
+                  </button>
+                );
+              }
               return (
                 <button
                   key={name}

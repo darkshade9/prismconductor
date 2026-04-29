@@ -18,10 +18,29 @@ Bundled by PrismConductor. Used in Bundled and Hybrid skill modes (PRISMCONDUCTO
 1. Fetch the issue body via `gh issue view <number> --json title,body,labels`.
 2. Read `CLAUDE.md` and `.claude/rules/*.md` if present (silently skip if absent — see §15.8).
 3. Grep the repo for terms in the issue title and body that name files/symbols.
-4. Run `gh label list -R <owner>/<repo> --json name,color,description --limit 200` to see the repo's
-   label vocabulary. From the issue title + body + the file paths picked above, suggest the labels
-   whose name or description plausibly applies to this issue. Err on the side of restraint
-   (max 5 suggestions). Never invent labels that don't already exist on GitHub.
+4. Run `gh label list -R <owner>/<repo> --json name,color,description --limit 200` to see the
+   repo's label vocabulary. Then classify the issue (NON-NEGOTIABLE):
+
+   - **Axis** (pick exactly one — never multi-axis):
+     - `feature` (new capability) → map to existing `enhancement` / `feature` / `feat` (in
+       that priority order). If none of those exist in the repo, omit the axis label.
+     - `bug` (defect fix) → map to `bug` / `defect` / `fix`.
+     - `refactor` (no behavior change) → map to `refactor` / `cleanup` / `chore`.
+     - `docs` (markdown-only) → map to `documentation` / `docs`.
+     - `test` (test-only) → map to `test` / `tests` / `testing`.
+   - **Topical** (up to 4): include component, area, or module names suggested by the file
+     paths the plan modifies (e.g. `frontend`, `backend`, `worker`, `orchestrator`,
+     `eventbus`). **Suggest these even when they don't exist in the repo's label list yet** —
+     the conductor drops them on auto-apply (logging the drop), and the PlanModal renders
+     them with a `(create)` chip so the user can opt to create the missing label. This
+     surfaces gaps in the repo's label vocabulary.
+   - **Cap**: 5 entries total.
+   - **Order**: axis FIRST (index 0), then topicals. The conductor's auto-apply reconciler
+     reads index 0 as the axis on re-plan to decide whether to drop the prior axis label.
+     Any deviation from this ordering breaks re-plan reconciliation.
+
+   Axis names MUST map to existing repo labels via the priority lists above — do not invent
+   axis names. The "suggest even if missing" rule applies to topicals only.
 5. Compose a plan that lists:
    - What to do (markdown)
    - Files to add/modify/delete

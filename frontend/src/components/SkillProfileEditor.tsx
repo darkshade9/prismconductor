@@ -91,6 +91,21 @@ export function SkillProfileEditor({ workspace }: { workspace: types.Workspace }
           </div>
         </div>
       )}
+
+      <div className="flex items-start justify-between border-t border-slate-800 pt-3">
+        <div className="flex-1 mr-3">
+          <div className="text-sm text-slate-200">Auto-apply planner label suggestions</div>
+          <div className="text-[11px] text-slate-500 mt-0.5">
+            When a plan is ready, apply each <code>suggested_labels</code> entry that exists in
+            the repo's label cache. Missing labels are surfaced in the plan modal with a (create) chip.
+          </div>
+        </div>
+        <Toggle
+          label=""
+          checked={sp.auto_apply_labels !== false}
+          onChange={(v) => update({ auto_apply_labels: v })}
+        />
+      </div>
     </div>
   );
 }

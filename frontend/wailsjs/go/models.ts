@@ -1299,6 +1299,7 @@ export namespace types {
 	    native_execute_command: string;
 	    native_close_command: string;
 	    extra_context_files: string[];
+	    auto_apply_labels?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new SkillProfile(source);
@@ -1314,6 +1315,7 @@ export namespace types {
 	        this.native_execute_command = source["native_execute_command"];
 	        this.native_close_command = source["native_close_command"];
 	        this.extra_context_files = source["extra_context_files"];
+	        this.auto_apply_labels = source["auto_apply_labels"];
 	    }
 	}
 	export class Workspace {

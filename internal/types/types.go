@@ -34,6 +34,14 @@ type SkillProfile struct {
 	NativeExecuteCommand string    `json:"native_execute_command"`
 	NativeCloseCommand   string    `json:"native_close_command"`
 	ExtraContextFiles    []string  `json:"extra_context_files"`
+	AutoApplyLabels      *bool     `json:"auto_apply_labels,omitempty"`
+}
+
+// AutoApplyLabelsEnabled returns true when the workspace opts in to auto-apply
+// of planner-suggested labels. Absent (nil) means enabled — legacy workspace
+// JSON keeps the new behavior without a migration.
+func (sp SkillProfile) AutoApplyLabelsEnabled() bool {
+	return sp.AutoApplyLabels == nil || *sp.AutoApplyLabels
 }
 
 type SkillMode string
