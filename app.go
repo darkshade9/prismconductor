@@ -15,6 +15,7 @@ import (
 	gh "github.com/google/go-github/v62/github"
 
 	"prismconductor/internal/eventbus"
+	"prismconductor/internal/goalfilter"
 	"prismconductor/internal/githubauth"
 	"prismconductor/internal/notify"
 	"prismconductor/internal/ollama"
@@ -269,6 +270,107 @@ func (a *App) ActivateGoal(id string) error {
 	}
 	a.bus.Publish(eventbus.EvtGoalActivated, id)
 	return nil
+}
+
+// --- Issues / Board ---
+
+// ListIssues returns all issues, optionally filtered by workspace ID.
+// Empty workspaceID = all workspaces.
+func (a *App) ListIssues(workspaceID string) ([]types.Issue, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store unavailable")
+	}
+	return a.store.ListIssues(workspaceID)
+}
+
+// MoveIssueColumn moves an issue card between columns. Emits EvtCardMovedManually
+// per §15.5 if the move was triggered by the user (which it always is at this layer —
+// orchestrator-driven moves bypass this method by writing the column directly).
+func (a *App) MoveIssueColumn(workspaceID string, number int, column string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.MoveIssueColumn(workspaceID, number, types.BoardColumn(column)); err != nil {
+		return err
+	}
+	a.bus.Publish(eventbus.EvtCardMovedManually, map[string]any{
+		"workspace_id": workspaceID,
+		"number":       number,
+		"column":       column,
+	})
+	return nil
+}
+
+// ReorderIssues persists a new ordering of issues within a single column.
+// Pass numbers in their final left-to-right or top-to-bottom order.
+func (a *App) ReorderIssues(workspaceID string, column string, ordered []int) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.ReorderIssues(workspaceID, types.BoardColumn(column), ordered); err != nil {
+		return err
+	}
+	a.bus.Publish(eventbus.EvtCardMovedManually, map[string]any{
+		"workspace_id": workspaceID,
+		"column":       column,
+		"ordered":      ordered,
+	})
+	return nil
+}
+
+// RemoveIssue deletes a local issue row. (GitHub-mirrored issues are restored
+// on next poll; conductor-only test issues stay gone.)
+func (a *App) RemoveIssue(workspaceID string, number int) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	return a.store.RemoveIssue(workspaceID, number)
+}
+
+// AddManualIssue lets the user create a fake issue card in any column. Used to
+// drive the board UI before #2 lands the real GitHub fetch loop.
+func (a *App) AddManualIssue(workspaceID string, number int, title, body string, labels []string, column string) (*types.Issue, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store unavailable")
+	}
+	if column == "" {
+		column = string(types.ColTodo)
+	}
+	iss := types.Issue{
+		Number:      number,
+		WorkspaceID: workspaceID,
+		Title:       title,
+		Body:        body,
+		Labels:      labels,
+		State:       "open",
+		Column:      types.BoardColumn(column),
+	}
+	if err := a.store.SaveIssue(iss); err != nil {
+		return nil, err
+	}
+	a.bus.Publish(eventbus.EvtIssueAdded, map[string]any{
+		"workspace_id": workspaceID,
+		"number":       number,
+	})
+	return &iss, nil
+}
+
+// FilterIssuesByActiveGoal applies the active goal's IssueQuery to the given
+// issue list. Returns the unfiltered list if no active goal.
+func (a *App) FilterIssuesByActiveGoal(issues []types.Issue) []types.Issue {
+	if a.store == nil {
+		return issues
+	}
+	goals, err := a.store.ListGoals()
+	if err != nil {
+		return issues
+	}
+	for _, g := range goals {
+		if g.Status == types.GoalActive {
+			return goalfilter.Apply(g.IssueFilter, issues)
+		}
+	}
+	return issues
 }
 
 // SetGoalStatus moves a goal to a non-active status (backlog/achieved/abandoned).

@@ -7,9 +7,13 @@ import {workspace} from '../models';
 
 export function ActivateGoal(arg1:string):Promise<void>;
 
+export function AddManualIssue(arg1:string,arg2:number,arg3:string,arg4:string,arg5:Array<string>,arg6:string):Promise<types.Issue>;
+
 export function AddWorkspace(arg1:types.Workspace):Promise<void>;
 
 export function DeleteGoal(arg1:string):Promise<void>;
+
+export function FilterIssuesByActiveGoal(arg1:Array<types.Issue>):Promise<Array<types.Issue>>;
 
 export function GitHubAuthStatus():Promise<githubauth.User>;
 
@@ -27,9 +31,13 @@ export function KillSession(arg1:string):Promise<void>;
 
 export function ListGoals():Promise<Array<types.Goal>>;
 
+export function ListIssues(arg1:string):Promise<Array<types.Issue>>;
+
 export function ListSessions():Promise<Array<types.Session>>;
 
 export function ListWorkspaces():Promise<Array<types.Workspace>>;
+
+export function MoveIssueColumn(arg1:string,arg2:number,arg3:string):Promise<void>;
 
 export function Notify(arg1:string,arg2:string):Promise<void>;
 
@@ -39,7 +47,11 @@ export function PickRepoPath():Promise<string>;
 
 export function ReadTranscript(arg1:string):Promise<string>;
 
+export function RemoveIssue(arg1:string,arg2:number):Promise<void>;
+
 export function RemoveWorkspace(arg1:string):Promise<void>;
+
+export function ReorderIssues(arg1:string,arg2:string,arg3:Array<number>):Promise<void>;
 
 export function SaveGoal(arg1:types.Goal):Promise<void>;
 

@@ -1,48 +1,65 @@
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { types } from "../../wailsjs/go/models";
 import { cn } from "../lib/cn";
 
 export type CardProps = {
-  number: number;
-  workspace: string;
-  title: string;
-  state?: "primitive" | "plan_ready" | "working" | "pr_open" | "blocked";
-  blockedBy?: number;
-  priority?: number;
-  color?: string;
+  issue: types.Issue;
+  workspaceColor?: string;
+  workspaceLabel?: string;
   onClick?: () => void;
 };
 
-const stateLabel: Record<NonNullable<CardProps["state"]>, string> = {
-  primitive: "primitive",
-  plan_ready: "Plan Ready",
-  working: "working",
-  pr_open: "PR open",
-  blocked: "blocked",
-};
+export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardProps) {
+  const id = `${issue.workspace_id}#${issue.number}`;
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    data: { number: issue.number, workspaceID: issue.workspace_id, column: issue.column },
+  });
+  const style = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
 
-export function Card(p: CardProps) {
+  const blocked = (issue.dependencies ?? []).length > 0;
+
   return (
-    <button
-      onClick={p.onClick}
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      onClick={(e) => {
+        // Suppress click during drag.
+        if (isDragging) return;
+        onClick?.();
+        e.stopPropagation();
+      }}
       className={cn(
         "w-full text-left rounded-md border border-slate-700 bg-slate-800/70 hover:bg-slate-800 px-3 py-2 mb-2",
-        "shadow-sm transition-colors",
+        "shadow-sm transition-colors cursor-grab active:cursor-grabbing select-none",
       )}
     >
       <div className="flex items-center justify-between text-xs text-slate-400">
         <span className="flex items-center gap-2">
-          <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: p.color ?? "#64748b" }} />
-          #{p.number}
-          <span className="text-slate-500">{p.workspace}</span>
+          <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: workspaceColor ?? "#64748b" }} />
+          #{issue.number}
+          <span className="text-slate-500">{workspaceLabel ?? issue.workspace_id}</span>
         </span>
-        {p.priority != null && <span className="text-slate-500">P{p.priority.toFixed(2)}</span>}
+        {issue.priority ? <span className="text-slate-500">P{issue.priority.toFixed(2)}</span> : null}
       </div>
-      <div className="text-sm text-slate-100 mt-1 line-clamp-2">{p.title}</div>
-      {p.state && (
-        <div className="text-[11px] text-slate-400 mt-1">
-          {stateLabel[p.state]}
-          {p.state === "blocked" && p.blockedBy ? ` by #${p.blockedBy}` : ""}
-        </div>
-      )}
-    </button>
+      <div className="text-sm text-slate-100 mt-1 line-clamp-2">{issue.title}</div>
+      <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-2">
+        {blocked && (
+          <span className="text-amber-300">
+            🚫 blocked by {issue.dependencies?.map((n) => `#${n}`).join(", ")}
+          </span>
+        )}
+        {(issue.labels ?? []).slice(0, 3).map((l) => (
+          <span key={l} className="text-slate-600">·{l}</span>
+        ))}
+      </div>
+    </div>
   );
 }

@@ -11,6 +11,9 @@ import { SessionDrawer } from "./components/SessionDrawer";
 import { Settings } from "./components/Settings";
 import { PlanModal } from "./components/PlanModal";
 import { LoginButton } from "./components/LoginButton";
+import { AddIssueQuick } from "./components/AddIssueQuick";
+import { useIssueStore } from "./stores/issueStore";
+import { useGoalStore } from "./stores/goalStore";
 
 function App() {
   const appendLine = useSessionStore((s) => s.appendLine);
@@ -18,6 +21,8 @@ function App() {
   const setActive = useSessionStore((s) => s.setActive);
   const refreshWorkspaces = useWorkspaceStore((s) => s.refresh);
   const selectedWorkspace = useWorkspaceStore((s) => s.selectedID);
+  const refreshIssues = useIssueStore((s) => s.refresh);
+  const refreshGoals = useGoalStore((s) => s.refresh);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
@@ -26,6 +31,7 @@ function App() {
 
   useEffect(() => {
     refreshWorkspaces();
+    refreshGoals();
     ListSessions().then((all) => {
       (all ?? []).forEach((s) => setMeta(s));
     });
@@ -35,11 +41,20 @@ function App() {
     const offState = EventsOn("session.state", (sess: types.Session) => {
       setMeta(sess);
     });
+    const offGoal = EventsOn("bus.goal_activated", () => {
+      refreshGoals();
+      refreshIssues(selectedWorkspace ?? "");
+    });
+    const offGoalUpd = EventsOn("bus.goal_updated", () => refreshGoals());
+    const offIssue = EventsOn("bus.issue_added", () => refreshIssues(selectedWorkspace ?? ""));
     return () => {
       if (typeof offLine === "function") offLine();
       if (typeof offState === "function") offState();
+      if (typeof offGoal === "function") offGoal();
+      if (typeof offGoalUpd === "function") offGoalUpd();
+      if (typeof offIssue === "function") offIssue();
     };
-  }, [appendLine, setMeta, refreshWorkspaces]);
+  }, [appendLine, setMeta, refreshWorkspaces, refreshGoals, refreshIssues, selectedWorkspace]);
 
   async function spawnDemo() {
     setBusy(true);
@@ -128,6 +143,10 @@ function App() {
       </header>
       <WorkspaceSwitcher />
       <GoalPane />
+      <div className="px-4 py-1 border-b border-slate-800 flex items-center gap-3">
+        <span className="text-xs text-slate-500">+ test issue:</span>
+        <AddIssueQuick />
+      </div>
       <main className="flex-1 overflow-hidden pt-3">
         <Board onCardClick={() => setPlanOpen(true)} />
       </main>

@@ -821,6 +821,20 @@ export namespace types {
 	        this.shell = source["shell"];
 	    }
 	}
+	export class FileIntent {
+	    path: string;
+	    intent: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FileIntent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.intent = source["intent"];
+	    }
+	}
 	export class IssueQuery {
 	    labels: string[];
 	    milestone: string;
@@ -893,6 +907,145 @@ export namespace types {
 		    return a;
 		}
 	}
+	export class Question {
+	    id: string;
+	    type: string;
+	    prompt: string;
+	    options?: string[];
+	    default?: string;
+	    required: boolean;
+	    answer?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Question(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.type = source["type"];
+	        this.prompt = source["prompt"];
+	        this.options = source["options"];
+	        this.default = source["default"];
+	        this.required = source["required"];
+	        this.answer = source["answer"];
+	    }
+	}
+	export class Plan {
+	    issue_number: number;
+	    workspace_id: string;
+	    revision: number;
+	    plan_markdown: string;
+	    files_to_modify: FileIntent[];
+	    dependencies_detected: number[];
+	    questions: Question[];
+	    estimated_complexity: string;
+	    ready_to_execute: boolean;
+	    // Go type: time
+	    generated_at: any;
+	    // Go type: time
+	    approved_at?: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Plan(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.issue_number = source["issue_number"];
+	        this.workspace_id = source["workspace_id"];
+	        this.revision = source["revision"];
+	        this.plan_markdown = source["plan_markdown"];
+	        this.files_to_modify = this.convertValues(source["files_to_modify"], FileIntent);
+	        this.dependencies_detected = source["dependencies_detected"];
+	        this.questions = this.convertValues(source["questions"], Question);
+	        this.estimated_complexity = source["estimated_complexity"];
+	        this.ready_to_execute = source["ready_to_execute"];
+	        this.generated_at = this.convertValues(source["generated_at"], null);
+	        this.approved_at = this.convertValues(source["approved_at"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class Issue {
+	    number: number;
+	    workspace_id: string;
+	    title: string;
+	    body: string;
+	    labels: string[];
+	    state: string;
+	    url: string;
+	    // Go type: time
+	    updated_at: any;
+	    goal_id?: string;
+	    priority: number;
+	    dependencies: number[];
+	    dep_rationale: string;
+	    column: string;
+	    plan?: Plan;
+	    session_id?: string;
+	    last_error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Issue(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.number = source["number"];
+	        this.workspace_id = source["workspace_id"];
+	        this.title = source["title"];
+	        this.body = source["body"];
+	        this.labels = source["labels"];
+	        this.state = source["state"];
+	        this.url = source["url"];
+	        this.updated_at = this.convertValues(source["updated_at"], null);
+	        this.goal_id = source["goal_id"];
+	        this.priority = source["priority"];
+	        this.dependencies = source["dependencies"];
+	        this.dep_rationale = source["dep_rationale"];
+	        this.column = source["column"];
+	        this.plan = this.convertValues(source["plan"], Plan);
+	        this.session_id = source["session_id"];
+	        this.last_error = source["last_error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
 	
 	export class Session {
 	    id: string;

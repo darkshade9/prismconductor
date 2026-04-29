@@ -6,12 +6,20 @@ export function ActivateGoal(arg1) {
   return window['go']['main']['App']['ActivateGoal'](arg1);
 }
 
+export function AddManualIssue(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['AddManualIssue'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
 export function AddWorkspace(arg1) {
   return window['go']['main']['App']['AddWorkspace'](arg1);
 }
 
 export function DeleteGoal(arg1) {
   return window['go']['main']['App']['DeleteGoal'](arg1);
+}
+
+export function FilterIssuesByActiveGoal(arg1) {
+  return window['go']['main']['App']['FilterIssuesByActiveGoal'](arg1);
 }
 
 export function GitHubAuthStatus() {
@@ -46,12 +54,20 @@ export function ListGoals() {
   return window['go']['main']['App']['ListGoals']();
 }
 
+export function ListIssues(arg1) {
+  return window['go']['main']['App']['ListIssues'](arg1);
+}
+
 export function ListSessions() {
   return window['go']['main']['App']['ListSessions']();
 }
 
 export function ListWorkspaces() {
   return window['go']['main']['App']['ListWorkspaces']();
+}
+
+export function MoveIssueColumn(arg1, arg2, arg3) {
+  return window['go']['main']['App']['MoveIssueColumn'](arg1, arg2, arg3);
 }
 
 export function Notify(arg1, arg2) {
@@ -70,8 +86,16 @@ export function ReadTranscript(arg1) {
   return window['go']['main']['App']['ReadTranscript'](arg1);
 }
 
+export function RemoveIssue(arg1, arg2) {
+  return window['go']['main']['App']['RemoveIssue'](arg1, arg2);
+}
+
 export function RemoveWorkspace(arg1) {
   return window['go']['main']['App']['RemoveWorkspace'](arg1);
+}
+
+export function ReorderIssues(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ReorderIssues'](arg1, arg2, arg3);
 }
 
 export function SaveGoal(arg1) {

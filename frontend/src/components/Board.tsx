@@ -1,25 +1,218 @@
-import { Column } from "./Column";
+import { useEffect, useMemo, useState } from "react";
+import {
+  DndContext,
+  DragEndEvent,
+  DragOverEvent,
+  DragOverlay,
+  DragStartEvent,
+  PointerSensor,
+  closestCorners,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { arrayMove } from "@dnd-kit/sortable";
+import { FilterIssuesByActiveGoal } from "../../wailsjs/go/main/App";
+import { types } from "../../wailsjs/go/models";
+import { useIssueStore, Column as ColumnID } from "../stores/issueStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 import { Card } from "./Card";
+import { Column } from "./Column";
 
-// Phase 1 stub: hard-coded sample cards. Replaced by real data once GitHub fetch lands.
-export function Board({ onCardClick }: { onCardClick?: (n: number) => void }) {
+const COLUMNS: { id: ColumnID; title: string }[] = [
+  { id: "todo", title: "TODO" },
+  { id: "plan", title: "PLAN" },
+  { id: "in_progress", title: "IN_PROGRESS" },
+  { id: "review", title: "REVIEW" },
+  { id: "done", title: "DONE" },
+];
+
+const cardID = (i: types.Issue) => `${i.workspace_id}#${i.number}`;
+const fromCardID = (id: string) => {
+  const [ws, num] = id.split("#");
+  return { workspaceID: ws, number: parseInt(num, 10) };
+};
+
+export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => void }) {
+  const { issues, refresh, applyLocalMove, applyLocalReorder, moveColumn, reorder } = useIssueStore();
+  const { workspaces, selectedID } = useWorkspaceStore();
+  const [filteredTodoNums, setFilteredTodoNums] = useState<Set<string> | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  useEffect(() => {
+    refresh(selectedID ?? "");
+  }, [refresh, selectedID]);
+
+  // Apply active goal's IssueQuery to TODO column when one exists.
+  useEffect(() => {
+    let cancelled = false;
+    FilterIssuesByActiveGoal(issues)
+      .then((scoped) => {
+        if (cancelled) return;
+        if (!scoped) {
+          setFilteredTodoNums(null);
+          return;
+        }
+        const set = new Set(scoped.map(cardID));
+        setFilteredTodoNums(set);
+      })
+      .catch(() => setFilteredTodoNums(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [issues]);
+
+  const wsMeta = useMemo(() => {
+    const m = new Map<string, { color: string; label: string }>();
+    workspaces.forEach((w) => m.set(w.id, { color: w.color, label: w.display_name || w.id }));
+    return m;
+  }, [workspaces]);
+
+  // Group issues by column. For TODO, drop anything excluded by the active goal.
+  const grouped = useMemo(() => {
+    const out: Record<ColumnID, types.Issue[]> = {
+      todo: [],
+      plan: [],
+      in_progress: [],
+      review: [],
+      done: [],
+    };
+    for (const i of issues) {
+      const col = (i.column || "todo") as ColumnID;
+      if (col === "todo" && filteredTodoNums && !filteredTodoNums.has(cardID(i))) continue;
+      if (out[col]) out[col].push(i);
+    }
+    return out;
+  }, [issues, filteredTodoNums]);
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+
+  function findIssue(id: string): types.Issue | undefined {
+    const { workspaceID, number } = fromCardID(id);
+    return issues.find((i) => i.workspace_id === workspaceID && i.number === number);
+  }
+
+  function findColumn(id: string): ColumnID | null {
+    if (COLUMNS.some((c) => c.id === id)) return id as ColumnID;
+    const iss = findIssue(id);
+    return (iss?.column as ColumnID) ?? null;
+  }
+
+  function onDragStart(e: DragStartEvent) {
+    setActiveId(String(e.active.id));
+  }
+
+  // Cross-column dragover: live-move the card so the user sees the destination
+  // column open up before they drop.
+  function onDragOver(e: DragOverEvent) {
+    const { active, over } = e;
+    if (!over) return;
+    const activeStr = String(active.id);
+    const overStr = String(over.id);
+    const activeCol = findColumn(activeStr);
+    const overCol = findColumn(overStr);
+    if (!activeCol || !overCol || activeCol === overCol) return;
+    const activeIssue = findIssue(activeStr);
+    if (!activeIssue) return;
+    applyLocalMove(activeIssue.workspace_id, activeIssue.number, overCol);
+  }
+
+  async function onDragEnd(e: DragEndEvent) {
+    setActiveId(null);
+    const { active, over } = e;
+    if (!over) return;
+    const activeStr = String(active.id);
+    const overStr = String(over.id);
+    const activeIssue = findIssue(activeStr);
+    if (!activeIssue) return;
+
+    const targetCol = findColumn(overStr);
+    if (!targetCol) return;
+
+    // Compute the new in-column ordering after the drop.
+    const sourceCol = (activeIssue.column || "todo") as ColumnID;
+    const colIssues = (grouped[targetCol] ?? []).slice();
+
+    if (sourceCol !== targetCol) {
+      // Cross-column move: persist the column change. The dragover handler
+      // already optimistically moved the card to the target column, but the
+      // grouped snapshot above was computed pre-drag. Re-compute from the
+      // store directly.
+      const inTarget = issues.filter(
+        (i) => (i.column as ColumnID) === targetCol && i.workspace_id === activeIssue.workspace_id,
+      );
+      // Place the dragged item at the end if dropped on the column itself,
+      // otherwise insert at the target item's index.
+      const overIssue = findIssue(overStr);
+      const targetNumbers = inTarget
+        .filter((i) => i.number !== activeIssue.number)
+        .map((i) => i.number);
+      let insertAt = targetNumbers.length;
+      if (overIssue) insertAt = targetNumbers.indexOf(overIssue.number);
+      if (insertAt < 0) insertAt = targetNumbers.length;
+      targetNumbers.splice(insertAt, 0, activeIssue.number);
+
+      await moveColumn(activeIssue.workspace_id, activeIssue.number, targetCol);
+      if (targetNumbers.length > 1) {
+        await reorder(activeIssue.workspace_id, targetCol, targetNumbers);
+      }
+      return;
+    }
+
+    // Same-column reorder.
+    const overIssue = findIssue(overStr);
+    if (!overIssue || overIssue.number === activeIssue.number) return;
+    const ids = colIssues.map((i) => i.number);
+    const oldIdx = ids.indexOf(activeIssue.number);
+    const newIdx = ids.indexOf(overIssue.number);
+    if (oldIdx < 0 || newIdx < 0) return;
+    const next = arrayMove(ids, oldIdx, newIdx);
+    applyLocalReorder(activeIssue.workspace_id, targetCol, next);
+    await reorder(activeIssue.workspace_id, targetCol, next);
+  }
+
+  const activeIssue = activeId ? findIssue(activeId) : null;
+
   return (
-    <div className="flex gap-3 px-4 pb-4 overflow-x-auto">
-      <Column title="TODO" count={3}>
-        <Card number={1116} workspace="pe-eng" title="Foundation: spell schema" state="primitive" priority={1} color="#22c55e" onClick={() => onCardClick?.(1116)} />
-        <Card number={1117} workspace="pe-eng" title="Foundation: damage table" state="primitive" priority={0.95} color="#22c55e" />
-        <Card number={1131} workspace="pe-eng" title="GSX magic crit polish" state="blocked" blockedBy={1116} color="#22c55e" />
-      </Column>
-      <Column title="PLAN" count={1}>
-        <Card number={1130} workspace="pe-eng" title="GSX magic crit table refactor" state="plan_ready" color="#22c55e" />
-      </Column>
-      <Column title="IN_PROGRESS" count={1}>
-        <Card number={1145} workspace="editor" title="Editor: snap-to-grid" state="working" color="#06b6d4" />
-      </Column>
-      <Column title="REVIEW" count={1}>
-        <Card number={1099} workspace="pe-eng" title="Inventory weight cap" state="pr_open" color="#22c55e" />
-      </Column>
-      <Column title="DONE" count={0} />
-    </div>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCorners}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragEnd={onDragEnd}
+    >
+      <div className="flex gap-3 px-4 pb-4 overflow-x-auto h-full">
+        {COLUMNS.map((c) => {
+          const items = grouped[c.id] ?? [];
+          return (
+            <Column key={c.id} id={c.id} title={c.title} count={items.length} itemIDs={items.map(cardID)}>
+              {items.map((iss) => {
+                const meta = wsMeta.get(iss.workspace_id);
+                return (
+                  <Card
+                    key={cardID(iss)}
+                    issue={iss}
+                    workspaceColor={meta?.color}
+                    workspaceLabel={meta?.label}
+                    onClick={() => onCardClick?.(iss)}
+                  />
+                );
+              })}
+              {items.length === 0 && (
+                <div className="text-xs text-slate-700 px-1 py-2">drop here</div>
+              )}
+            </Column>
+          );
+        })}
+      </div>
+      <DragOverlay>
+        {activeIssue ? (
+          <Card
+            issue={activeIssue}
+            workspaceColor={wsMeta.get(activeIssue.workspace_id)?.color}
+            workspaceLabel={wsMeta.get(activeIssue.workspace_id)?.label}
+          />
+        ) : null}
+      </DragOverlay>
+    </DndContext>
   );
 }
