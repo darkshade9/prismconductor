@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"prismconductor/internal/eventbus"
+	pcgit "prismconductor/internal/git"
 	"prismconductor/internal/types"
 )
 
@@ -77,6 +78,13 @@ type runtimeSession struct {
 	lastAction     string
 	lastActionAt   time.Time
 	lastEmittedAt  time.Time
+
+	// Issue #22: per-execute worktree fields. Empty for plan/raw spawns.
+	// repoPath is captured here so the cleanup hook in tailAndParse doesn't
+	// need a workspace registry lookup at teardown time.
+	worktreeDir string
+	branch      string
+	repoPath    string
 }
 
 func NewManager(bus *eventbus.Bus, emit LineHandler) *Manager {
@@ -109,9 +117,127 @@ func (m *Manager) SpawnPlan(ws types.Workspace, issue types.Issue) (*types.Sessi
 }
 
 // SpawnExecute launches an execute-mode worker per §10.2.
+//
+// Issue #22: each execute runs inside a per-(workspace, issue) git worktree
+// off origin/<DefaultBranch>. The conductor — not the skill — owns the
+// worktree's lifecycle: created here before pty.Start, torn down by
+// tailAndParse on Blocked/Failed (immediate, q2=A) or by the 24h GC walk on
+// Completed (q3=A).
 func (m *Manager) SpawnExecute(ws types.Workspace, issue types.Issue, plan types.Plan) (*types.Session, error) {
+	base := ws.DefaultBranch
+	if base == "" {
+		base = "main"
+	}
+	slug := branchSlug(issue.Title)
+	branch := fmt.Sprintf("feat/issue-%d-%s", issue.Number, slug)
+	worktreeDir := filepath.Join(ws.RepoPath, ".prismconductor", "worktrees",
+		fmt.Sprintf("%s-%d", ws.ID, issue.Number))
+
+	// Idempotency: a prior failed run may have left a worktree at this exact
+	// path. Force-remove first so `worktree add -B` succeeds. The error is
+	// ignored because the common case is "no such worktree" — Add will fail
+	// loudly if a real problem remains.
+	_ = pcgit.Remove(ws.RepoPath, worktreeDir)
+	if err := pcgit.Add(ws.RepoPath, branch, worktreeDir, base); err != nil {
+		return nil, fmt.Errorf("prepare worktree: %w", err)
+	}
+
+	// q4=D: auto-init submodules inside the new worktree so the worker has a
+	// complete checkout. The cost is paid up-front (potentially minutes for
+	// large submodules) instead of risking a mid-run BLOCKED on a missing path.
+	if pcgit.HasSubmodules(worktreeDir) {
+		if err := pcgit.InitSubmodules(worktreeDir); err != nil {
+			_ = pcgit.Remove(ws.RepoPath, worktreeDir)
+			return nil, fmt.Errorf("prepare worktree (submodules): %w", err)
+		}
+	}
+
+	// q1=A: copy plan + answers JSON from the main checkout's .prismconductor/
+	// (gitignored, so absent in the fresh worktree) so the worker's cwd-
+	// relative reads succeed. Hard fail on missing plan — a worker can't
+	// execute without it.
+	if err := mirrorPlanArtifacts(ws.RepoPath, worktreeDir, issue.Number, plan.Revision); err != nil {
+		_ = pcgit.Remove(ws.RepoPath, worktreeDir)
+		return nil, fmt.Errorf("mirror plan artifacts: %w", err)
+	}
+
 	args := buildExecuteCommand(ws, issue, plan)
-	return m.spawn(ws, issue, types.ModeExecute, args)
+	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute, args, worktreeDir, branch)
+	if err != nil {
+		_ = pcgit.Remove(ws.RepoPath, worktreeDir)
+		return nil, err
+	}
+	return sess, nil
+}
+
+// branchSlug derives a kebab-case branch suffix from an issue title, lowering
+// case, replacing non-alphanumeric runs with single dashes, capping at 40
+// characters, and falling back to "work" when the title yields nothing.
+func branchSlug(title string) string {
+	title = strings.ToLower(title)
+	var b strings.Builder
+	prevDash := true
+	for _, r := range title {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+		if b.Len() >= 40 {
+			break
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		out = "work"
+	}
+	return out
+}
+
+// mirrorPlanArtifacts copies the rev-N plan (required) and answers (optional,
+// pre-execute may have no questions) JSON files from the main checkout's
+// .prismconductor/ into the worktree's .prismconductor/. The worker's cwd is
+// the worktree, so its relative reads in the conductor-execute skill resolve
+// here.
+func mirrorPlanArtifacts(repoPath, worktreeDir string, num, rev int) error {
+	pairs := []struct {
+		subdir   string
+		name     string
+		required bool
+	}{
+		{"plans", fmt.Sprintf("%d-rev%d.json", num, rev), true},
+		{"answers", fmt.Sprintf("%d-rev%d.json", num, rev), false},
+	}
+	for _, p := range pairs {
+		src := filepath.Join(repoPath, ".prismconductor", p.subdir, p.name)
+		info, err := os.Stat(src)
+		if err != nil {
+			if p.required {
+				return fmt.Errorf("plan file missing: %s", src)
+			}
+			continue
+		}
+		if info.IsDir() {
+			continue
+		}
+		dst := filepath.Join(worktreeDir, ".prismconductor", p.subdir, p.name)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		b, err := os.ReadFile(src)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, b, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SpawnRaw runs a non-skill command via PTY (used by the day-1 demo: `claude --version`).
@@ -122,11 +248,21 @@ func (m *Manager) SpawnRaw(ws types.Workspace, name string, args []string) (*typ
 }
 
 func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string) (*types.Session, error) {
+	return m.spawnWithDir(ws, issue, mode, argv, "", "")
+}
+
+// spawnWithDir is the canonical spawn path. When worktreeDir is non-empty the
+// child process runs there instead of ws.RepoPath, and the worktree metadata
+// is captured on the runtimeSession for the cleanup hook in tailAndParse.
+func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, worktreeDir, branch string) (*types.Session, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("empty command")
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
-	if ws.RepoPath != "" {
+	switch {
+	case worktreeDir != "":
+		cmd.Dir = worktreeDir
+	case ws.RepoPath != "":
 		cmd.Dir = ws.RepoPath
 	}
 	cmd.Env = append(os.Environ(), envSpecToSlice(ws.AgentEnv)...)
@@ -147,7 +283,16 @@ func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.Sessio
 		PID:         cmd.Process.Pid,
 	}
 
-	rs := &runtimeSession{sess: sess, cmd: cmd, pty: f, cancel: cancel, parser: NewStreamParser()}
+	rs := &runtimeSession{
+		sess:        sess,
+		cmd:         cmd,
+		pty:         f,
+		cancel:      cancel,
+		parser:      NewStreamParser(),
+		worktreeDir: worktreeDir,
+		branch:      branch,
+		repoPath:    ws.RepoPath,
+	}
 
 	if m.transcriptDir != "" {
 		_ = os.MkdirAll(m.transcriptDir, 0o755)
@@ -269,6 +414,22 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 	}
 	if m.bus != nil {
 		m.bus.Publish(eventbus.EvtWorkerSlotFreed, rs.sess.ID)
+	}
+
+	// Issue #22: per-execute worktree teardown.
+	//   q2=A: Blocked/Failed → immediate `git worktree remove --force`. The
+	//         user loses post-mortem `cd` access to the worktree but gains
+	//         deterministic state with no goroutine fanout. A leftover from a
+	//         transient failure is reclaimed by the next startup Prune.
+	//   q3=A: Completed → leave on disk; the 24h GC walk reclaims it later.
+	if rs.worktreeDir != "" {
+		switch rs.sess.State {
+		case types.StateBlocked, types.StateFailed:
+			if err := pcgit.Remove(rs.repoPath, rs.worktreeDir); err != nil {
+				log.Printf("worktree cleanup (terminal=%s) %s: %v",
+					rs.sess.State, rs.worktreeDir, err)
+			}
+		}
 	}
 
 	// Drop from in-process registry so Card iteration doesn't keep finding

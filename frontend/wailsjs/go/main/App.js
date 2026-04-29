@@ -34,6 +34,10 @@ export function FilterIssuesByActiveGoal(arg1) {
   return window['go']['main']['App']['FilterIssuesByActiveGoal'](arg1);
 }
 
+export function GCWorktrees(arg1) {
+  return window['go']['main']['App']['GCWorktrees'](arg1);
+}
+
 export function GetAutoPullPaused() {
   return window['go']['main']['App']['GetAutoPullPaused']();
 }

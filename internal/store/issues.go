@@ -8,6 +8,28 @@ import (
 	"prismconductor/internal/types"
 )
 
+// LoadIssue returns the issue row for (workspaceID, number). Used by the
+// execute spawn path (issue #22) so the branch slug can be derived from the
+// issue title rather than a stub Issue{Number, WorkspaceID}.
+func (s *Store) LoadIssue(workspaceID string, number int) (types.Issue, error) {
+	if s == nil || s.DB == nil {
+		return types.Issue{}, errors.New("store unavailable")
+	}
+	var raw, col string
+	if err := s.DB.QueryRow(
+		`SELECT json, column_name FROM issues WHERE workspace_id = ? AND number = ?`,
+		workspaceID, number,
+	).Scan(&raw, &col); err != nil {
+		return types.Issue{}, err
+	}
+	var iss types.Issue
+	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+		return types.Issue{}, err
+	}
+	iss.Column = types.BoardColumn(col)
+	return iss, nil
+}
+
 // SaveIssue upserts an issue row. Preserves the existing column_name and
 // manual_order if the row already exists (those are conductor-managed and
 // must not be overwritten by a GitHub poll).

@@ -515,6 +515,31 @@ func (s *SessionManager) SpawnExecute(ws Workspace, issue Issue, plan Plan) (*Se
 }
 ```
 
+### 10.2.1 Worker isolation (issue #22)
+
+Each execute-mode worker runs inside a per-`(workspace, issue)` git worktree
+at `<RepoPath>/.prismconductor/worktrees/<wsID>-<num>`, created by the session
+manager off `origin/<DefaultBranch>` before `pty.Start`. The conductor — not
+the skill — owns the worktree's lifecycle:
+
+- **Mirror** (q1=A): plan + answers JSON are copied from the main checkout's
+  gitignored `.prismconductor/{plans,answers}/` into the worktree's so the
+  worker's cwd-relative reads succeed.
+- **Cleanup on Blocked/Failed** (q2=A): `git worktree remove --force` runs
+  synchronously in `tailAndParse` once the terminal state resolves. No
+  goroutine fanout; no post-mortem `cd` access for the user.
+- **Cleanup on Completed** (q3=A): the worktree stays on disk so reviewers can
+  inspect it. A startup walk plus a 1h ticker remove worktrees whose most
+  recent terminal session ended more than 24h ago.
+- **Submodules** (q4=D): if the new worktree contains `.gitmodules`,
+  `git submodule update --init --recursive` runs inside it on spawn.
+- **Manual recovery**: a `GCWorktrees` button in the Workspaces panel
+  force-removes every conductor-managed worktree under
+  `.prismconductor/worktrees/` for one workspace, regardless of session state.
+
+This isolation means a dirty main checkout never blocks an execute spawn, and
+parallel executes of different issues each get their own worktree.
+
 ### 10.3 PTY Output Parsing
 
 The session goroutine watches PTY output for these patterns:

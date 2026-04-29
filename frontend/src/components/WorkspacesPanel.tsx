@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RemoveWorkspace } from "../../wailsjs/go/main/App";
+import { GCWorktrees, RemoveWorkspace } from "../../wailsjs/go/main/App";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { AddWorkspaceForm } from "./AddWorkspaceForm";
 import { SkillProfileEditor } from "./SkillProfileEditor";
@@ -9,6 +9,7 @@ export function WorkspacesPanel() {
   const [adding, setAdding] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [gcBusy, setGcBusy] = useState<string | null>(null);
 
   useEffect(() => {
     refresh();
@@ -18,6 +19,18 @@ export function WorkspacesPanel() {
     await RemoveWorkspace(id);
     await refresh();
     setConfirmRemove(null);
+  }
+
+  async function gc(id: string) {
+    setGcBusy(id);
+    try {
+      const removed = await GCWorktrees(id);
+      alert(`Removed ${removed} worktree(s).`);
+    } catch (err) {
+      alert(`GC worktrees failed: ${err}`);
+    } finally {
+      setGcBusy(null);
+    }
   }
 
   return (
@@ -68,6 +81,14 @@ export function WorkspacesPanel() {
                     className="text-xs text-slate-400 hover:text-slate-200"
                   >
                     {isExpanded ? "Collapse" : "Skills…"}
+                  </button>
+                  <button
+                    onClick={() => gc(ws.id)}
+                    disabled={gcBusy === ws.id}
+                    className="text-xs text-slate-400 hover:text-amber-300 disabled:opacity-50"
+                    title="Remove all per-execute git worktrees under .prismconductor/worktrees/"
+                  >
+                    {gcBusy === ws.id ? "GC…" : "GC worktrees"}
                   </button>
                   {confirmRemove === ws.id ? (
                     <div className="flex gap-1 text-xs">
