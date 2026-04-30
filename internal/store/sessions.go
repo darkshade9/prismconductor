@@ -149,31 +149,56 @@ func (s *Store) ListPausedForQuestionSessions() ([]PausedSession, error) {
 	return out, rows.Err()
 }
 
-// HasPriorPlanSession reports whether any plan-mode session row exists for
-// the (workspace, issue) tuple. Used to gate drag-to-PLAN auto-spawn so a
-// previously-failed expensive plan run doesn't silently re-fire (and re-bill
-// the user) on the next drop. The user must explicitly click Replan instead.
+// HasRecentFailedPlanSession reports whether the most recent plan-mode
+// session for (workspace, issue) ended in a failed/blocked state within the
+// given window. Used to gate drag-to-PLAN auto-spawn against silent re-bills
+// after an expensive plan blew up — but only while the failure is fresh.
 //
-// Both terminal and live states qualify; the in-memory active-session check
-// in app.go covers the live case but doesn't see history.
-func (s *Store) HasPriorPlanSession(workspaceID string, issueNumber int) (bool, error) {
+// Older history doesn't gate forever; once the window passes, dragging the
+// card back to PLAN auto-spawns again. (Otherwise an account that's seen any
+// plan failure can never auto-spawn for that issue again, even months later.)
+//
+// Returns true only when:
+//   - a plan session exists for this issue, AND
+//   - its state is failed/blocked, AND
+//   - its ended_at is within `window` of now.
+//
+// Live (running/waiting/paused) plan sessions are not this method's job —
+// the in-memory active-session check covers them.
+func (s *Store) HasRecentFailedPlanSession(workspaceID string, issueNumber int, window time.Duration) (bool, error) {
 	if s == nil || s.DB == nil {
 		return false, nil
 	}
 	row := s.DB.QueryRow(`
-		SELECT 1 FROM sessions
+		SELECT json_extract(json, '$.ended_at'), json_extract(json, '$.state')
+		FROM sessions
 		WHERE workspace_id = ? AND issue_number = ?
 		  AND json_extract(json, '$.mode') = 'plan'
+		ORDER BY json_extract(json, '$.started_at') DESC
 		LIMIT 1`, workspaceID, issueNumber)
-	var one int
-	err := row.Scan(&one)
-	if err == sql.ErrNoRows {
-		return false, nil
-	}
-	if err != nil {
+	var endedAt sql.NullString
+	var state sql.NullString
+	if err := row.Scan(&endedAt, &state); err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
 		return false, err
 	}
-	return true, nil
+	if !state.Valid {
+		return false, nil
+	}
+	if state.String != string(types.StateFailed) && state.String != string(types.StateBlocked) {
+		return false, nil
+	}
+	if !endedAt.Valid || endedAt.String == "" {
+		return false, nil
+	}
+	t, err := time.Parse(time.RFC3339Nano, endedAt.String)
+	if err != nil {
+		// Couldn't parse the timestamp — be conservative and don't block.
+		return false, nil
+	}
+	return time.Since(t) < window, nil
 }
 
 // MostRecentEndedAtForWorktree resolves the most recent terminal-state session

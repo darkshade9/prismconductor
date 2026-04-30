@@ -729,14 +729,21 @@ func (a *App) MoveIssueColumn(workspaceID string, number int, column string) err
 			log.Printf("drag-to-PLAN: #%d already has an active plan session, skipping spawn", number)
 		} else if a.hasExistingPlan(workspaceID, number) {
 			log.Printf("drag-to-PLAN: #%d already has a plan; user must click Re-plan to force a new revision", number)
-		} else if a.hasPriorPlanSession(workspaceID, number) {
-			// A prior plan session exists for this issue (likely BLOCKED or
-			// FAILED — otherwise hasExistingPlan above would have caught the
-			// successful-write path). Don't silently auto-respawn: a runaway
-			// or token-budget-blocked plan run is expensive, and dropping the
-			// card back into PLAN should not re-bill the user. Force them to
-			// click Re-plan if they actually want to retry.
-			log.Printf("drag-to-PLAN: #%d has a prior plan session that did not produce a plan; click Re-plan to retry explicitly", number)
+		} else if a.hasRecentFailedPlan(workspaceID, number) {
+			// The most recent plan run for this issue blew up within the last
+			// 30 minutes (BLOCKED or FAILED, no plan produced). Don't silently
+			// auto-respawn — that's how the user racks up surprise paid runs
+			// in a tight loop. Surface a toast so the user knows why nothing
+			// happened and force them to click Re-plan if they actually want
+			// to retry. Older failures don't gate; the window slides.
+			log.Printf("drag-to-PLAN: #%d has a recent failed plan session; click Re-plan to retry explicitly", number)
+			a.emitToast("warning", toastWorkspaceName(a.wsReg, workspaceID),
+				fmt.Sprintf("#%d had a recent failed plan; click Re-plan on the card to retry (skipped auto-spawn to avoid a surprise paid run)", number),
+				map[string]any{
+					"workspace_id": workspaceID,
+					"issue_number": number,
+					"action":       "focus_card",
+				})
 		} else {
 			ws, ok := a.wsReg.Get(workspaceID)
 			if !ok {
@@ -808,17 +815,17 @@ func (a *App) RecentLogs() []logbuffer.Entry {
 	return a.logs.Snapshot()
 }
 
-// hasPriorPlanSession returns true when a plan-mode session row exists for
-// the issue in the store, regardless of state. Used to block drag-to-PLAN
-// auto-spawn after a previous plan run failed without producing a plan, so
-// the user has to click Re-plan explicitly to incur another paid call.
-func (a *App) hasPriorPlanSession(workspaceID string, number int) bool {
+// hasRecentFailedPlan returns true when the most recent plan-mode session
+// for the issue ended in failed/blocked within the last 30 minutes. Used to
+// block drag-to-PLAN auto-spawn from immediately re-billing the user after a
+// fresh failure; old historical failures don't gate forever.
+func (a *App) hasRecentFailedPlan(workspaceID string, number int) bool {
 	if a.store == nil {
 		return false
 	}
-	has, err := a.store.HasPriorPlanSession(workspaceID, number)
+	has, err := a.store.HasRecentFailedPlanSession(workspaceID, number, 30*time.Minute)
 	if err != nil {
-		log.Printf("hasPriorPlanSession #%d: %v", number, err)
+		log.Printf("hasRecentFailedPlan #%d: %v", number, err)
 		return false
 	}
 	return has

@@ -26,6 +26,29 @@ func Open(dir string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Concurrency settings. Default journal_mode=delete + busy_timeout=0
+	// caused SQLITE_BUSY at startup when the poller, reconciler, orchestrator,
+	// and workspace sync all hit the DB simultaneously: rollback-journal
+	// locking is exclusive on writes and any contender returns immediately.
+	//
+	//   - WAL allows readers to run concurrently with a writer (and multiple
+	//     writers are still serialized but block instead of erroring).
+	//   - busy_timeout retries a busy lock for up to 5s before giving up,
+	//     which absorbs the startup-burst contention spike.
+	//   - synchronous=NORMAL is the recommended pairing with WAL — durable
+	//     across power loss minus the last few transactions, fsync-on-checkpoint
+	//     instead of fsync-per-commit.
+	for _, pragma := range []string{
+		"PRAGMA journal_mode = WAL",
+		"PRAGMA busy_timeout = 5000",
+		"PRAGMA synchronous = NORMAL",
+		"PRAGMA foreign_keys = ON",
+	} {
+		if _, err := db.Exec(pragma); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("apply %s: %w", pragma, err)
+		}
+	}
 	s := &Store{DB: db, Path: path}
 	if err := s.migrate(); err != nil {
 		db.Close()

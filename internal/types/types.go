@@ -249,15 +249,12 @@ type Session struct {
 	LastPrompt        string       `json:"last_prompt"`
 	BlockedReason     string       `json:"blocked_reason,omitempty"`
 	PendingQuestionID string       `json:"pending_question_id,omitempty"`
-	// PoolID is the pool that spawned this session (issue #37). Used by the
-	// frontend to resolve provider attribution on card badges. Empty for
-	// sessions spawned before this field was introduced.
-	PoolID string `json:"pool_id,omitempty"`
 
 	// PoolID identifies which worker pool slot this session reserved.
 	// Persisted so reattach can release the right slot if the conductor
 	// goes down mid-session — without it the in-memory active count drifts
-	// every restart and eventually saturates at capacity.
+	// every restart and eventually saturates at capacity. Empty for legacy
+	// rows spawned before the field was introduced.
 	PoolID string `json:"pool_id,omitempty"`
 
 	// TranscriptOffset is the byte offset into the transcript file of the
