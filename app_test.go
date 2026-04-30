@@ -1,9 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
+	"prismconductor/internal/eventbus"
+	"prismconductor/internal/store"
 	"prismconductor/internal/types"
 )
 
@@ -120,6 +124,84 @@ func TestReconcileAutoLabels(t *testing.T) {
 					c.current, c.keep, c.priorAxis, got, c.want)
 			}
 		})
+	}
+}
+
+// Issue #49: pin the Archive-DONE chain end-to-end at the App layer. The bug
+// report claimed the 📦 Archive N button was dead; rev1's static walk showed
+// every link wired correctly. This test fails loudly if the SQL filter, the
+// bus publish, or the ListIssues exclusion ever regress.
+func TestApp_ArchiveDone_PublishesEventAndExcludesFromListIssues(t *testing.T) {
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	bus := eventbus.New()
+	a := &App{store: s, bus: bus}
+
+	seed := func(num int, col types.BoardColumn) {
+		if _, err := s.SaveIssue(types.Issue{
+			WorkspaceID: "ws1",
+			Number:      num,
+			Title:       fmt.Sprintf("#%d", num),
+			State:       "open",
+			Column:      col,
+		}); err != nil {
+			t.Fatalf("SaveIssue %d: %v", num, err)
+		}
+	}
+	seed(101, types.ColDone)
+	seed(102, types.ColDone)
+	seed(103, types.ColDone)
+	seed(200, types.ColInProgress)
+
+	captured := make(chan eventbus.Event, 4)
+	bus.Subscribe(func(e eventbus.Event) {
+		if e.Type == eventbus.EvtIssuesArchived {
+			captured <- e
+		}
+	})
+
+	n, err := a.ArchiveDone("ws1")
+	if err != nil {
+		t.Fatalf("ArchiveDone: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("count = %d, want 3", n)
+	}
+
+	select {
+	case evt := <-captured:
+		p, ok := evt.Payload.(map[string]any)
+		if !ok {
+			t.Fatalf("payload type = %T, want map[string]any", evt.Payload)
+		}
+		if p["workspace_id"] != "ws1" {
+			t.Errorf("workspace_id = %v, want ws1", p["workspace_id"])
+		}
+		if p["count"] != 3 {
+			t.Errorf("count = %v, want 3", p["count"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("EvtIssuesArchived not published within 1s")
+	}
+
+	live, err := a.ListIssues("ws1")
+	if err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	if len(live) != 1 || live[0].Number != 200 {
+		t.Errorf("ListIssues after archive = %v, want only #200", live)
+	}
+
+	arch, err := a.ListArchivedIssues("ws1")
+	if err != nil {
+		t.Fatalf("ListArchivedIssues: %v", err)
+	}
+	if len(arch) != 3 {
+		t.Errorf("archived count = %d, want 3", len(arch))
 	}
 }
 
