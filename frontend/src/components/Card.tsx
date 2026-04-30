@@ -12,6 +12,7 @@ import { resolveProviderIcon } from "../lib/providerIcon";
 import { getContrastText } from "../lib/contrast";
 import { LabelManagePopover } from "./LabelManagePopover";
 import { MidRunQuestionModal } from "./MidRunQuestionModal";
+import { ContinueModal } from "./ContinueModal";
 import { cn } from "../lib/cn";
 
 export type CardProps = {
@@ -100,6 +101,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   const isPrimitive = !blocked && (issue.priority ?? 0) >= 0.7;
 
   const [midRunOpen, setMidRunOpen] = useState(false);
+  const [continueOpen, setContinueOpen] = useState(false);
 
   return (
     <div
@@ -189,6 +191,9 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         issueNumber={issue.number}
         waitingForPool={issue.waiting_for_pool ?? false}
         pools={pools}
+        column={issue.column}
+        prNumber={issue.pr_number ?? null}
+        onContinue={() => setContinueOpen(true)}
       />
       {pausedSession && pausedSession.pending_question_id && (
         <MidRunQuestionModal
@@ -197,6 +202,15 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
           workspaceID={issue.workspace_id}
           issueNumber={issue.number}
           questionID={pausedSession.pending_question_id}
+        />
+      )}
+      {issue.pr_number != null && (
+        <ContinueModal
+          open={continueOpen}
+          onClose={() => setContinueOpen(false)}
+          workspaceID={issue.workspace_id}
+          issueNumber={issue.number}
+          prNumber={issue.pr_number}
         />
       )}
     </div>
@@ -226,6 +240,9 @@ function StatusRow({
   issueNumber,
   waitingForPool,
   pools,
+  column,
+  prNumber,
+  onContinue,
 }: {
   activeSession: types.Session | null;
   activity: SessionActivity | null;
@@ -240,6 +257,9 @@ function StatusRow({
   issueNumber: number;
   waitingForPool: boolean;
   pools: Record<string, import("../stores/usePoolsStore").PoolEntry>;
+  column: string;
+  prNumber: number | null;
+  onContinue: () => void;
 }) {
   if (pausedSession) {
     return (
@@ -329,6 +349,7 @@ function StatusRow({
       </div>
     );
   }
+  const showContinue = column === "review" && prNumber != null && !activeSession && !pausedSession && !waitingForPool;
   return (
     <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
       {isPrimitive && <span className="text-emerald-400">🔴 primitive</span>}
@@ -342,6 +363,20 @@ function StatusRow({
         issueNumber={issueNumber}
         labels={labels}
       />
+      {showContinue && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onContinue();
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="ml-auto px-1.5 py-0.5 rounded text-[10px] border border-purple-700 text-purple-300 hover:border-purple-500 hover:text-purple-200"
+          title="Continue work on this PR branch"
+        >
+          ↻ Continue
+        </button>
+      )}
     </div>
   );
 }
