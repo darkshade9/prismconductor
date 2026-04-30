@@ -22,6 +22,10 @@ export function ArchiveDone(arg1) {
   return window['go']['main']['App']['ArchiveDone'](arg1);
 }
 
+export function Continue(arg1, arg2, arg3) {
+  return window['go']['main']['App']['Continue'](arg1, arg2, arg3);
+}
+
 export function CreateLabel(arg1, arg2) {
   return window['go']['main']['App']['CreateLabel'](arg1, arg2);
 }

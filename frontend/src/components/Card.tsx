@@ -3,6 +3,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
 import { Replan } from "../../wailsjs/go/main/App";
+import { ContinueWorkModal } from "./ContinueWorkModal";
 import { types } from "../../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "../stores/sessionStore";
 import { usePlanReadyStore } from "../stores/planReadyStore";
@@ -100,6 +101,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   const isPrimitive = !blocked && (issue.priority ?? 0) >= 0.7;
 
   const [midRunOpen, setMidRunOpen] = useState(false);
+  const [continueOpen, setContinueOpen] = useState(false);
 
   return (
     <div
@@ -170,6 +172,23 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
               ✓ PR #{issue.pr_number}
             </button>
           )}
+          {/* Continue work (#80): only shown for cards with an open PR and no
+              active session. Opens a small modal that takes a free-text note
+              and re-engages an execute worker on the existing branch. */}
+          {issue.pr_number != null && issue.pr_url && !activeSession && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setContinueOpen(true);
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-sky-700/40 text-sky-200 border border-sky-700 hover:bg-sky-700/60"
+              title="Re-engage the agent on this PR's branch"
+            >
+              ↻ Continue
+            </button>
+          )}
           {issue.priority ? <span className="text-slate-500">P{issue.priority.toFixed(2)}</span> : null}
         </span>
       </div>
@@ -199,6 +218,13 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
           questionID={pausedSession.pending_question_id}
         />
       )}
+      <ContinueWorkModal
+        open={continueOpen}
+        onClose={() => setContinueOpen(false)}
+        workspaceID={issue.workspace_id}
+        issueNumber={issue.number}
+        prNumber={issue.pr_number ?? null}
+      />
     </div>
   );
 }

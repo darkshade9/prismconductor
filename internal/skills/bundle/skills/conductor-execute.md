@@ -19,6 +19,8 @@ Bundled by PrismConductor (PRISMCONDUCTOR_PLAN.md §15.7).
 - `--repo <path>` (defaults to cwd)
 - `--native-cmd <command>` (Hybrid: hands off to a repo's own execute skill, with the conductor still owning JSON I/O)
 - `--resume-question <id>` (#17 — resume mode: continue an earlier execute on the same branch after a mid-run question was answered. When set, the steps below diverge as noted under **Resume mode**.)
+- `--continue` (#80 — re-engage on a card already in REVIEW. Used when the prior execute already opened a PR but the user wants a follow-up touch-up — e.g. failing CI tests or review feedback. The branch + worktree exist, the PR is open, do NOT open another one. Diverges as noted under **Continue mode**.)
+- `--note <quoted string>` (#80 — required with `--continue`. The user's free-text description of what needs fixing this round. Treat this as the immediate task; the existing plan is context, not a fresh re-implementation target.)
 
 ## Behavior
 
@@ -113,6 +115,18 @@ Issue #17. The previous execute worker invoked `/conductor-question` and exited;
 - **Branch hygiene:** the worktree already exists with the prior worker's edits. `git status --short` MAY be non-empty. Verify `git branch --show-current` matches `context.branch`; if not, print `BLOCKED: branch mismatch — expected <ctx.branch>, got <current>` and exit. Do NOT create a new branch and do NOT discard existing changes.
 - **Continue the work** that the prior worker paused on, using the user's answer as guidance. The `scratch` field in the context sidecar is your prior self's note about what to do next.
 - The rest of the flow (verification, commit, push, PR) is identical — except the single-PR enforcement at step 15 is the load-bearing rule that keeps a multi-pause issue from opening multiple draft PRs.
+
+## Continue mode (`--continue --note <text>`)
+
+Issue #80. The previous execute worker already finished, opened a PR, and exited. The user has now clicked **Continue work** with a note describing what needs fixing (failing tests, review feedback, a small touch-up).
+
+- **Skip steps 1-3 of the fresh-execute flow.** Instead read:
+  - `.prismconductor/plans/<issue>-rev<N>.json` — for context only; you are NOT re-implementing the plan from scratch.
+  - The `--note` value — this is the immediate work item.
+- **Branch hygiene:** the worktree may or may not be on disk; the conductor may have rehydrated it from `origin/<branch>`. `git status --short` should be clean (working tree matches the remote tip). `git branch --show-current` must match `feat/issue-<num>-<slug>` from the plan's branch convention. If not, print `BLOCKED: continue-mode branch mismatch — expected feat/issue-<n>-<slug>, got <current>` and exit. Do NOT create a new branch.
+- **Do NOT open a new PR.** The PR is already open against this branch; new commits will update it automatically. Skip the `gh pr create` step at the end.
+- **Do NOT print `PR_OPENED:`.** The conductor already knows about the PR. Print `Work complete.` (and nothing else from §10.3) when done so the card returns to REVIEW cleanly.
+- The rest of the flow (verification, commit, push) is identical — implement the change requested in `--note`, run lints/tests, commit with a message scoped to this iteration (e.g. `fix(execute): address failing TestFoo from PR review`), push to the existing branch.
 
 ## Mid-execution questions
 

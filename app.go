@@ -1863,6 +1863,73 @@ func (a *App) WriteAnswersOnly(sub AnswerSubmission) error {
 	return nil
 }
 
+// Continue re-engages an execute worker on a card already in REVIEW (PR open)
+// so the user can address review feedback / failing tests / small touch-ups
+// without filing a new issue (#80). `note` is required — the worker takes it
+// as the immediate work item. New commits land on the existing feature branch
+// so the open PR auto-updates.
+func (a *App) Continue(workspaceID string, issueNumber int, note string) error {
+	note = strings.TrimSpace(note)
+	if note == "" {
+		return fmt.Errorf("note is required: describe what needs fixing so the agent has something to work on")
+	}
+	if a.wsReg == nil || a.store == nil {
+		return fmt.Errorf("registry/store unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	if a.hasActiveSessionForIssue(workspaceID, issueNumber) {
+		return fmt.Errorf("a session is already running for #%d — wait for it to finish or cancel it first", issueNumber)
+	}
+	issue, err := a.store.LoadIssue(workspaceID, issueNumber)
+	if err != nil {
+		return fmt.Errorf("load issue #%d: %w", issueNumber, err)
+	}
+	if issue.PRURL == "" && (issue.PRNumber == nil || *issue.PRNumber == 0) {
+		return fmt.Errorf("#%d has no PR yet — Continue is for cards already in REVIEW", issueNumber)
+	}
+	plan, err := a.store.LatestPlan(workspaceID, issueNumber)
+	if err != nil {
+		return fmt.Errorf("load latest plan: %w", err)
+	}
+	if plan == nil {
+		return fmt.Errorf("no plan on file for #%d — cannot Continue without an approved plan", issueNumber)
+	}
+	pool, ok := a.acquireWorkPool(ws)
+	if !ok {
+		return fmt.Errorf("no work pool available")
+	}
+	if _, err := a.mgr.SpawnContinue(ws, issue, *plan, pool, note); err != nil {
+		a.poolReg.ReleaseByPool(pool.ID)
+		return err
+	}
+	if err := a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColInProgress); err != nil {
+		log.Printf("Continue: MoveIssueColumn #%d: %v", issueNumber, err)
+	}
+	return nil
+}
+
+// hasActiveSessionForIssue covers any in-flight session (plan or execute) so
+// Continue can refuse a double-spawn. Mirrors hasActivePlanSession but ignores
+// the mode filter.
+func (a *App) hasActiveSessionForIssue(workspaceID string, number int) bool {
+	if a.mgr == nil {
+		return false
+	}
+	for _, s := range a.mgr.Snapshot() {
+		if s.WorkspaceID != workspaceID || s.IssueNumber != number {
+			continue
+		}
+		switch s.State {
+		case types.StateRunning, types.StateWaitingForInput, types.StatePausedForQuestion, types.StateBlocked:
+			return true
+		}
+	}
+	return false
+}
+
 // SubmitAnswers writes the answers file and re-spawns plan mode for the next
 // revision. Frontend calls this after the user fills the QuestionForm.
 func (a *App) SubmitAnswers(sub AnswerSubmission) error {

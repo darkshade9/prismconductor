@@ -19,6 +19,8 @@ export function ApprovePlan(arg1:string,arg2:number,arg3:number):Promise<void>;
 
 export function ArchiveDone(arg1:string):Promise<number>;
 
+export function Continue(arg1:string,arg2:number,arg3:string):Promise<void>;
+
 export function CreateLabel(arg1:string,arg2:types.Label):Promise<types.Label>;
 
 export function DeleteGoal(arg1:string):Promise<void>;
