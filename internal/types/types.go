@@ -108,6 +108,12 @@ const (
 	ProviderLiteLLM  Provider = "litellm"
 	ProviderLMStudio Provider = "lmstudio"
 	ProviderOllama   Provider = "ollama"
+	// ProviderGemini routes through mozilla-ai/any-llm-go's native Gemini
+	// client. Sits alongside the OpenAI-compat providers — and is preferred
+	// over routing Gemini through ProviderOpenAI's /v1beta/openai shim because
+	// the native API can round-trip `thought_signature` for thinking-tier
+	// models. First trial of the any-llm-go integration.
+	ProviderGemini Provider = "gemini"
 )
 
 // --- Goal (§6.2) ---

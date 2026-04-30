@@ -95,10 +95,16 @@ type ToolDef struct {
 
 // ToolCall is one model-issued tool invocation. Args is JSON matching the
 // corresponding ToolDef.Parameters.
+//
+// Extra is an opaque per-provider metadata blob round-tripped across turns.
+// Gemini's `thought_signature` rides here on thinking-tier models; the
+// harness must echo it back unchanged on the next turn or Gemini rejects the
+// follow-up tool result. OpenAI-compat providers leave it nil.
 type ToolCall struct {
-	ID   string
-	Name string
-	Args json.RawMessage
+	ID    string
+	Name  string
+	Args  json.RawMessage
+	Extra map[string]any
 }
 
 // ChatResponse is the wire-shape returned from Provider.ToolChat.
