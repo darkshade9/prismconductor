@@ -7,6 +7,8 @@ import { types } from "../../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "../stores/sessionStore";
 import { usePlanReadyStore } from "../stores/planReadyStore";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
+import { usePoolsStore } from "../stores/usePoolsStore";
+import { resolveProviderIcon } from "../lib/providerIcon";
 import { getContrastText } from "../lib/contrast";
 import { LabelManagePopover } from "./LabelManagePopover";
 import { MidRunQuestionModal } from "./MidRunQuestionModal";
@@ -34,15 +36,21 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   // Live state: subscribe to the *whole* sessions table so we re-render when any
   // session changes.
   const allSessions = useSessionStore((s) => s.sessions);
-  const { activeSession, activity, lastFailure, pausedSession } = (() => {
+  const pools = usePoolsStore((s) => s.pools);
+  const { activeSession, activity, lastFailure, pausedSession, mostRecentSession } = (() => {
     let active: types.Session | null = null;
     let activeAct: SessionActivity | null = null;
     let lastFail: types.Session | null = null;
     let paused: types.Session | null = null;
+    let mostRecent: types.Session | null = null;
     for (const view of Object.values(allSessions)) {
       const m = view.meta;
       if (!m) continue;
       if (m.workspace_id !== issue.workspace_id || m.issue_number !== issue.number) continue;
+      // Track most-recent session by start time for provider badge (issue #37).
+      if (!mostRecent || String(m.started_at ?? "") > String(mostRecent.started_at ?? "")) {
+        mostRecent = m;
+      }
       if (m.state === "paused_for_question") {
         // Paused for a mid-run question (#17). Track separately so it overrides
         // both running/active and last-failure rendering.
@@ -61,7 +69,21 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         }
       }
     }
-    return { activeSession: active, activity: activeAct, lastFailure: lastFail, pausedSession: paused };
+    return { activeSession: active, activity: activeAct, lastFailure: lastFail, pausedSession: paused, mostRecentSession: mostRecent };
+  })();
+
+  // Provider badge (issue #37): resolve from most-recent session's pool_id.
+  const providerBadge = (() => {
+    const poolId = mostRecentSession?.pool_id;
+    if (!poolId) return null;
+    const pool = pools[poolId];
+    if (!pool) {
+      // Pool was deleted — show generic icon with deleted tooltip.
+      const icon = resolveProviderIcon("generic");
+      return { icon, tooltipName: "(deleted pool)", deleted: true };
+    }
+    const icon = resolveProviderIcon(pool.provider);
+    return { icon, tooltipName: pool.name, deleted: false };
   })();
   if (activeSession) {
     // Visible in DevTools (Cmd+Opt+I in the Wails window) — confirms the
@@ -122,6 +144,15 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
           <span className="text-slate-500 truncate">{workspaceLabel ?? issue.workspace_id}</span>
         </span>
         <span className="flex items-center gap-1.5 shrink-0">
+          {/* Provider badge (issue #37): visible when any session has a known pool. */}
+          {providerBadge && (
+            <span
+              className="text-slate-400 inline-flex items-center w-4 h-4 opacity-75"
+              title={`${providerBadge.icon.label}${providerBadge.deleted ? " (deleted pool)" : `: ${providerBadge.tooltipName}`}`}
+              aria-label={providerBadge.icon.label}
+              dangerouslySetInnerHTML={{ __html: providerBadge.icon.svgContent }}
+            />
+          )}
           {/* PR chip stays visible across columns/session states (rev4 q3). */}
           {issue.pr_number != null && issue.pr_url && (
             <button

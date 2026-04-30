@@ -209,3 +209,37 @@ func TestSpawnWritesToTranscriptFile(t *testing.T) {
 		t.Errorf("expected transcript_offset to be persisted at least once")
 	}
 }
+
+// TestSpawnPersistsPoolID verifies that PoolID from the spawning pool is
+// recorded on the session row (issue #37).
+func TestSpawnPersistsPoolID(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX-only")
+	}
+	tdir := t.TempDir()
+	store := &fakePersister{}
+	m := NewManager(nil, nil)
+	m.Configure(filepath.Join(tdir, "transcripts"), store, nil)
+
+	ws := types.Workspace{ID: "ws-1", RepoPath: tdir}
+	issue := types.Issue{Number: 2, WorkspaceID: ws.ID}
+	pool := types.Pool{ID: "pool-xyz", Name: "test", Provider: "claude"}
+
+	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute,
+		[]string{"/bin/sh", "-c", "echo Work complete."},
+		"", "", "", pool)
+	if err != nil {
+		t.Fatalf("spawnWithDir: %v", err)
+	}
+	if sess.PoolID != "pool-xyz" {
+		t.Errorf("sess.PoolID = %q, want %q", sess.PoolID, "pool-xyz")
+	}
+	// The persisted JSON blob must also carry the pool_id.
+	if len(store.saves) == 0 {
+		t.Fatalf("expected SaveSession to be called")
+	}
+	saved := store.saves[0]
+	if saved.PoolID != "pool-xyz" {
+		t.Errorf("persisted PoolID = %q, want %q", saved.PoolID, "pool-xyz")
+	}
+}

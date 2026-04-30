@@ -1295,6 +1295,7 @@ export namespace types {
 	    last_prompt: string;
 	    blocked_reason?: string;
 	    pending_question_id?: string;
+	    pool_id?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
@@ -1313,6 +1314,7 @@ export namespace types {
 	        this.last_prompt = source["last_prompt"];
 	        this.blocked_reason = source["blocked_reason"];
 	        this.pending_question_id = source["pending_question_id"];
+	        this.pool_id = source["pool_id"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
