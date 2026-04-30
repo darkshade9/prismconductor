@@ -300,6 +300,8 @@ type Plan struct {
     IssueNumber          int          `json:"issue_number"`
     WorkspaceID          string       `json:"workspace_id"`
     Revision             int          `json:"revision"`              // 1, 2, 3...
+    GoalSummary          string       `json:"goal_summary,omitempty"`      // planner restatement of intent (#55)
+    ExecutiveSummary     string       `json:"executive_summary,omitempty"` // outcome-focused, plain-language (#55)
     PlanMarkdown         string       `json:"plan_markdown"`         // for human display
     FilesToModify        []FileIntent `json:"files_to_modify"`
     DependenciesDetected []int        `json:"dependencies_detected"`
@@ -483,6 +485,8 @@ When a worker finishes plan mode, it MUST emit a JSON file at `<repo>/.prismcond
   "issue_number": 1130,
   "workspace_id": "prismengine",
   "revision": 1,
+  "goal_summary": "The user wants a new utility spell in the FIRE_LORE family that fits between the existing seed=10 and seed=12 entries...",
+  "executive_summary": "Adds a new spell variant players can cast for moderate fire damage with reduced mana cost. Designed to give early-game characters a sustainable AoE option without unbalancing late-game fights.",
   "plan_markdown": "## What I'll do\n\n1. Add new spell schema...\n2. Wire up...\n",
   "files_to_modify": [
     {"path": "games/gsx/scripts/spells/new_spell.py", "intent": "add"},
@@ -506,6 +510,16 @@ When a worker finishes plan mode, it MUST emit a JSON file at `<repo>/.prismcond
 ```
 
 `ready_to_execute` is `true` only when `questions` is empty (or all answered in a revision).
+
+`goal_summary` and `executive_summary` are **schema-optional but skill-required** (issue #55). The
+`omitempty` tags mean older plans on disk (written before these fields existed) deserialize cleanly
+with empty strings, and the PlanModal renders sensible fallbacks. New plans produced by the
+bundled `conductor-plan` skill MUST populate both: `goal_summary` is 2-3 paragraphs of intent (the
+planner's restatement of the issue body in their own words — what is this actually trying to
+achieve?), and `executive_summary` is 3-4 plain-language sentences a non-coder PM would understand
+(outcome-focused — what does the user get when this ships? No file paths, no symbol names). If the
+planner cannot write a `goal_summary`, the issue is too thin to plan — emit a `Question` asking the
+user to clarify intent rather than producing an empty string.
 
 `suggested_labels` is optional (`omitempty`). Populated by `conductor-plan` with one **axis** label
 at index 0 (`enhancement` / `bug` / `refactor` / `documentation` / `test` — mapped from the issue
