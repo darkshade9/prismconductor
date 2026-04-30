@@ -27,7 +27,7 @@ func (litellmProvider) Kind() types.Provider    { return types.ProviderLiteLLM }
 func (litellmProvider) DisplayName() string     { return "LiteLLM" }
 func (litellmProvider) DefaultEndpoint() string { return defaultLiteLLMEndpoint }
 func (litellmProvider) NeedsAPIKey() bool       { return true }
-func (litellmProvider) CanSpawn() bool          { return false }
+func (litellmProvider) CanSpawn() bool          { return true }
 
 // ListModels prefers /model/info (LiteLLM-native — exposes alias names), falls
 // back to /v1/models on any failure.
@@ -71,6 +71,19 @@ func (litellmProvider) SpawnArgs(_ types.Pool, _ string) ([]string, error) {
 }
 
 func (l litellmProvider) ChatJSON(ctx context.Context, p types.Pool, system, user string) (string, error) {
+	endpoint, key := l.resolve(p)
+	return openAICompatChat(ctx, l.client, endpoint, key, p.Model, system, user)
+}
+
+// ToolChat drives a tool-using turn through LiteLLM's OpenAI-compat endpoint
+// (issue #58). LiteLLM forwards `tools[]` to the backing model; whether the
+// model emits tool_calls depends on the backend.
+func (l litellmProvider) ToolChat(ctx context.Context, p types.Pool, req ChatRequest) (ChatResponse, error) {
+	endpoint, key := l.resolve(p)
+	return openAIToolChat(ctx, l.client, endpoint, key, p.Model, req)
+}
+
+func (l litellmProvider) resolve(p types.Pool) (string, string) {
 	endpoint := strings.TrimRight(p.Endpoint, "/")
 	if endpoint == "" {
 		endpoint = defaultLiteLLMEndpoint
@@ -79,5 +92,5 @@ func (l litellmProvider) ChatJSON(ctx context.Context, p types.Pool, system, use
 	if key == "" {
 		key = os.Getenv("LITELLM_API_KEY")
 	}
-	return openAICompatChat(ctx, l.client, endpoint, key, p.Model, system, user)
+	return endpoint, key
 }

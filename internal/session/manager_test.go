@@ -157,7 +157,7 @@ func TestSpawnWritesToTranscriptFile(t *testing.T) {
 	issue := types.Issue{Number: 1, WorkspaceID: ws.ID}
 	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute,
 		[]string{"/bin/sh", "-c", "echo hello-from-worker; echo Work complete."},
-		"", "", "")
+		"", "", "", types.Pool{})
 	if err != nil {
 		t.Fatalf("spawnWithDir: %v", err)
 	}

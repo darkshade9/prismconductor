@@ -74,3 +74,162 @@ func snippetN(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// openAIToolChat is the harness-side sibling of openAICompatChat. It serializes
+// `tools[]` and `tool_choice:"auto"` and decodes `choices[0].message.tool_calls`
+// into the harness ChatResponse shape (issue #58).
+//
+// Non-streaming for v1 — buffers the full response and returns one
+// ChatResponse. Shared by every OpenAI-compat provider (OpenAI, Ollama, LM
+// Studio, LiteLLM); each provider's ToolChat method resolves endpoint + auth
+// then delegates here.
+func openAIToolChat(ctx context.Context, client *http.Client, baseURL, apiKey, model string, req ChatRequest) (ChatResponse, error) {
+	if model == "" {
+		return ChatResponse{}, fmt.Errorf("tool chat: model required")
+	}
+	url := strings.TrimRight(baseURL, "/") + "/v1/chat/completions"
+
+	msgs := make([]map[string]any, 0, len(req.History)+1)
+	if req.System != "" {
+		msgs = append(msgs, map[string]any{
+			"role":    "system",
+			"content": req.System,
+		})
+	}
+	for _, m := range req.History {
+		switch m.Role {
+		case "tool":
+			msgs = append(msgs, map[string]any{
+				"role":         "tool",
+				"content":      m.Content,
+				"tool_call_id": m.ToolCallID,
+			})
+		case "assistant":
+			am := map[string]any{
+				"role":    "assistant",
+				"content": m.Content,
+			}
+			if len(m.ToolCalls) > 0 {
+				calls := make([]map[string]any, len(m.ToolCalls))
+				for i, c := range m.ToolCalls {
+					args := string(c.Args)
+					if args == "" {
+						args = "{}"
+					}
+					calls[i] = map[string]any{
+						"id":   c.ID,
+						"type": "function",
+						"function": map[string]any{
+							"name":      c.Name,
+							"arguments": args,
+						},
+					}
+				}
+				am["tool_calls"] = calls
+			}
+			msgs = append(msgs, am)
+		default:
+			msgs = append(msgs, map[string]any{
+				"role":    m.Role,
+				"content": m.Content,
+			})
+		}
+	}
+
+	body := map[string]any{
+		"model":       model,
+		"temperature": 0.0,
+		"stream":      false,
+		"messages":    msgs,
+	}
+	if len(req.Tools) > 0 {
+		tools := make([]map[string]any, len(req.Tools))
+		for i, t := range req.Tools {
+			var params any
+			if len(t.Parameters) > 0 {
+				params = json.RawMessage(t.Parameters)
+			} else {
+				params = map[string]any{"type": "object"}
+			}
+			tools[i] = map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name":        t.Name,
+					"description": t.Description,
+					"parameters":  params,
+				},
+			}
+		}
+		body["tools"] = tools
+		body["tool_choice"] = "auto"
+	}
+
+	raw, _ := json.Marshal(body)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(raw))
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	defer resp.Body.Close()
+	respRaw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ChatResponse{}, fmt.Errorf("LLM HTTP %d: %s", resp.StatusCode, snippetN(string(respRaw), 200))
+	}
+	var out struct {
+		Choices []struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
+				Content   string `json:"content"`
+				ToolCalls []struct {
+					ID       string `json:"id"`
+					Type     string `json:"type"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(respRaw, &out); err != nil {
+		return ChatResponse{}, fmt.Errorf("decode response: %w; body: %s", err, snippetN(string(respRaw), 200))
+	}
+	if out.Error != nil {
+		return ChatResponse{}, fmt.Errorf("LLM error: %s", out.Error.Message)
+	}
+	if len(out.Choices) == 0 {
+		return ChatResponse{}, fmt.Errorf("LLM returned no choices; body: %s", snippetN(string(respRaw), 200))
+	}
+	choice := out.Choices[0]
+	calls := make([]ToolCall, 0, len(choice.Message.ToolCalls))
+	for _, c := range choice.Message.ToolCalls {
+		calls = append(calls, ToolCall{
+			ID:   c.ID,
+			Name: c.Function.Name,
+			Args: json.RawMessage(c.Function.Arguments),
+		})
+	}
+	return ChatResponse{
+		Content:   choice.Message.Content,
+		ToolCalls: calls,
+		Stop:      len(calls) == 0,
+		Usage: UsageCounts{
+			InputTokens:  out.Usage.PromptTokens,
+			OutputTokens: out.Usage.CompletionTokens,
+		},
+	}, nil
+}

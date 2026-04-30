@@ -127,9 +127,6 @@ export function PoolsPanel() {
             {rows.map((row) => {
               const info = providerByKind.get(row.pool.provider);
               const err = deleteErr[row.pool.id];
-              const harnessPending =
-                (role === "plan" || role === "work") &&
-                !info?.can_spawn;
               return (
                 <div
                   key={row.pool.id}
@@ -142,14 +139,6 @@ export function PoolsPanel() {
                         <span className="text-slate-500">
                           ({info?.display_name ?? row.pool.provider})
                         </span>
-                        {harnessPending && (
-                          <span
-                            className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950/60 border border-amber-800 text-amber-300"
-                            title="Spawn returns ErrNotSupported until harness-v1 lands."
-                          >
-                            Awaiting harness-v1
-                          </span>
-                        )}
                       </div>
                       <div className="text-slate-500 text-xs">
                         {row.pool.model || "—"}

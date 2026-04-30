@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,7 +18,9 @@ import (
 
 	"prismconductor/internal/eventbus"
 	pcgit "prismconductor/internal/git"
+	"prismconductor/internal/harness"
 	"prismconductor/internal/llm"
+	"prismconductor/internal/skills/bundle"
 	"prismconductor/internal/types"
 )
 
@@ -70,7 +73,7 @@ type Manager struct {
 
 type runtimeSession struct {
 	sess           *types.Session
-	cmd            *exec.Cmd
+	cmd            sessionCmd
 	cancel         context.CancelFunc
 	transcriptPath string
 	transcriptFile *os.File
@@ -102,7 +105,76 @@ type runtimeSession struct {
 	// process). Reattach paths skip cmd.Wait + worktree teardown that the
 	// fresh-spawn path needs.
 	reattached bool
+
+	// Issue #58: harness strategy stash. The harness goroutine writes its
+	// terminal error here so synthCmd.Wait can return it, letting
+	// mapTerminalState distinguish a clean exit from a transport failure or
+	// context cancel without requiring the harness to bubble through PTY
+	// stdout.
+	harnessErr error
 }
+
+// sessionCmd is the §10.5 abstraction over both spawn strategies. The
+// subprocess strategy wraps an *exec.Cmd; the harness strategy wraps the
+// goroutine that drives the in-process agent loop. Both expose Wait + Kill
+// + Pid so tailAndParse, Kill, and the persistence layer don't care which
+// strategy a session uses.
+type sessionCmd interface {
+	Wait() error
+	Kill() error
+	Pid() int
+}
+
+// subprocCmd adapts an *exec.Cmd (Claude pools, raw demo spawns) to the
+// sessionCmd interface.
+type subprocCmd struct {
+	cmd *exec.Cmd
+}
+
+func (s *subprocCmd) Wait() error {
+	return s.cmd.Wait()
+}
+
+func (s *subprocCmd) Kill() error {
+	if s.cmd == nil || s.cmd.Process == nil {
+		return nil
+	}
+	return s.cmd.Process.Kill()
+}
+
+func (s *subprocCmd) Pid() int {
+	if s.cmd == nil || s.cmd.Process == nil {
+		return 0
+	}
+	return s.cmd.Process.Pid
+}
+
+// synthCmd adapts the harness goroutine to the sessionCmd interface. Wait
+// blocks until the harness signals done, then returns the captured terminal
+// error (which mapTerminalState turns into StateFailed unless matchPatterns
+// already saw a sentinel that drove the state somewhere else).
+type synthCmd struct {
+	done   chan struct{}
+	err    *error
+	cancel context.CancelFunc
+}
+
+func (s *synthCmd) Wait() error {
+	<-s.done
+	if s.err == nil {
+		return nil
+	}
+	return *s.err
+}
+
+func (s *synthCmd) Kill() error {
+	if s.cancel != nil {
+		s.cancel()
+	}
+	return nil
+}
+
+func (s *synthCmd) Pid() int { return 0 }
 
 func NewManager(bus *eventbus.Bus, emit LineHandler) *Manager {
 	return &Manager{bus: bus, emit: emit, sessions: map[string]*runtimeSession{}}
@@ -132,14 +204,14 @@ func (m *Manager) SetOnActivity(h ActivityHandler) { m.onActivity = h }
 func (m *Manager) SetProviders(r *llm.Registry) { m.providers = r }
 
 // SpawnPlan launches a plan-mode worker per §10.1 / §10.4. The pool's provider
-// determines the argv via Provider.SpawnArgs — Claude pools today, additional
-// providers when harness-v1 lands.
+// determines the spawn strategy: Claude returns argv (subprocess), the four
+// OpenAI-compat providers return llm.ErrNotSupported (harness, §10.5).
 func (m *Manager) SpawnPlan(ws types.Workspace, issue types.Issue, pool types.Pool) (*types.Session, error) {
-	args, err := m.buildPlanCommand(ws, issue, pool)
+	args, prompt, err := m.buildPlanCommand(ws, issue, pool)
 	if err != nil {
 		return nil, err
 	}
-	return m.spawn(ws, issue, types.ModePlan, args, pool.ID)
+	return m.spawn(ws, issue, types.ModePlan, args, prompt, pool)
 }
 
 // SpawnExecute launches an execute-mode worker per §10.2.
@@ -187,12 +259,12 @@ func (m *Manager) SpawnExecute(ws types.Workspace, issue types.Issue, plan types
 		return nil, fmt.Errorf("mirror plan artifacts: %w", err)
 	}
 
-	args, err := m.buildExecuteCommand(ws, issue, plan, pool)
+	args, prompt, err := m.buildExecuteCommand(ws, issue, plan, pool)
 	if err != nil {
 		_ = pcgit.Remove(ws.RepoPath, worktreeDir)
 		return nil, err
 	}
-	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute, args, worktreeDir, branch, pool.ID)
+	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool)
 	if err != nil {
 		_ = pcgit.Remove(ws.RepoPath, worktreeDir)
 		return nil, err
@@ -213,11 +285,11 @@ func (m *Manager) SpawnExecuteResume(ws types.Workspace, issue types.Issue, plan
 	if _, err := os.Stat(worktreeDir); err != nil {
 		return nil, fmt.Errorf("resume worktree missing at %s: %w", worktreeDir, err)
 	}
-	args, err := m.buildExecuteResumeCommand(ws, issue, plan, pool, questionID)
+	args, prompt, err := m.buildExecuteResumeCommand(ws, issue, plan, pool, questionID)
 	if err != nil {
 		return nil, err
 	}
-	return m.spawnWithDir(ws, issue, types.ModeExecute, args, worktreeDir, branch, pool.ID)
+	return m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool)
 }
 
 // branchSlug derives a kebab-case branch suffix from an issue title, lowering
@@ -290,28 +362,38 @@ func mirrorPlanArtifacts(repoPath, worktreeDir string, num, rev int) error {
 	return nil
 }
 
-// SpawnRaw runs a non-skill command via PTY (used by the day-1 demo: `claude --version`).
+// SpawnRaw runs a non-skill command via subprocess (used by the day-1 demo:
+// `claude --version`). Always takes the subprocess strategy — there's no pool
+// to dispatch on.
 func (m *Manager) SpawnRaw(ws types.Workspace, name string, args []string) (*types.Session, error) {
 	demoIssue := types.Issue{Number: 0, WorkspaceID: ws.ID}
 	full := append([]string{name}, args...)
-	return m.spawn(ws, demoIssue, types.ModePlan, full, "")
+	return m.spawn(ws, demoIssue, types.ModePlan, full, "", types.Pool{})
 }
 
-func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, poolID string) (*types.Session, error) {
-	return m.spawnWithDir(ws, issue, mode, argv, "", "", poolID)
+func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, prompt string, pool types.Pool) (*types.Session, error) {
+	return m.spawnWithDir(ws, issue, mode, argv, prompt, "", "", pool)
 }
 
 // spawnWithDir is the canonical spawn path. When worktreeDir is non-empty the
-// child process runs there instead of ws.RepoPath, and the worktree metadata
-// is captured on the runtimeSession for the cleanup hook in tailAndParse.
+// worker runs there instead of ws.RepoPath, and the worktree metadata is
+// captured on the runtimeSession for the cleanup hook in tailAndParse.
 //
 // Issue #54: the worker's stdout/stderr point at the transcript file directly
 // so it survives a conductor exit (no Go-side copy goroutine that would die
 // with us and break the pipe). The conductor reads worker output by polling
 // the same file (tailAndParse). This also unifies the live-spawn path with
 // the re-attach path: both consume the file.
-func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, worktreeDir, branch, poolID string) (*types.Session, error) {
-	if len(argv) == 0 {
+//
+// Issue #58: dispatches between two strategies — subprocess (Claude pools,
+// raw demo spawns) and harness (the four OpenAI-compat providers). When argv
+// is set, the subprocess path runs as before. When argv is empty (the
+// caller's Provider.SpawnArgs returned llm.ErrNotSupported) the harness
+// goroutine drives the agent loop and writes synthesized stream-json into
+// the transcript file. tailAndParse + StreamParser see identical input
+// shape regardless of strategy.
+func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, prompt, worktreeDir, branch string, pool types.Pool) (*types.Session, error) {
+	if len(argv) == 0 && prompt == "" {
 		return nil, fmt.Errorf("empty command")
 	}
 	if m.transcriptDir == "" {
@@ -329,25 +411,6 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 		return nil, fmt.Errorf("create transcript: %w", err)
 	}
 
-	cmd := exec.Command(argv[0], argv[1:]...)
-	switch {
-	case worktreeDir != "":
-		cmd.Dir = worktreeDir
-	case ws.RepoPath != "":
-		cmd.Dir = ws.RepoPath
-	}
-	cmd.Env = append(os.Environ(), envSpecToSlice(ws.AgentEnv)...)
-	cmd.Stdin = nil
-	cmd.Stdout = tf
-	cmd.Stderr = tf
-	cmd.SysProcAttr = detachedProcAttr()
-
-	if err := cmd.Start(); err != nil {
-		_ = tf.Close()
-		_ = os.Remove(transcriptPath)
-		return nil, fmt.Errorf("cmd.Start: %w", err)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	sess := &types.Session{
 		ID:          sessID,
@@ -356,13 +419,11 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 		Mode:        mode,
 		State:       types.StateRunning,
 		StartedAt:   time.Now(),
-		PID:         cmd.Process.Pid,
 	}
 	sess.Transcript = transcriptPath
 
 	rs := &runtimeSession{
 		sess:           sess,
-		cmd:            cmd,
 		cancel:         cancel,
 		parser:         NewStreamParser(),
 		transcriptPath: transcriptPath,
@@ -370,7 +431,66 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 		worktreeDir:    worktreeDir,
 		branch:         branch,
 		repoPath:       ws.RepoPath,
-		poolID:         poolID,
+		poolID:         pool.ID,
+	}
+
+	if len(argv) > 0 {
+		// Subprocess strategy.
+		cwd := worktreeDir
+		if cwd == "" {
+			cwd = ws.RepoPath
+		}
+		cmd := exec.Command(argv[0], argv[1:]...)
+		cmd.Dir = cwd
+		cmd.Env = append(os.Environ(), envSpecToSlice(ws.AgentEnv)...)
+		cmd.Stdin = nil
+		cmd.Stdout = tf
+		cmd.Stderr = tf
+		cmd.SysProcAttr = detachedProcAttr()
+		if err := cmd.Start(); err != nil {
+			_ = tf.Close()
+			_ = os.Remove(transcriptPath)
+			cancel()
+			return nil, fmt.Errorf("cmd.Start: %w", err)
+		}
+		sess.PID = cmd.Process.Pid
+		rs.cmd = &subprocCmd{cmd: cmd}
+	} else {
+		// Harness strategy (issue #58). The harness goroutine writes
+		// synthesized stream-json directly into the transcript file; the
+		// conductor's tail loop reads it as it would for a Claude PTY.
+		if m.providers == nil {
+			_ = tf.Close()
+			_ = os.Remove(transcriptPath)
+			cancel()
+			return nil, fmt.Errorf("session manager: provider registry not configured")
+		}
+		prov, ok := m.providers.Get(pool.Provider)
+		if !ok {
+			_ = tf.Close()
+			_ = os.Remove(transcriptPath)
+			cancel()
+			return nil, fmt.Errorf("session manager: unknown provider %q for pool %s", pool.Provider, pool.ID)
+		}
+		done := make(chan struct{})
+		rs.cmd = &synthCmd{done: done, err: &rs.harnessErr, cancel: cancel}
+		go func() {
+			defer close(done)
+			rs.harnessErr = harness.Execute(ctx, harness.Run{
+				SessionID:   sessID,
+				RepoPath:    ws.RepoPath,
+				WorktreeDir: worktreeDir,
+				Mode:        mode,
+				SkillMode:   ws.SkillProfile.Mode,
+				Pool:        pool,
+				Provider:    prov,
+				UserPrompt:  prompt,
+				Skills:      bundle.FS,
+				EnvVars:     envSpecToSlice(ws.AgentEnv),
+				Budget:      harness.DefaultBudget(),
+				Out:         tf,
+			})
+		}()
 	}
 
 	if m.store != nil {
@@ -700,7 +820,10 @@ func (m *Manager) recordActivity(rs *runtimeSession, line string) {
 
 // Kill terminates a running session. For re-attached sessions whose original
 // process is owned by a prior conductor (issue #54), we still send a kill
-// signal directly since the worker is in our PID namespace.
+// signal directly since the worker is in our PID namespace. For harness
+// sessions (issue #58), Kill cancels the harness context — the goroutine
+// unwinds, closes the transcript handle, and surfaces context.Canceled
+// through synthCmd.Wait so mapTerminalState lands on Failed.
 func (m *Manager) Kill(sessionID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -711,8 +834,11 @@ func (m *Manager) Kill(sessionID string) error {
 	if rs.cancel != nil {
 		rs.cancel()
 	}
-	if rs.cmd != nil && rs.cmd.Process != nil {
-		return rs.cmd.Process.Kill()
+	if rs.cmd != nil {
+		if err := rs.cmd.Kill(); err != nil {
+			return err
+		}
+		return nil
 	}
 	if rs.sess != nil && rs.sess.PID > 0 {
 		if p, err := os.FindProcess(rs.sess.PID); err == nil {
@@ -747,38 +873,54 @@ func (m *Manager) Snapshot() []types.Session {
 	return out
 }
 
-// --- §10.4 dispatch ---
+// --- §10.4 / §10.5 dispatch ---
 //
 // Worker argv is provided by the LLM provider registry: each pool's Provider
-// returns the argv via SpawnArgs(pool, prompt). Today only the Claude provider
-// returns a working argv; the others return llm.ErrNotSupported until
-// harness-v1 lands. The prompt itself is mode-specific (plan / execute) and
-// shaped here.
+// returns the argv via SpawnArgs(pool, prompt). Claude returns argv (the
+// session manager runs it as a subprocess); the four OpenAI-compat providers
+// return llm.ErrNotSupported (the session manager runs the in-process
+// harness loop). The prompt itself is mode-specific (plan / execute) and
+// shaped here. Both strategies share the same prompt — the harness uses it
+// as the user-message in its first chat turn.
 
-func (m *Manager) buildPlanCommand(ws types.Workspace, issue types.Issue, pool types.Pool) ([]string, error) {
+func (m *Manager) buildPlanCommand(ws types.Workspace, issue types.Issue, pool types.Pool) ([]string, string, error) {
 	return m.providerArgs(pool, planPrompt(ws, issue))
 }
 
-func (m *Manager) buildExecuteCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool) ([]string, error) {
+func (m *Manager) buildExecuteCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool) ([]string, string, error) {
 	return m.providerArgs(pool, executePrompt(ws, issue, plan))
 }
 
 // buildExecuteResumeCommand mirrors buildExecuteCommand but appends the
 // `--resume-question <id>` flag so the conductor-execute skill knows to skip
 // branch creation and read the mid-run question's context sidecar (#17).
-func (m *Manager) buildExecuteResumeCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool, questionID string) ([]string, error) {
+func (m *Manager) buildExecuteResumeCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool, questionID string) ([]string, string, error) {
 	return m.providerArgs(pool, executeResumePrompt(ws, issue, plan, questionID))
 }
 
-func (m *Manager) providerArgs(pool types.Pool, prompt string) ([]string, error) {
+// providerArgs returns the spawn strategy for a (pool, prompt) pair:
+//   - argv non-nil, err nil       → subprocess strategy
+//   - argv nil, prompt non-empty  → harness strategy (provider returned
+//                                   llm.ErrNotSupported from SpawnArgs, which
+//                                   is the §10.5 signal to use the in-process
+//                                   loop)
+//   - other error                 → bubbled to caller
+func (m *Manager) providerArgs(pool types.Pool, prompt string) ([]string, string, error) {
 	if m.providers == nil {
-		return nil, fmt.Errorf("session manager: provider registry not configured")
+		return nil, "", fmt.Errorf("session manager: provider registry not configured")
 	}
 	prov, ok := m.providers.Get(pool.Provider)
 	if !ok {
-		return nil, fmt.Errorf("session manager: unknown provider %q for pool %s", pool.Provider, pool.ID)
+		return nil, "", fmt.Errorf("session manager: unknown provider %q for pool %s", pool.Provider, pool.ID)
 	}
-	return prov.SpawnArgs(pool, prompt)
+	argv, err := prov.SpawnArgs(pool, prompt)
+	if err == nil {
+		return argv, prompt, nil
+	}
+	if errors.Is(err, llm.ErrNotSupported) {
+		return nil, prompt, nil
+	}
+	return nil, "", err
 }
 
 func planPrompt(ws types.Workspace, issue types.Issue) string {
