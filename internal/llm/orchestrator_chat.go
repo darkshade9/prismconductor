@@ -45,7 +45,10 @@ func openAICompatPath(baseURL, leaf string) string {
 // /v1/chat/completions endpoint and returns the assistant's content. Shared by
 // every provider whose orchestrator path goes through OpenAI-compat (OpenAI,
 // LM Studio, LiteLLM, Ollama).
-func openAICompatChat(ctx context.Context, client *http.Client, baseURL, apiKey, model, system, user string) (string, error) {
+//
+// onHeaders, if non-nil, is called with the HTTP response headers so callers
+// can harvest rate-limit metadata (e.g. x-ratelimit-*). Pass nil to skip.
+func openAICompatChat(ctx context.Context, client *http.Client, baseURL, apiKey, model, system, user string, onHeaders func(http.Header)) (string, error) {
 	if model == "" {
 		return "", fmt.Errorf("orchestrator chat: model required")
 	}
@@ -73,6 +76,9 @@ func openAICompatChat(ctx context.Context, client *http.Client, baseURL, apiKey,
 		return "", err
 	}
 	defer resp.Body.Close()
+	if onHeaders != nil {
+		onHeaders(resp.Header)
+	}
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("LLM HTTP %d: %s", resp.StatusCode, snippetN(string(raw), 200))
@@ -139,7 +145,10 @@ func isPaddingOnly(b []byte) bool {
 // ChatResponse. Shared by every OpenAI-compat provider (OpenAI, Ollama, LM
 // Studio, LiteLLM); each provider's ToolChat method resolves endpoint + auth
 // then delegates here.
-func openAIToolChat(ctx context.Context, client *http.Client, baseURL, apiKey, model string, req ChatRequest) (ChatResponse, error) {
+//
+// onHeaders, if non-nil, is called with the HTTP response headers so callers
+// can harvest rate-limit metadata. Pass nil to skip.
+func openAIToolChat(ctx context.Context, client *http.Client, baseURL, apiKey, model string, req ChatRequest, onHeaders func(http.Header)) (ChatResponse, error) {
 	if model == "" {
 		return ChatResponse{}, fmt.Errorf("tool chat: model required")
 	}
@@ -234,6 +243,9 @@ func openAIToolChat(ctx context.Context, client *http.Client, baseURL, apiKey, m
 		return ChatResponse{}, err
 	}
 	defer resp.Body.Close()
+	if onHeaders != nil {
+		onHeaders(resp.Header)
+	}
 	respRaw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return ChatResponse{}, fmt.Errorf("LLM HTTP %d: %s", resp.StatusCode, snippetN(string(respRaw), 200))

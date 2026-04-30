@@ -58,16 +58,21 @@ type PROpenedHandler func(sess types.Session, prURL string)
 // manager level but each session may fire concurrently.
 type ActivityHandler func(types.SessionActivity)
 
+// RateLimitHandler is called whenever a Claude stream emits a rate_limit_event.
+// Implementations should be non-blocking.
+type RateLimitHandler func([]types.PoolUsage)
+
 type Manager struct {
-	bus           *eventbus.Bus
-	emit          LineHandler
-	transcriptDir string
-	store         Persister
-	onStateChange StateChangeHandler
-	onPlanReady   PlanReadyHandler
-	onPROpened    PROpenedHandler
-	onActivity    ActivityHandler
-	providers     *llm.Registry
+	bus            *eventbus.Bus
+	emit           LineHandler
+	transcriptDir  string
+	store          Persister
+	onStateChange  StateChangeHandler
+	onPlanReady    PlanReadyHandler
+	onPROpened     PROpenedHandler
+	onActivity     ActivityHandler
+	onRateLimit    RateLimitHandler
+	providers      *llm.Registry
 
 	mu       sync.RWMutex
 	sessions map[string]*runtimeSession
@@ -101,7 +106,8 @@ type runtimeSession struct {
 
 	// Issue #27: pool the slot was reserved against. Threaded through to the
 	// EvtWorkerSlotFreed payload so the orchestrator releases the right pool.
-	poolID string
+	poolID   string
+	poolName string
 
 	// Issue #54: true when this runtimeSession is a re-attach (no owned
 	// process). Reattach paths skip cmd.Wait + worktree teardown that the
@@ -200,6 +206,10 @@ func (m *Manager) SetOnPROpened(h PROpenedHandler) { m.onPROpened = h }
 // SetOnActivity registers a handler called on tool-call activity (throttled
 // to ~2/sec/session). Used to drive the UI's per-card liveness indicator.
 func (m *Manager) SetOnActivity(h ActivityHandler) { m.onActivity = h }
+
+// SetOnRateLimit registers a handler called when a Claude session emits a
+// rate_limit_event in its stream JSON.
+func (m *Manager) SetOnRateLimit(h RateLimitHandler) { m.onRateLimit = h }
 
 // SetProviders wires the LLM provider registry. Required before SpawnPlan /
 // SpawnExecute since those resolve the per-pool argv via prov.SpawnArgs.
@@ -501,6 +511,7 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 		branch:         branch,
 		repoPath:       ws.RepoPath,
 		poolID:         pool.ID,
+		poolName:       pool.Name,
 	}
 
 	if len(argv) > 0 {
@@ -724,6 +735,14 @@ func (m *Manager) feedLine(rs *runtimeSession, raw string) {
 	raw = stripANSI(raw)
 	if raw == "" {
 		return
+	}
+	// Opportunistically parse Claude rate_limit_event system events before
+	// stripping role-prefix tags. The raw JSON is only present on Claude
+	// (subprocess) sessions; for harness sessions this is always a no-op.
+	if m.onRateLimit != nil && rs.poolID != "" {
+		if usages, ok := llm.ParseClaudeRateLimitEvent(raw, rs.poolID, rs.poolName); ok {
+			m.onRateLimit(usages)
+		}
 	}
 	var lines []string
 	if rs.parser != nil {

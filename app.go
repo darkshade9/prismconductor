@@ -93,9 +93,29 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	a.bus = eventbus.New()
+
+	// rateLimitSink persists rate-limit snapshots and notifies the frontend.
+	// Captured as a closure so it can be wired to both the OpenAI HTTP path
+	// and the Claude stream-event path without passing the App reference
+	// through package boundaries. The nil-store guard handles the unlikely
+	// race at startup before the store is open.
+	rateLimitSink := func(usages []types.PoolUsage) {
+		if a.store == nil {
+			return
+		}
+		for _, u := range usages {
+			if err := a.store.UpsertPoolUsage(u); err != nil {
+				log.Printf("upsert pool usage: %v", err)
+			}
+		}
+		if a.ctx != nil {
+			wruntime.EventsEmit(a.ctx, "pool.usage_updated", nil)
+		}
+	}
+
 	a.providers = llm.NewRegistry(
 		llm.NewClaudeProvider(),
-		llm.NewOpenAIProvider(),
+		llm.NewOpenAIProviderWithSink(rateLimitSink),
 		llm.NewLiteLLMProvider(),
 		llm.NewLMStudioProvider(),
 		llm.NewOllamaProvider(),
@@ -165,6 +185,7 @@ func (a *App) startup(ctx context.Context) {
 	a.mgr.SetOnActivity(func(act types.SessionActivity) {
 		wruntime.EventsEmit(a.ctx, "session.activity", act)
 	})
+	a.mgr.SetOnRateLimit(rateLimitSink)
 
 	// Hook the orchestrator up to the store + pool + spawn callback now that
 	// every dependency exists.
@@ -2421,4 +2442,13 @@ func configDir() (string, error) {
 		}
 		return filepath.Join(home, ".config", "prismconductor"), nil
 	}
+}
+
+// GetPoolUsage returns the last-seen rate-limit snapshot for every pool that
+// has reported usage. Called by the frontend GoalRowStats component.
+func (a *App) GetPoolUsage() ([]types.PoolUsage, error) {
+	if a.store == nil {
+		return nil, nil
+	}
+	return a.store.ListPoolUsage()
 }

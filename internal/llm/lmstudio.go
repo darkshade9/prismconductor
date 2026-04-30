@@ -74,7 +74,7 @@ func (lmstudioProvider) SpawnArgs(_ types.Pool, _ string) ([]string, error) {
 
 func (l lmstudioProvider) ChatJSON(ctx context.Context, p types.Pool, system, user string) (string, error) {
 	endpoint := l.resolveEndpoint(p)
-	return openAICompatChat(ctx, l.client, endpoint, p.APIKey, p.Model, system, user)
+	return openAICompatChat(ctx, l.client, endpoint, p.APIKey, p.Model, system, user, nil)
 }
 
 // ToolChat drives a tool-using turn through LM Studio's OpenAI-compat endpoint
@@ -83,7 +83,7 @@ func (l lmstudioProvider) ChatJSON(ctx context.Context, p types.Pool, system, us
 // harness treats that as a clean stop.
 func (l lmstudioProvider) ToolChat(ctx context.Context, p types.Pool, req ChatRequest) (ChatResponse, error) {
 	endpoint := l.resolveEndpoint(p)
-	return openAIToolChat(ctx, l.client, endpoint, p.APIKey, p.Model, req)
+	return openAIToolChat(ctx, l.client, endpoint, p.APIKey, p.Model, req, nil)
 }
 
 func (l lmstudioProvider) resolveEndpoint(p types.Pool) string {

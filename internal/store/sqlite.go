@@ -181,6 +181,19 @@ CREATE TABLE IF NOT EXISTS pools (
 )`); err != nil {
 		return err
 	}
+	// Issue #52: last-seen rate-limit snapshot per (pool, window). Overwrite-only
+	// store — no historical rows.
+	if _, err := s.DB.Exec(`CREATE TABLE IF NOT EXISTS pool_usage (
+    pool_id     TEXT NOT NULL,
+    window      TEXT NOT NULL,
+    limit_value INTEGER NOT NULL,
+    used        INTEGER NOT NULL,
+    resets_at   INTEGER NOT NULL,
+    captured_at INTEGER NOT NULL,
+    PRIMARY KEY (pool_id, window)
+)`); err != nil {
+		return err
+	}
 	return nil
 }
 

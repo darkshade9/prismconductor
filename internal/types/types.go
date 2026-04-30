@@ -326,3 +326,19 @@ const (
 	StateFailed             SessionState = "failed"
 	StatePausedForQuestion  SessionState = "paused_for_question"
 )
+
+// --- Pool usage / rate limits (issue #52) ---
+
+// PoolUsage is a last-seen snapshot of rate-limit consumption for one
+// (pool, window) pair. Persisted in pool_usage; the primary key is
+// (pool_id, window) so every upsert overwrites the prior snapshot.
+type PoolUsage struct {
+	PoolID     string    `json:"pool_id"`
+	PoolName   string    `json:"pool_name"`
+	Provider   string    `json:"provider"`
+	Window     string    `json:"window"`
+	LimitValue int64     `json:"limit_value"`
+	Used       int64     `json:"used"`
+	ResetsAt   time.Time `json:"resets_at"`
+	CapturedAt time.Time `json:"captured_at"`
+}

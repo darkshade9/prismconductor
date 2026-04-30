@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { FilterIssuesByActiveGoal, GetAutoPullPaused } from "../../wailsjs/go/main/App";
+import { FilterIssuesByActiveGoal, GetAutoPullPaused, GetPoolUsage } from "../../wailsjs/go/main/App";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 import { types } from "../../wailsjs/go/models";
 import { useGoalStore } from "../stores/goalStore";
 import { useIssueStore } from "../stores/issueStore";
 import { GoalEditor } from "./GoalEditor";
+import { GoalRowStats } from "./GoalRowStats";
 
 export function GoalPane() {
   const { goals, refresh, activate, setStatus, remove } = useGoalStore();
@@ -14,6 +15,7 @@ export function GoalPane() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [scopedIssues, setScopedIssues] = useState<types.Issue[] | null>(null);
   const [paused, setPaused] = useState(false);
+  const [poolUsage, setPoolUsage] = useState<types.PoolUsage[]>([]);
 
   useEffect(() => {
     refresh();
@@ -26,6 +28,18 @@ export function GoalPane() {
       (d: { paused: boolean }) => setPaused(!!d?.paused),
     );
     return () => {
+      if (typeof off === "function") off();
+    };
+  }, []);
+
+  // Fetch pool usage on mount and whenever the backend signals an update.
+  useEffect(() => {
+    const fetchUsage = () => GetPoolUsage().then((u) => setPoolUsage(u ?? [])).catch(() => {});
+    fetchUsage();
+    const interval = setInterval(fetchUsage, 30_000);
+    const off = EventsOn("pool.usage_updated", fetchUsage);
+    return () => {
+      clearInterval(interval);
       if (typeof off === "function") off();
     };
   }, []);
@@ -69,12 +83,13 @@ export function GoalPane() {
   return (
     <div className="px-4 py-2 border-b border-slate-800 text-sm">
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-slate-500">Active Goal:</span>
+        {/* Left cluster: active goal + actions + new goal chip */}
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="text-slate-500 shrink-0">Active Goal:</span>
           {active ? (
             <button
               onClick={() => edit(active)}
-              className="text-amber-300 hover:underline truncate max-w-[420px]"
+              className="text-amber-300 hover:underline truncate max-w-[280px]"
               title={active.intent || ""}
             >
               🎯 {active.title}{paused ? " (paused)" : ""}
@@ -86,23 +101,31 @@ export function GoalPane() {
             <>
               <button
                 onClick={() => setStatus(active.id, "achieved")}
-                className="text-xs text-emerald-400 hover:underline ml-2"
+                className="text-xs text-emerald-400 hover:underline"
               >
                 mark achieved
               </button>
               <button
                 onClick={() => setStatus(active.id, "backlog")}
-                className="text-xs text-slate-400 hover:text-slate-200 hover:underline ml-2"
+                className="text-xs text-slate-400 hover:text-slate-200 hover:underline"
                 title="Stop auto-pull and return goal to Up Next"
               >
                 deactivate
               </button>
             </>
           )}
+          {/* + New goal as a compact chip adjacent to the active goal */}
+          <button
+            onClick={newGoal}
+            className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900 text-xs text-slate-300 hover:text-slate-100 hover:border-slate-500"
+          >
+            + New goal
+          </button>
         </div>
-        <div className="flex items-center gap-2 text-xs">
-          <button onClick={newGoal} className="text-slate-300 hover:text-slate-100">+ New goal</button>
-          <button onClick={() => setHistoryOpen((v) => !v)} className="text-slate-500 hover:text-slate-300">
+        {/* Right cluster: usage bars + history toggle */}
+        <div className="flex items-center gap-3 shrink-0">
+          {poolUsage.length > 0 && <GoalRowStats pools={poolUsage} maxVisible={3} />}
+          <button onClick={() => setHistoryOpen((v) => !v)} className="text-xs text-slate-500 hover:text-slate-300 whitespace-nowrap">
             {historyOpen ? "Hide history" : `History (${past.length})`}
           </button>
         </div>
