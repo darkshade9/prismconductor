@@ -16,7 +16,13 @@ import (
 	"time"
 
 	"prismconductor/internal/llm"
+	"prismconductor/internal/planio"
 )
+
+// planFilePathRE matches a path under `.prismconductor/plans/` whose basename
+// follows the §9.1 `<num>-rev<N>.json` convention. The harness validates such
+// writes against the §9.1 contract before they hit disk (issue #71).
+var planFilePathRE = regexp.MustCompile(`(^|/)\.prismconductor/plans/\d+-rev\d+\.json$`)
 
 // env holds per-session tool state. Cwd is the worker's working directory
 // (the worktree for execute-mode, the repo root for plan-mode); every path
@@ -225,6 +231,14 @@ func toolWrite(_ context.Context, e *env, raw json.RawMessage) (string, error) {
 	abs, err := resolvePath(e, args.FilePath)
 	if err != nil {
 		return "", err
+	}
+	// Issue #71: enforce the §9.1 plan contract at the harness boundary.
+	// A misshapen plan never lands on disk; the model gets the validator
+	// error back as a tool_result and retries on the next turn.
+	if planFilePathRE.MatchString(filepath.ToSlash(args.FilePath)) {
+		if err := planio.ValidatePlanJSON([]byte(args.Content)); err != nil {
+			return "", fmt.Errorf("plan rejected by validator (#71): %w. Fix the field(s) above and call Write again — do NOT proceed past this without a passing plan", err)
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "", err

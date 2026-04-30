@@ -16,9 +16,8 @@ func writeTemp(t *testing.T, body string) string {
 	return p
 }
 
-// TestReadPlanCanonicalShape pins the long-standing happy path: a Claude-shaped
-// plan with `issue_number` / `revision` reads cleanly without `workspace_id`
-// being present (it is attached post-read by the conductor — issue #67).
+// TestReadPlanCanonicalShape pins the happy path: a §9.1-shaped plan reads
+// cleanly without `workspace_id` (the conductor attaches it post-read).
 func TestReadPlanCanonicalShape(t *testing.T) {
 	p := writeTemp(t, `{
 		"issue_number": 42,
@@ -39,11 +38,11 @@ func TestReadPlanCanonicalShape(t *testing.T) {
 	}
 }
 
-// TestReadPlanAcceptsAbbreviatedAliases pins the leniency added in #67:
-// non-Claude planners (gpt-5-mini observed in the wild) emit `issue` / `rev`
-// instead of the canonical names. The validator normalizes rather than
-// rejecting silently.
-func TestReadPlanAcceptsAbbreviatedAliases(t *testing.T) {
+// TestReadPlanRejectsAbbreviatedAliases pins the strict-contract direction
+// from #71: the previous lenient acceptance of `issue` / `rev` is gone. Every
+// model — Claude, gpt-5-mini, Gemini, qwen3 — must emit the canonical names
+// or the plan is rejected with a specific actionable error.
+func TestReadPlanRejectsAbbreviatedAliases(t *testing.T) {
 	p := writeTemp(t, `{
 		"issue": 53,
 		"rev": 1,
@@ -54,35 +53,25 @@ func TestReadPlanAcceptsAbbreviatedAliases(t *testing.T) {
 		"estimated_complexity": "S",
 		"ready_to_execute": false
 	}`)
-	plan, err := ReadPlan(p)
-	if err != nil {
-		t.Fatalf("ReadPlan with aliases: %v", err)
+	_, err := ReadPlan(p)
+	if err == nil {
+		t.Fatal("expected validation error rejecting `issue`/`rev` alias, got nil")
 	}
-	if plan.IssueNumber != 53 {
-		t.Errorf("issue alias not applied, got %d", plan.IssueNumber)
-	}
-	if plan.Revision != 1 {
-		t.Errorf("rev alias not applied, got %d", plan.Revision)
+	// The message should name the offending field so a model reading it in
+	// a tool_result knows what to fix.
+	msg := err.Error()
+	if !contains(msg, "issue_number") || !contains(msg, "issue") {
+		t.Errorf("error message %q should call out `issue` and recommend `issue_number`", msg)
 	}
 }
 
-// TestReadPlanCanonicalWinsOverAlias pins precedence: when both forms are
-// present the canonical name takes priority. (Defensive — should never happen
-// in practice, but locks in the rule.)
-func TestReadPlanCanonicalWinsOverAlias(t *testing.T) {
-	p := writeTemp(t, `{
-		"issue_number": 100, "issue": 200,
-		"revision": 5, "rev": 9,
-		"plan_markdown": "x",
-		"files_to_modify": [], "questions": []
-	}`)
-	plan, err := ReadPlan(p)
-	if err != nil {
-		t.Fatalf("ReadPlan precedence: %v", err)
+func contains(haystack, needle string) bool {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
 	}
-	if plan.IssueNumber != 100 || plan.Revision != 5 {
-		t.Errorf("got issue=%d rev=%d, want 100/5 (canonical wins)", plan.IssueNumber, plan.Revision)
-	}
+	return false
 }
 
 // TestReadPlanRejectsTrulyMissingFields pins that the leniency does not turn
