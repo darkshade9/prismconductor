@@ -30,7 +30,8 @@ import { useLabelsStore } from "./stores/labelsStore";
 import { Toast } from "./components/Toast";
 import { useToastStore, type Toast as ToastT } from "./stores/toastStore";
 
-type PlanTarget = { workspace_id: string; number: number } | null;
+type PlanRef = { workspace_id: string; number: number };
+type PlanTarget = PlanRef | null;
 
 function App() {
   const appendLine = useSessionStore((s) => s.appendLine);
@@ -48,6 +49,7 @@ function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [planTarget, setPlanTarget] = useState<PlanTarget>(null);
+  const [planQueue, setPlanQueue] = useState<PlanRef[]>([]);
   const planIssue = useMemo(() => {
     if (!planTarget) return null;
     return (
@@ -113,12 +115,39 @@ function App() {
     });
     const offGoalUpd = EventsOn("bus.goal_updated", () => refreshGoals());
     const offIssue = EventsOn("bus.issue_added", () => refreshIssues(selectedWorkspace ?? ""));
+    // Don't hijack an open PlanModal when a different card's plan arrives.
+    // Card glow + toast carry the signal; queue the arrival and drain on close.
+    // Any future auto-open path (bus.plan_revised, etc.) must use the same
+    // functional-setPlanTarget guard, never an unconditional set.
     const offPlanReady = EventsOn(
       "bus.plan_ready",
       (data: { workspace_id: string; issue_number: number; revision: number }) => {
         refreshIssues(selectedWorkspace ?? "");
         markPlanReady(data);
-        setPlanTarget({ workspace_id: data.workspace_id, number: data.issue_number });
+        setPlanTarget((current) => {
+          if (current === null) {
+            return { workspace_id: data.workspace_id, number: data.issue_number };
+          }
+          if (
+            current.workspace_id === data.workspace_id &&
+            current.number === data.issue_number
+          ) {
+            return current;
+          }
+          setPlanQueue((q) => {
+            if (
+              q.some(
+                (e) =>
+                  e.workspace_id === data.workspace_id &&
+                  e.number === data.issue_number,
+              )
+            ) {
+              return q;
+            }
+            return [...q, { workspace_id: data.workspace_id, number: data.issue_number }];
+          });
+          return current;
+        });
       },
     );
     const offPROpened = EventsOn(
@@ -356,8 +385,27 @@ function App() {
       <Settings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <PlanModal
         open={planTarget !== null}
-        onClose={() => setPlanTarget(null)}
+        onClose={() => {
+          setPlanQueue((q) => {
+            if (q.length === 0) {
+              setPlanTarget(null);
+              return q;
+            }
+            const [next, ...rest] = q;
+            setPlanTarget(next);
+            return rest;
+          });
+        }}
         issue={planIssue}
+        queueDepth={planQueue.length}
+        onPopNext={() => {
+          setPlanQueue((q) => {
+            if (q.length === 0) return q;
+            const [next, ...rest] = q;
+            setPlanTarget(next);
+            return rest;
+          });
+        }}
       />
       <Toast
         onOpenCard={(wsID, num) =>
