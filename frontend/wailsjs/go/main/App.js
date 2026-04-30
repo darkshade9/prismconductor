@@ -42,8 +42,16 @@ export function DeletePool(arg1) {
   return window['go']['main']['App']['DeletePool'](arg1);
 }
 
+export function ContinueWork(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ContinueWork'](arg1, arg2, arg3);
+}
+
 export function FetchIssueDetail(arg1, arg2) {
   return window['go']['main']['App']['FetchIssueDetail'](arg1, arg2);
+}
+
+export function FetchPRChecks(arg1, arg2) {
+  return window['go']['main']['App']['FetchPRChecks'](arg1, arg2);
 }
 
 export function FilterIssuesByActiveGoal(arg1) {

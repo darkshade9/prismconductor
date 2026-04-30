@@ -292,57 +292,70 @@ func (m *Manager) SpawnExecuteResume(ws types.Workspace, issue types.Issue, plan
 	return m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool)
 }
 
-// SpawnContinue re-enters an execute worker on a card already in REVIEW (PR
-// open) so the user can address review feedback or failing tests without
-// filing a new issue (#80). The worker:
-//
-//   - reuses the existing feature branch + worktree (recreates the worktree
-//     from origin/<branch> if it was already GC'd),
-//   - reads the existing plan + answers,
-//   - takes `note` as the immediate task ("fix the failing tests in X"),
-//   - pushes a new commit to the same branch (PR auto-updates in place),
-//   - emits Work complete. when done. PR_OPENED is suppressed: the PR is
-//     already open and we don't want a duplicate.
-//
-// Errors when the branch can't be found on the remote (the user's PR was
-// rebased away) so the caller can surface a useful message instead of
-// silently doing nothing.
-func (m *Manager) SpawnContinue(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool, note string) (*types.Session, error) {
-	if strings.TrimSpace(note) == "" {
-		return nil, fmt.Errorf("continue note is required")
-	}
+// SpawnExecuteContinue re-enters an execute worker on the existing feature
+// branch to continue work after review feedback or test failures. The worktree
+// is reused if it exists on disk; if missing it is rehydrated from
+// origin/<branch> (q2=A). The user's note must already be written to
+// .prismconductor/notes/<num>.txt in the main checkout before calling this.
+func (m *Manager) SpawnExecuteContinue(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool) (*types.Session, error) {
 	slug := branchSlug(issue.Title)
 	branch := fmt.Sprintf("feat/issue-%d-%s", issue.Number, slug)
 	worktreeDir := filepath.Join(ws.RepoPath, ".prismconductor", "worktrees",
 		fmt.Sprintf("%s-%d", ws.ID, issue.Number))
 
-	// Rehydrate the worktree if the prior execute's worktree was GC'd.
-	// `git worktree add -B <branch> <dir> origin/<branch>` is idempotent if
-	// the worktree already exists at the path with the right HEAD; if it
-	// doesn't, this brings up a fresh checkout pointing at the remote tip.
 	if _, err := os.Stat(worktreeDir); err != nil {
-		if err := pcgit.Add(ws.RepoPath, branch, worktreeDir, "origin/"+branch); err != nil {
-			return nil, fmt.Errorf("rehydrate worktree from origin/%s: %w", branch, err)
-		}
-		if pcgit.HasSubmodules(worktreeDir) {
-			if err := pcgit.InitSubmodules(worktreeDir); err != nil {
-				_ = pcgit.Remove(ws.RepoPath, worktreeDir)
-				return nil, fmt.Errorf("init submodules in rehydrated worktree: %w", err)
-			}
+		// Worktree is missing — rehydrate from origin/<branch>.
+		if err2 := pcgit.Add(ws.RepoPath, branch, worktreeDir, branch); err2 != nil {
+			return nil, fmt.Errorf("rehydrate worktree for continue: %w", err2)
 		}
 	}
 
-	// Mirror plan + answers in case the worktree is fresh — same reasoning
-	// as SpawnExecute. The execute skill reads them via cwd-relative paths.
 	if err := mirrorPlanArtifacts(ws.RepoPath, worktreeDir, issue.Number, plan.Revision); err != nil {
 		return nil, fmt.Errorf("mirror plan artifacts: %w", err)
 	}
+	if err := mirrorContinueNote(ws.RepoPath, worktreeDir, issue.Number); err != nil {
+		return nil, fmt.Errorf("mirror continue note: %w", err)
+	}
 
-	args, prompt, err := m.providerArgs(pool, continueExecutePrompt(ws, issue, plan, note))
+	args, prompt, err := m.buildExecuteContinueCommand(ws, issue, plan, pool)
 	if err != nil {
 		return nil, err
 	}
 	return m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool)
+}
+
+// mirrorContinueNote copies .prismconductor/notes/<num>.txt from the main
+// checkout into the worktree so the conductor-continue skill can read it.
+func mirrorContinueNote(repoPath, worktreeDir string, num int) error {
+	name := fmt.Sprintf("%d.txt", num)
+	src := filepath.Join(repoPath, ".prismconductor", "notes", name)
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return nil // Note missing server-side; skill will BLOCKED with a clear message.
+	}
+	dst := filepath.Join(worktreeDir, ".prismconductor", "notes", name)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, b, 0o644)
+}
+
+func (m *Manager) buildExecuteContinueCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool) ([]string, string, error) {
+	return m.providerArgs(pool, executeContinuePrompt(ws, issue, plan))
+}
+
+func executeContinuePrompt(ws types.Workspace, issue types.Issue, plan types.Plan) string {
+	switch ws.SkillProfile.Mode {
+	case types.SkillModeNative:
+		return fmt.Sprintf("%s %d --continue-revision %d", ws.SkillProfile.NativeExecuteCommand, issue.Number, plan.Revision)
+	case types.SkillModeHybrid:
+		return fmt.Sprintf("/conductor-continue --native-cmd %s --issue %d --revision %d", ws.SkillProfile.NativeExecuteCommand, issue.Number, plan.Revision)
+	default:
+		return fmt.Sprintf("/conductor-continue --issue %d --repo %s --revision %d", issue.Number, ws.RepoPath, plan.Revision)
+	}
 }
 
 // branchSlug derives a kebab-case branch suffix from an issue title, lowering
@@ -1006,21 +1019,6 @@ func executePrompt(ws types.Workspace, issue types.Issue, plan types.Plan) strin
 // underlying execute skill.
 func executeResumePrompt(ws types.Workspace, issue types.Issue, plan types.Plan, questionID string) string {
 	return executePrompt(ws, issue, plan) + " --resume-question " + questionID
-}
-
-// continueExecutePrompt asks the worker to pick up where the prior execute
-// run left off — the branch and PR already exist, so the skill should NOT
-// create a new branch or a new PR. The user-supplied note is the immediate
-// work item (e.g. "fix the failing TestFoo tests"). Issue #80.
-func continueExecutePrompt(ws types.Workspace, issue types.Issue, plan types.Plan, note string) string {
-	return executePrompt(ws, issue, plan) + " --continue --note " + shellQuote(note)
-}
-
-// shellQuote single-quotes a string for safe inclusion in a shell-style
-// argv prompt. Any embedded single quotes are escaped with the standard
-// `'\''` POSIX trick. Used for the user's free-text continue note (#80).
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func envSpecToSlice(env types.EnvSpec) []string {

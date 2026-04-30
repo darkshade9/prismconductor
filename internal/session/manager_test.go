@@ -243,3 +243,61 @@ func TestSpawnPersistsPoolID(t *testing.T) {
 		t.Errorf("persisted PoolID = %q, want %q", saved.PoolID, "pool-xyz")
 	}
 }
+
+func TestMirrorContinueNoteCopiesToWorktree(t *testing.T) {
+	repoDir := t.TempDir()
+	worktreeDir := t.TempDir()
+	notesDir := filepath.Join(repoDir, ".prismconductor", "notes")
+	if err := os.MkdirAll(notesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const content = "tests failing in TestFoo — got 404, want 200"
+	if err := os.WriteFile(filepath.Join(notesDir, "42.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := mirrorContinueNote(repoDir, worktreeDir, 42); err != nil {
+		t.Fatalf("mirrorContinueNote: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(worktreeDir, ".prismconductor", "notes", "42.txt"))
+	if err != nil {
+		t.Fatalf("read mirrored note: %v", err)
+	}
+	if string(got) != content {
+		t.Errorf("note content = %q, want %q", got, content)
+	}
+}
+
+func TestMirrorContinueNoteNoopWhenMissing(t *testing.T) {
+	repoDir := t.TempDir()
+	worktreeDir := t.TempDir()
+	// No note file written — mirrorContinueNote must succeed silently.
+	if err := mirrorContinueNote(repoDir, worktreeDir, 99); err != nil {
+		t.Fatalf("mirrorContinueNote with missing note: %v", err)
+	}
+	dst := filepath.Join(worktreeDir, ".prismconductor", "notes", "99.txt")
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Errorf("expected no file at %s, got err=%v", dst, err)
+	}
+}
+
+func TestExecuteContinuePromptBundledMode(t *testing.T) {
+	ws := types.Workspace{
+		ID:       "ws-1",
+		RepoPath: "/repo",
+		SkillProfile: types.SkillProfile{
+			Mode: types.SkillModeBundled,
+		},
+	}
+	issue := types.Issue{Number: 80, WorkspaceID: ws.ID}
+	plan := types.Plan{Revision: 2}
+	got := executeContinuePrompt(ws, issue, plan)
+	if !strings.Contains(got, "/conductor-continue") {
+		t.Errorf("bundled prompt %q missing /conductor-continue", got)
+	}
+	if !strings.Contains(got, "--issue 80") {
+		t.Errorf("bundled prompt %q missing --issue 80", got)
+	}
+	if !strings.Contains(got, "--revision 2") {
+		t.Errorf("bundled prompt %q missing --revision 2", got)
+	}
+}

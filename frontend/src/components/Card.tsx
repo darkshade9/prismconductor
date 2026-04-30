@@ -3,7 +3,6 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
 import { Replan } from "../../wailsjs/go/main/App";
-import { ContinueWorkModal } from "./ContinueWorkModal";
 import { types } from "../../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "../stores/sessionStore";
 import { usePlanReadyStore } from "../stores/planReadyStore";
@@ -13,6 +12,7 @@ import { resolveProviderIcon } from "../lib/providerIcon";
 import { getContrastText } from "../lib/contrast";
 import { LabelManagePopover } from "./LabelManagePopover";
 import { MidRunQuestionModal } from "./MidRunQuestionModal";
+import { ContinueModal } from "./ContinueModal";
 import { cn } from "../lib/cn";
 
 export type CardProps = {
@@ -172,23 +172,6 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
               ✓ PR #{issue.pr_number}
             </button>
           )}
-          {/* Continue work (#80): only shown for cards with an open PR and no
-              active session. Opens a small modal that takes a free-text note
-              and re-engages an execute worker on the existing branch. */}
-          {issue.pr_number != null && issue.pr_url && !activeSession && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setContinueOpen(true);
-              }}
-              onMouseDown={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
-              className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-sky-700/40 text-sky-200 border border-sky-700 hover:bg-sky-700/60"
-              title="Re-engage the agent on this PR's branch"
-            >
-              ↻ Continue
-            </button>
-          )}
           {issue.priority ? <span className="text-slate-500">P{issue.priority.toFixed(2)}</span> : null}
         </span>
       </div>
@@ -208,6 +191,9 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         issueNumber={issue.number}
         waitingForPool={issue.waiting_for_pool ?? false}
         pools={pools}
+        column={issue.column}
+        prNumber={issue.pr_number ?? null}
+        onContinue={() => setContinueOpen(true)}
       />
       {pausedSession && pausedSession.pending_question_id && (
         <MidRunQuestionModal
@@ -218,13 +204,15 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
           questionID={pausedSession.pending_question_id}
         />
       )}
-      <ContinueWorkModal
-        open={continueOpen}
-        onClose={() => setContinueOpen(false)}
-        workspaceID={issue.workspace_id}
-        issueNumber={issue.number}
-        prNumber={issue.pr_number ?? null}
-      />
+      {issue.pr_number != null && (
+        <ContinueModal
+          open={continueOpen}
+          onClose={() => setContinueOpen(false)}
+          workspaceID={issue.workspace_id}
+          issueNumber={issue.number}
+          prNumber={issue.pr_number}
+        />
+      )}
     </div>
   );
 }
@@ -252,6 +240,9 @@ function StatusRow({
   issueNumber,
   waitingForPool,
   pools,
+  column,
+  prNumber,
+  onContinue,
 }: {
   activeSession: types.Session | null;
   activity: SessionActivity | null;
@@ -266,6 +257,9 @@ function StatusRow({
   issueNumber: number;
   waitingForPool: boolean;
   pools: Record<string, import("../stores/usePoolsStore").PoolEntry>;
+  column: string;
+  prNumber: number | null;
+  onContinue: () => void;
 }) {
   if (pausedSession) {
     return (
@@ -355,6 +349,7 @@ function StatusRow({
       </div>
     );
   }
+  const showContinue = column === "review" && prNumber != null && !activeSession && !pausedSession && !waitingForPool;
   return (
     <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
       {isPrimitive && <span className="text-emerald-400">🔴 primitive</span>}
@@ -368,6 +363,20 @@ function StatusRow({
         issueNumber={issueNumber}
         labels={labels}
       />
+      {showContinue && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onContinue();
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="ml-auto px-1.5 py-0.5 rounded text-[10px] border border-purple-700 text-purple-300 hover:border-purple-500 hover:text-purple-200"
+          title="Continue work on this PR branch"
+        >
+          ↻ Continue
+        </button>
+      )}
     </div>
   );
 }
