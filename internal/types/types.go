@@ -249,6 +249,10 @@ type Session struct {
 	LastPrompt        string       `json:"last_prompt"`
 	BlockedReason     string       `json:"blocked_reason,omitempty"`
 	PendingQuestionID string       `json:"pending_question_id,omitempty"`
+	// PoolID is the pool that spawned this session (issue #37). Used by the
+	// frontend to resolve provider attribution on card badges. Empty for
+	// sessions spawned before this field was introduced.
+	PoolID string `json:"pool_id,omitempty"`
 
 	// TranscriptOffset is the byte offset into the transcript file of the
 	// last fully-processed line (issue #54). Lives on the sessions column,

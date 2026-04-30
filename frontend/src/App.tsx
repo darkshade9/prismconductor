@@ -27,6 +27,7 @@ import { useArchivedStore, useIssueStore } from "./stores/issueStore";
 import { useGoalStore } from "./stores/goalStore";
 import { usePlanReadyStore } from "./stores/planReadyStore";
 import { useLabelsStore } from "./stores/labelsStore";
+import { usePoolsStore } from "./stores/usePoolsStore";
 import { Toast } from "./components/Toast";
 import { useToastStore, type Toast as ToastT } from "./stores/toastStore";
 
@@ -198,8 +199,12 @@ function App() {
         })
         .catch(() => {});
     refreshPool();
+    usePoolsStore.getState().refresh();
     const offPoolFreed = EventsOn("bus.worker_slot_freed", refreshPool);
-    const offPoolChanged = EventsOn("bus.agent_count_changed", refreshPool);
+    const offPoolChanged = EventsOn("bus.agent_count_changed", () => {
+      refreshPool();
+      usePoolsStore.getState().refresh();
+    });
     const offPoolState = EventsOn("session.state", refreshPool);
     GetAutoPullPaused().then(setAutoPaused).catch(() => {});
     const offPause = EventsOn(
