@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -12,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/creack/pty"
 	"github.com/google/uuid"
 
 	"prismconductor/internal/eventbus"
@@ -30,6 +30,7 @@ type Persister interface {
 	SaveSession(sess *types.Session, transcriptPath string) error
 	UpdateSessionState(id string, state types.SessionState) error
 	UpdateSessionPendingQuestion(id, questionID string) error
+	UpdateSessionTranscriptOffset(id string, off int64) error
 }
 
 // StateChangeHandler is fired on every state transition. Used by the App layer
@@ -70,17 +71,21 @@ type Manager struct {
 type runtimeSession struct {
 	sess           *types.Session
 	cmd            *exec.Cmd
-	pty            *os.File
 	cancel         context.CancelFunc
 	transcriptPath string
 	transcriptFile *os.File
 	parser         *StreamParser
 
-	actMu          sync.Mutex
-	toolCount      int
-	lastAction     string
-	lastActionAt   time.Time
-	lastEmittedAt  time.Time
+	// Issue #54: byte offset into transcriptPath of the last fully-flushed line.
+	// Persisted every ~2s during live tail; on restart we seek here to avoid
+	// re-feeding lines we already processed.
+	transcriptOffset int64
+
+	actMu         sync.Mutex
+	toolCount     int
+	lastAction    string
+	lastActionAt  time.Time
+	lastEmittedAt time.Time
 
 	// Issue #22: per-execute worktree fields. Empty for plan/raw spawns.
 	// repoPath is captured here so the cleanup hook in tailAndParse doesn't
@@ -92,6 +97,11 @@ type runtimeSession struct {
 	// Issue #27: pool the slot was reserved against. Threaded through to the
 	// EvtWorkerSlotFreed payload so the orchestrator releases the right pool.
 	poolID string
+
+	// Issue #54: true when this runtimeSession is a re-attach (no owned
+	// process). Reattach paths skip cmd.Wait + worktree teardown that the
+	// fresh-spawn path needs.
+	reattached bool
 }
 
 func NewManager(bus *eventbus.Bus, emit LineHandler) *Manager {
@@ -294,10 +304,31 @@ func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.Sessio
 // spawnWithDir is the canonical spawn path. When worktreeDir is non-empty the
 // child process runs there instead of ws.RepoPath, and the worktree metadata
 // is captured on the runtimeSession for the cleanup hook in tailAndParse.
+//
+// Issue #54: the worker's stdout/stderr point at the transcript file directly
+// so it survives a conductor exit (no Go-side copy goroutine that would die
+// with us and break the pipe). The conductor reads worker output by polling
+// the same file (tailAndParse). This also unifies the live-spawn path with
+// the re-attach path: both consume the file.
 func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, worktreeDir, branch, poolID string) (*types.Session, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("empty command")
 	}
+	if m.transcriptDir == "" {
+		// The transcript file is now load-bearing — it IS the worker's stdout.
+		// Without a transcript dir we have nowhere to point cmd.Stdout, so refuse.
+		return nil, fmt.Errorf("session manager: transcript dir not configured")
+	}
+	if err := os.MkdirAll(m.transcriptDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create transcript dir: %w", err)
+	}
+	sessID := uuid.NewString()
+	transcriptPath := filepath.Join(m.transcriptDir, sessID+".log")
+	tf, err := os.Create(transcriptPath)
+	if err != nil {
+		return nil, fmt.Errorf("create transcript: %w", err)
+	}
+
 	cmd := exec.Command(argv[0], argv[1:]...)
 	switch {
 	case worktreeDir != "":
@@ -306,15 +337,20 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 		cmd.Dir = ws.RepoPath
 	}
 	cmd.Env = append(os.Environ(), envSpecToSlice(ws.AgentEnv)...)
+	cmd.Stdin = nil
+	cmd.Stdout = tf
+	cmd.Stderr = tf
+	cmd.SysProcAttr = detachedProcAttr()
 
-	f, err := pty.Start(cmd)
-	if err != nil {
-		return nil, fmt.Errorf("pty.Start: %w", err)
+	if err := cmd.Start(); err != nil {
+		_ = tf.Close()
+		_ = os.Remove(transcriptPath)
+		return nil, fmt.Errorf("cmd.Start: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	sess := &types.Session{
-		ID:          uuid.NewString(),
+		ID:          sessID,
 		WorkspaceID: ws.ID,
 		IssueNumber: issue.Number,
 		Mode:        mode,
@@ -322,27 +358,20 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 		StartedAt:   time.Now(),
 		PID:         cmd.Process.Pid,
 	}
+	sess.Transcript = transcriptPath
 
 	rs := &runtimeSession{
-		sess:        sess,
-		cmd:         cmd,
-		pty:         f,
-		cancel:      cancel,
-		parser:      NewStreamParser(),
-		worktreeDir: worktreeDir,
-		branch:      branch,
-		repoPath:    ws.RepoPath,
-		poolID:      poolID,
+		sess:           sess,
+		cmd:            cmd,
+		cancel:         cancel,
+		parser:         NewStreamParser(),
+		transcriptPath: transcriptPath,
+		transcriptFile: tf,
+		worktreeDir:    worktreeDir,
+		branch:         branch,
+		repoPath:       ws.RepoPath,
+		poolID:         poolID,
 	}
-
-	if m.transcriptDir != "" {
-		_ = os.MkdirAll(m.transcriptDir, 0o755)
-		rs.transcriptPath = filepath.Join(m.transcriptDir, sess.ID+".log")
-		if tf, err := os.Create(rs.transcriptPath); err == nil {
-			rs.transcriptFile = tf
-		}
-	}
-	sess.Transcript = rs.transcriptPath
 
 	if m.store != nil {
 		_ = m.store.SaveSession(sess, rs.transcriptPath)
@@ -359,77 +388,92 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 	return sess, nil
 }
 
+// tailAndParse polls the transcript file for new lines, feeds each through
+// the per-session parser, and routes the resulting display lines to emit /
+// matchPatterns / recordActivity. Issue #54 replaces the old PTY byte-stream
+// reader with a file tail because the worker's stdout IS the transcript file
+// now (so the conductor exiting doesn't break the worker's writes).
 func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 	defer func() {
-		rs.pty.Close()
+		// Conductor's handle on the transcript file. Closing it here doesn't
+		// affect the worker — the worker has its own fd via fork+exec dup.
 		if rs.transcriptFile != nil {
-			rs.transcriptFile.Close()
+			_ = rs.transcriptFile.Close()
 		}
 	}()
-	// Byte-streamed tail. bufio.Scanner withholds anything that lacks a
-	// newline; `claude -p` and similar tools may emit partial lines (progress
-	// indicators, spinner frames, the final unterminated chunk). We flush at
-	// each \n / \r, AND flush a pending partial line whenever a Read returns
-	// no further data within the read window.
-	buf := make([]byte, 4096)
-	var pending []byte
-	flush := func(rawLine string) {
-		rawLine = stripANSI(rawLine)
-		if rawLine == "" {
-			return
-		}
-		// stream-json events are line-delimited JSON; pass through the parser
-		// to get role-prefixed display lines + accumulated assistant text.
-		var lines []string
-		if rs.parser != nil {
-			lines = rs.parser.Feed(rawLine)
-		} else {
-			lines = []string{rawLine}
-		}
-		for _, line := range lines {
-			if line == "" {
-				continue
+
+	// Run Wait in a sibling goroutine so the tail loop can detect "child has
+	// exited" without blocking on Wait itself. Buffered so the goroutine can
+	// always return even if we never read from done.
+	done := make(chan error, 1)
+	go func() { done <- rs.cmd.Wait() }()
+
+	var waitErr error
+	var waited bool
+	if rf, err := os.Open(rs.transcriptPath); err != nil {
+		log.Printf("tailAndParse: open transcript %s: %v", rs.transcriptPath, err)
+	} else {
+		reader := bufio.NewReader(rf)
+		var lastFlush time.Time
+	tail:
+		for {
+			select {
+			case <-ctx.Done():
+				break tail
+			default:
 			}
-			if rs.transcriptFile != nil {
-				fmt.Fprintln(rs.transcriptFile, line)
-			}
-			if m.emit != nil {
-				m.emit(rs.sess.ID, line)
-			}
-			m.matchPatterns(rs, line)
-			m.recordActivity(rs, line)
-		}
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		n, err := rs.pty.Read(buf)
-		if n > 0 {
-			for i := 0; i < n; i++ {
-				c := buf[i]
-				if c == '\n' || c == '\r' {
-					if len(pending) > 0 {
-						flush(string(pending))
-						pending = pending[:0]
-					}
-				} else {
-					pending = append(pending, c)
+			line, rerr := reader.ReadString('\n')
+			if len(line) > 0 {
+				m.feedLine(rs, strings.TrimRight(line, "\r\n"))
+				rs.transcriptOffset += int64(len(line))
+				if m.store != nil && time.Since(lastFlush) >= 2*time.Second {
+					_ = m.store.UpdateSessionTranscriptOffset(rs.sess.ID, rs.transcriptOffset)
+					lastFlush = time.Now()
 				}
 			}
-		}
-		if err != nil {
-			if len(pending) > 0 {
-				flush(string(pending))
-				pending = pending[:0]
+			if rerr == io.EOF {
+				select {
+				case werr := <-done:
+					// Worker exited. Drain anything still buffered + anything
+					// the worker wrote between our last read and its exit.
+					waitErr = werr
+					waited = true
+					for {
+						line, rerr := reader.ReadString('\n')
+						if len(line) > 0 {
+							m.feedLine(rs, strings.TrimRight(line, "\r\n"))
+							rs.transcriptOffset += int64(len(line))
+						}
+						if rerr != nil {
+							break
+						}
+					}
+					break tail
+				default:
+					time.Sleep(200 * time.Millisecond)
+					continue
+				}
 			}
-			break
+			if rerr != nil {
+				log.Printf("tailAndParse: read %s: %v", rs.transcriptPath, rerr)
+				break tail
+			}
 		}
+		_ = rf.Close()
+	}
+
+	// Persist the final offset so a subsequent restart skips what we already
+	// processed.
+	if m.store != nil {
+		_ = m.store.UpdateSessionTranscriptOffset(rs.sess.ID, rs.transcriptOffset)
 	}
 	prev := rs.sess.State
-	rs.sess.State = mapTerminalState(rs.sess.State, rs.cmd.Wait())
+	if !waited {
+		// We broke out without observing Wait — typically because ctx was
+		// cancelled. Wait now to reap the child and capture its exit code.
+		waitErr = <-done
+	}
+	rs.sess.State = mapTerminalState(rs.sess.State, waitErr)
 	end := time.Now()
 	rs.sess.EndedAt = &end
 	if m.store != nil {
@@ -469,6 +513,36 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 	m.mu.Lock()
 	delete(m.sessions, rs.sess.ID)
 	m.mu.Unlock()
+}
+
+// feedLine routes one raw line (post-newline-strip, pre-ANSI-strip) through
+// the session's parser and downstream handlers. Used both by the live
+// tailAndParse goroutine and the post-restart re-attach paths.
+//
+// Issue #54: this method does NOT write to the transcript file. The worker's
+// stdout is already the transcript file, so anything we'd emit here is a
+// duplicate. The conductor only consumes.
+func (m *Manager) feedLine(rs *runtimeSession, raw string) {
+	raw = stripANSI(raw)
+	if raw == "" {
+		return
+	}
+	var lines []string
+	if rs.parser != nil {
+		lines = rs.parser.Feed(raw)
+	} else {
+		lines = []string{raw}
+	}
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		if m.emit != nil {
+			m.emit(rs.sess.ID, line)
+		}
+		m.matchPatterns(rs, line)
+		m.recordActivity(rs, line)
+	}
 }
 
 // mapTerminalState collapses an in-flight session state to its terminal value
@@ -624,7 +698,9 @@ func (m *Manager) recordActivity(rs *runtimeSession, line string) {
 	}
 }
 
-// Kill terminates a running session.
+// Kill terminates a running session. For re-attached sessions whose original
+// process is owned by a prior conductor (issue #54), we still send a kill
+// signal directly since the worker is in our PID namespace.
 func (m *Manager) Kill(sessionID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -632,23 +708,32 @@ func (m *Manager) Kill(sessionID string) error {
 	if !ok {
 		return fmt.Errorf("unknown session %s", sessionID)
 	}
-	rs.cancel()
-	if rs.cmd.Process != nil {
+	if rs.cancel != nil {
+		rs.cancel()
+	}
+	if rs.cmd != nil && rs.cmd.Process != nil {
 		return rs.cmd.Process.Kill()
+	}
+	if rs.sess != nil && rs.sess.PID > 0 {
+		if p, err := os.FindProcess(rs.sess.PID); err == nil {
+			return p.Kill()
+		}
 	}
 	return nil
 }
 
-// SendInput writes user input into a session's PTY.
+// SendInput is a no-op since #54. The spawn path no longer allocates a PTY,
+// so there's no input channel to write to. Skill workers run with
+// --bypassPermissions and never need post-spawn input; if a future caller
+// needs it, restore a controlled stdin pipe here.
 func (m *Manager) SendInput(sessionID, text string) error {
 	m.mu.RLock()
-	rs, ok := m.sessions[sessionID]
+	_, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("unknown session %s", sessionID)
 	}
-	_, err := io.WriteString(rs.pty, text)
-	return err
+	return fmt.Errorf("session input not supported (detached worker, no stdin)")
 }
 
 // Snapshot returns a copy of the current in-process session table.

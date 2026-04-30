@@ -53,6 +53,18 @@ func (s *Store) UpdateSessionPendingQuestion(id, questionID string) error {
 	return err
 }
 
+// UpdateSessionTranscriptOffset persists the byte offset of the last
+// fully-processed transcript line (issue #54). Called every ~2s during live
+// tail so a conductor restart mid-stream does not re-feed already-processed
+// lines.
+func (s *Store) UpdateSessionTranscriptOffset(id string, off int64) error {
+	if s == nil || s.DB == nil {
+		return nil
+	}
+	_, err := s.DB.Exec(`UPDATE sessions SET transcript_offset = ? WHERE id = ?`, off, id)
+	return err
+}
+
 // nullableString returns nil for empty strings so the SQLite column stores NULL
 // instead of the zero-length string. Keeps `pending_question_id IS NULL` queries
 // honest.
@@ -70,7 +82,7 @@ func (s *Store) LoadRunningSessions() ([]types.Session, string, error) {
 	if s == nil || s.DB == nil {
 		return nil, "", nil
 	}
-	rows, err := s.DB.Query(`SELECT json, transcript_path, pending_question_id FROM sessions WHERE state IN ('running','waiting_for_input','blocked','paused_for_question')`)
+	rows, err := s.DB.Query(`SELECT json, transcript_path, pending_question_id, transcript_offset FROM sessions WHERE state IN ('running','waiting_for_input','blocked','paused_for_question')`)
 	if err != nil {
 		return nil, "", err
 	}
@@ -80,7 +92,8 @@ func (s *Store) LoadRunningSessions() ([]types.Session, string, error) {
 	for rows.Next() {
 		var raw, transcript string
 		var pendingQID sql.NullString
-		if err := rows.Scan(&raw, &transcript, &pendingQID); err != nil {
+		var offset int64
+		if err := rows.Scan(&raw, &transcript, &pendingQID, &offset); err != nil {
 			return nil, "", err
 		}
 		var sess types.Session
@@ -94,6 +107,12 @@ func (s *Store) LoadRunningSessions() ([]types.Session, string, error) {
 		} else {
 			sess.PendingQuestionID = ""
 		}
+		// Issue #54: transcript path lives only on the column, never in the JSON
+		// blob. Re-populate it on the in-memory shape so reattach has a path.
+		if sess.Transcript == "" {
+			sess.Transcript = transcript
+		}
+		sess.TranscriptOffset = offset
 		out = append(out, sess)
 		if firstTranscript == "" {
 			firstTranscript = transcript

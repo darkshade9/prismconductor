@@ -241,6 +241,11 @@ type Session struct {
 	LastPrompt        string       `json:"last_prompt"`
 	BlockedReason     string       `json:"blocked_reason,omitempty"`
 	PendingQuestionID string       `json:"pending_question_id,omitempty"`
+
+	// TranscriptOffset is the byte offset into the transcript file of the
+	// last fully-processed line (issue #54). Lives on the sessions column,
+	// excluded from the JSON blob to keep external snapshots schema-stable.
+	TranscriptOffset int64 `json:"-"`
 }
 
 // MidRunAnswer is the §6.4-shaped answer payload for a mid-run question

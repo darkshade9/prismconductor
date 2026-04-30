@@ -131,6 +131,14 @@ CREATE TABLE IF NOT EXISTS pools (
 	if err := s.ensurePoolsRoleCheck(); err != nil {
 		return err
 	}
+	// Issue #54: per-session byte offset of the last-flushed transcript line.
+	// Lets a re-attach after conductor restart skip lines we already processed
+	// in a prior catch-up pass.
+	if _, err := s.DB.Exec(`ALTER TABLE sessions ADD COLUMN transcript_offset INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
 	return nil
 }
 

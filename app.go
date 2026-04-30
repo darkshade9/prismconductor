@@ -213,9 +213,15 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	// Re-attach to sessions that were live at last shutdown (§15.3).
+	// Issue #54: Reattach now needs the workspace list so the live-tail
+	// goroutine can rebuild repoPath / worktreeDir for post-mortem cleanup.
 	if a.store != nil {
 		if running, _, err := a.store.LoadRunningSessions(); err == nil {
-			a.mgr.Reattach(running)
+			var workspaces []types.Workspace
+			if a.wsReg != nil {
+				workspaces = a.wsReg.List()
+			}
+			a.mgr.Reattach(running, workspaces)
 		}
 		// Self-heal any closed issues stuck in non-DONE columns from earlier
 		// buggy poll cycles.
