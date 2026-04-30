@@ -292,6 +292,72 @@ func (m *Manager) SpawnExecuteResume(ws types.Workspace, issue types.Issue, plan
 	return m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool)
 }
 
+// SpawnExecuteContinue re-enters an execute worker on the existing feature
+// branch to continue work after review feedback or test failures. The worktree
+// is reused if it exists on disk; if missing it is rehydrated from
+// origin/<branch> (q2=A). The user's note must already be written to
+// .prismconductor/notes/<num>.txt in the main checkout before calling this.
+func (m *Manager) SpawnExecuteContinue(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool) (*types.Session, error) {
+	slug := branchSlug(issue.Title)
+	branch := fmt.Sprintf("feat/issue-%d-%s", issue.Number, slug)
+	worktreeDir := filepath.Join(ws.RepoPath, ".prismconductor", "worktrees",
+		fmt.Sprintf("%s-%d", ws.ID, issue.Number))
+
+	if _, err := os.Stat(worktreeDir); err != nil {
+		// Worktree is missing — rehydrate from origin/<branch>.
+		if err2 := pcgit.Add(ws.RepoPath, branch, worktreeDir, branch); err2 != nil {
+			return nil, fmt.Errorf("rehydrate worktree for continue: %w", err2)
+		}
+	}
+
+	if err := mirrorPlanArtifacts(ws.RepoPath, worktreeDir, issue.Number, plan.Revision); err != nil {
+		return nil, fmt.Errorf("mirror plan artifacts: %w", err)
+	}
+	if err := mirrorContinueNote(ws.RepoPath, worktreeDir, issue.Number); err != nil {
+		return nil, fmt.Errorf("mirror continue note: %w", err)
+	}
+
+	args, prompt, err := m.buildExecuteContinueCommand(ws, issue, plan, pool)
+	if err != nil {
+		return nil, err
+	}
+	return m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool)
+}
+
+// mirrorContinueNote copies .prismconductor/notes/<num>.txt from the main
+// checkout into the worktree so the conductor-continue skill can read it.
+func mirrorContinueNote(repoPath, worktreeDir string, num int) error {
+	name := fmt.Sprintf("%d.txt", num)
+	src := filepath.Join(repoPath, ".prismconductor", "notes", name)
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return nil // Note missing server-side; skill will BLOCKED with a clear message.
+	}
+	dst := filepath.Join(worktreeDir, ".prismconductor", "notes", name)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, b, 0o644)
+}
+
+func (m *Manager) buildExecuteContinueCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool) ([]string, string, error) {
+	return m.providerArgs(pool, executeContinuePrompt(ws, issue, plan))
+}
+
+func executeContinuePrompt(ws types.Workspace, issue types.Issue, plan types.Plan) string {
+	switch ws.SkillProfile.Mode {
+	case types.SkillModeNative:
+		return fmt.Sprintf("%s %d --continue-revision %d", ws.SkillProfile.NativeExecuteCommand, issue.Number, plan.Revision)
+	case types.SkillModeHybrid:
+		return fmt.Sprintf("/conductor-continue --native-cmd %s --issue %d --revision %d", ws.SkillProfile.NativeExecuteCommand, issue.Number, plan.Revision)
+	default:
+		return fmt.Sprintf("/conductor-continue --issue %d --repo %s --revision %d", issue.Number, ws.RepoPath, plan.Revision)
+	}
+}
+
 // branchSlug derives a kebab-case branch suffix from an issue title, lowering
 // case, replacing non-alphanumeric runs with single dashes, capping at 40
 // characters, and falling back to "work" when the title yields nothing.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -1955,6 +1956,113 @@ func (a *App) ApprovePlan(workspaceID string, issueNumber, revision int) error {
 		"revision":     revision,
 	})
 	return nil
+}
+
+// ContinueWork spawns an execute worker to continue existing PR work after
+// review feedback or test failures. The note describes what to fix; it is
+// written to .prismconductor/notes/<issueNumber>.txt and mirrored into the
+// feature-branch worktree for the conductor-continue skill to read.
+func (a *App) ContinueWork(workspaceID string, issueNumber int, note string) error {
+	if a.wsReg == nil || a.store == nil || a.mgr == nil {
+		return fmt.Errorf("registry/store/manager unavailable")
+	}
+	if strings.TrimSpace(note) == "" {
+		return fmt.Errorf("note is required")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	issue, err := a.store.LoadIssue(workspaceID, issueNumber)
+	if err != nil {
+		return fmt.Errorf("load issue: %w", err)
+	}
+	if issue.Column != types.ColReview {
+		return fmt.Errorf("issue #%d is not in REVIEW column (got %q)", issueNumber, issue.Column)
+	}
+	if a.hasActiveExecuteSession(workspaceID, issueNumber) {
+		return fmt.Errorf("issue #%d already has an active execute session", issueNumber)
+	}
+	plan, err := a.store.LatestPlan(workspaceID, issueNumber)
+	if err != nil {
+		return fmt.Errorf("load plan: %w", err)
+	}
+	if plan == nil {
+		return fmt.Errorf("no plan found for issue #%d", issueNumber)
+	}
+	notesDir := filepath.Join(ws.RepoPath, ".prismconductor", "notes")
+	if err := os.MkdirAll(notesDir, 0o755); err != nil {
+		return fmt.Errorf("create notes dir: %w", err)
+	}
+	notePath := filepath.Join(notesDir, fmt.Sprintf("%d.txt", issueNumber))
+	if err := os.WriteFile(notePath, []byte(note), 0o644); err != nil {
+		return fmt.Errorf("write note: %w", err)
+	}
+	if err := a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColInProgress); err != nil {
+		return err
+	}
+	pool, ok := a.acquireWorkPool(ws)
+	if !ok {
+		_ = a.store.EnqueuePendingPool(workspaceID, issueNumber, types.RoleWork, "continue_execute")
+		if iss, lerr := a.store.LoadIssue(workspaceID, issueNumber); lerr == nil {
+			iss.WaitingForPool = true
+			_, _ = a.store.SaveIssue(iss)
+		}
+		a.bus.Publish(eventbus.EvtPendingPoolEnqueued, eventbus.PendingPoolChange{
+			WorkspaceID: workspaceID,
+			IssueNumber: issueNumber,
+			Role:        string(types.RoleWork),
+		})
+		return nil
+	}
+	if _, err := a.mgr.SpawnExecuteContinue(ws, issue, *plan, pool); err != nil {
+		a.poolReg.ReleaseByPool(pool.ID)
+		_ = a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColReview)
+		return err
+	}
+	a.bus.Publish(eventbus.EvtPlanApproved, map[string]any{
+		"workspace_id": workspaceID,
+		"issue_number": issueNumber,
+		"revision":     plan.Revision,
+	})
+	return nil
+}
+
+// hasActiveExecuteSession returns true if an execute-mode worker is currently
+// running (or waiting / blocked) for the given issue.
+func (a *App) hasActiveExecuteSession(workspaceID string, number int) bool {
+	if a.mgr == nil {
+		return false
+	}
+	for _, s := range a.mgr.Snapshot() {
+		if s.WorkspaceID != workspaceID || s.IssueNumber != number {
+			continue
+		}
+		if s.Mode != types.ModeExecute {
+			continue
+		}
+		switch s.State {
+		case types.StateRunning, types.StateWaitingForInput, types.StateBlocked:
+			return true
+		}
+	}
+	return false
+}
+
+// FetchPRChecks runs `gh pr checks <prNumber>` in the workspace repo and
+// returns the combined output. Used by the ContinueModal to pre-fill the note
+// textarea with failing check output (q1=A: pre-fill automatically).
+func (a *App) FetchPRChecks(workspaceID string, prNumber int) (string, error) {
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return "", fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	cmd := exec.Command("gh", "pr", "checks", strconv.Itoa(prNumber), "--fail-fast")
+	cmd.Dir = ws.RepoPath
+	out, _ := cmd.CombinedOutput()
+	// gh pr checks exits non-zero when checks are failing — that's exactly the
+	// case we want to surface, so ignore the error and return the output.
+	return string(out), nil
 }
 
 // RejectPlan moves the card back to TODO and frees the worker slot.
