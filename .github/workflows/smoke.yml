@@ -19,16 +19,20 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "20" }
       - name: install wails system deps
-        # Wails on Linux links against GTK3 + WebKit2GTK at build time. The
-        # Ubuntu runner doesn't have these by default; without them `wails dev`
-        # fails before serving the app and Playwright waits the full timeout.
+        # Wails on Linux links against GTK3 + WebKit2GTK at build time AND
+        # initializes GTK at runtime to open a desktop window — even in
+        # `wails dev` mode. The headless GitHub runner has no X display, so
+        # `wails dev` panics with "failed to init GTK" the moment it tries
+        # to create the window. xvfb provides a virtual X server so the
+        # window-init succeeds and the dev URL stays up for the smoke test.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libgtk-3-dev \
             libwebkit2gtk-4.0-dev \
             build-essential \
-            pkg-config
+            pkg-config \
+            xvfb
       - name: install wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
       - name: install frontend deps
