@@ -23,9 +23,9 @@ func (s *Store) ListPools() ([]types.Pool, error) {
 		return nil, errors.New("store unavailable")
 	}
 	rows, err := s.DB.Query(`
-SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at
+SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority
 FROM pools
-ORDER BY created_at ASC, id ASC`)
+ORDER BY priority ASC, created_at ASC, id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -47,10 +47,10 @@ func (s *Store) ListPoolsByRole(role types.Role) ([]types.Pool, error) {
 		return nil, errors.New("store unavailable")
 	}
 	rows, err := s.DB.Query(`
-SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at
+SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority
 FROM pools
 WHERE role = ?
-ORDER BY created_at ASC, id ASC`, string(role))
+ORDER BY priority ASC, created_at ASC, id ASC`, string(role))
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +72,7 @@ func (s *Store) GetPool(id string) (types.Pool, error) {
 		return types.Pool{}, errors.New("store unavailable")
 	}
 	row := s.DB.QueryRow(`
-SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at
+SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority
 FROM pools WHERE id = ?`, id)
 	return scanPool(row)
 }
@@ -117,8 +117,8 @@ func (s *Store) SavePool(p types.Pool) error {
 		enabled = 1
 	}
 	_, err := s.DB.Exec(`
-INSERT INTO pools (id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pools (id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     name = excluded.name,
     provider = excluded.provider,
@@ -127,9 +127,10 @@ ON CONFLICT(id) DO UPDATE SET
     capacity = excluded.capacity,
     enabled = excluded.enabled,
     api_key = excluded.api_key,
-    role = excluded.role`,
+    role = excluded.role,
+    priority = excluded.priority`,
 		p.ID, p.Name, string(p.Provider), p.Endpoint, p.Model,
-		p.Capacity, enabled, p.APIKey, string(p.Role), p.CreatedAt.Unix())
+		p.Capacity, enabled, p.APIKey, string(p.Role), p.CreatedAt.Unix(), p.Priority)
 	return err
 }
 
@@ -167,7 +168,7 @@ func scanPool(r rowScanner) (types.Pool, error) {
 	var enabled int
 	var createdAt int64
 	if err := r.Scan(&p.ID, &p.Name, &provider, &p.Endpoint, &p.Model,
-		&p.Capacity, &enabled, &p.APIKey, &role, &createdAt); err != nil {
+		&p.Capacity, &enabled, &p.APIKey, &role, &createdAt, &p.Priority); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return types.Pool{}, fmt.Errorf("pool not found")
 		}

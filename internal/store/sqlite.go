@@ -162,6 +162,25 @@ CREATE TABLE IF NOT EXISTS pools (
 			return err
 		}
 	}
+	// Issue #40: pool preference ordering. Default 0 keeps existing pools
+	// at equal priority (unchanged behaviour until the user reorders).
+	if _, err := s.DB.Exec(`ALTER TABLE pools ADD COLUMN priority INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
+	// Issue #40: persisted pending-pool queue so restart doesn't lose intent.
+	if _, err := s.DB.Exec(`CREATE TABLE IF NOT EXISTS pending_pool_for (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id TEXT NOT NULL,
+    issue_number INTEGER NOT NULL,
+    role         TEXT NOT NULL,
+    action       TEXT NOT NULL,
+    created_at   INTEGER NOT NULL,
+    UNIQUE(workspace_id, issue_number, role, action)
+)`); err != nil {
+		return err
+	}
 	return nil
 }
 

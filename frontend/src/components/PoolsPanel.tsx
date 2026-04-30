@@ -1,5 +1,20 @@
 import { useEffect, useState } from "react";
 import {
+  DndContext,
+  DragEndEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
   ListPools,
   ListProviders,
   SavePool,
@@ -41,10 +56,14 @@ export function PoolsPanel() {
     const offFreed = EventsOn("bus.worker_slot_freed", refresh);
     const offChanged = EventsOn("bus.agent_count_changed", refresh);
     const offState = EventsOn("session.state", refresh);
+    const offPending = EventsOn("bus.pending_pool_enqueued", refresh);
+    const offDequeued = EventsOn("bus.pending_pool_dequeued", refresh);
     return () => {
       if (typeof offFreed === "function") offFreed();
       if (typeof offChanged === "function") offChanged();
       if (typeof offState === "function") offState();
+      if (typeof offPending === "function") offPending();
+      if (typeof offDequeued === "function") offDequeued();
     };
   }, []);
 
@@ -94,6 +113,23 @@ export function PoolsPanel() {
     }
   }
 
+  async function onReorder(role: Role, oldIndex: number, newIndex: number) {
+    const rows = [...grouped[role]];
+    const reordered = arrayMove(rows, oldIndex, newIndex);
+    // Assign sequential priorities (0 = highest preference).
+    const updates = reordered.map((row, i) =>
+      SavePool(types.Pool.createFrom({ ...row.pool, priority: i }))
+    );
+    try {
+      await Promise.all(updates);
+      await refresh();
+    } catch (err) {
+      console.error("reorder pools", err);
+    }
+  }
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
   return (
     <div className="space-y-3 text-sm">
       {pools.length > 0 && !hasEnabled("plan") && (
@@ -120,66 +156,67 @@ export function PoolsPanel() {
       {ROLE_ORDER.map((role) => {
         const rows = grouped[role];
         if (rows.length === 0) return null;
+        const sortable = role !== "orchestrator" && rows.length > 1;
         return (
           <div key={role} className="space-y-2">
-            <div className="text-xs uppercase tracking-wide text-slate-500">
+            <div className="text-xs uppercase tracking-wide text-slate-500 flex items-center gap-2">
               {ROLE_LABEL[role]} ({rows.length})
+              {sortable && (
+                <span className="normal-case tracking-normal text-slate-600">
+                  · drag to reorder preference
+                </span>
+              )}
             </div>
-            {rows.map((row) => {
-              const info = providerByKind.get(row.pool.provider);
-              const err = deleteErr[row.pool.id];
-              return (
-                <div
-                  key={row.pool.id}
-                  className="border border-slate-800 rounded p-2 bg-slate-950/40"
+            {sortable ? (
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={(e: DragEndEvent) => {
+                  const { active, over } = e;
+                  if (!over || active.id === over.id) return;
+                  const oldIdx = rows.findIndex((r) => r.pool.id === active.id);
+                  const newIdx = rows.findIndex((r) => r.pool.id === over.id);
+                  if (oldIdx !== -1 && newIdx !== -1) onReorder(role, oldIdx, newIdx);
+                }}
+              >
+                <SortableContext
+                  items={rows.map((r) => r.pool.id)}
+                  strategy={verticalListSortingStrategy}
                 >
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1">
-                      <div className="text-slate-100 font-mono text-xs flex items-center gap-2">
-                        <span>{row.pool.name}</span>
-                        <span className="text-slate-500">
-                          ({info?.display_name ?? row.pool.provider})
-                        </span>
-                      </div>
-                      <div className="text-slate-500 text-xs">
-                        {row.pool.model || "—"}
-                        {row.pool.endpoint && ` · ${row.pool.endpoint}`}
-                      </div>
-                    </div>
-                    {role !== "orchestrator" && (
-                      <div className="font-mono text-slate-300 text-xs">
-                        {row.active}/{row.pool.capacity}
-                      </div>
-                    )}
-                    <label className="flex items-center gap-1 text-xs">
-                      <input
-                        type="checkbox"
-                        checked={row.pool.enabled}
-                        onChange={(e) =>
-                          onToggleEnabled(row.pool, e.target.checked)
-                        }
-                      />
-                      enabled
-                    </label>
-                    <button
-                      className="text-xs text-slate-300 hover:text-slate-100 px-2 py-1 border border-slate-700 rounded"
-                      onClick={() => setEditing(row.pool)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      className="text-xs text-rose-300 hover:text-rose-200 px-2 py-1 border border-rose-900 rounded"
-                      onClick={() => onRemove(row.pool)}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                  {err && (
-                    <div className="mt-1 text-xs text-rose-300">{err}</div>
-                  )}
-                </div>
-              );
-            })}
+                  {rows.map((row, idx) => (
+                    <SortablePoolRow
+                      key={row.pool.id}
+                      row={row}
+                      role={role}
+                      isFirst={idx === 0}
+                      isLast={idx === rows.length - 1}
+                      providerByKind={providerByKind}
+                      deleteErr={deleteErr[row.pool.id]}
+                      onToggleEnabled={onToggleEnabled}
+                      onEdit={() => setEditing(row.pool)}
+                      onRemove={() => onRemove(row.pool)}
+                    />
+                  ))}
+                </SortableContext>
+              </DndContext>
+            ) : (
+              rows.map((row) => {
+                const err = deleteErr[row.pool.id];
+                return (
+                  <PoolRow
+                    key={row.pool.id}
+                    row={row}
+                    role={role}
+                    providerByKind={providerByKind}
+                    deleteErr={err}
+                    dragHandle={null}
+                    onToggleEnabled={onToggleEnabled}
+                    onEdit={() => setEditing(row.pool)}
+                    onRemove={() => onRemove(row.pool)}
+                  />
+                );
+              })
+            )}
           </div>
         );
       })}
@@ -219,6 +256,135 @@ export function PoolsPanel() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+function SortablePoolRow({
+  row,
+  role,
+  isFirst,
+  isLast,
+  providerByKind,
+  deleteErr,
+  onToggleEnabled,
+  onEdit,
+  onRemove,
+}: {
+  row: workerpool.PoolStatus;
+  role: Role;
+  isFirst: boolean;
+  isLast: boolean;
+  providerByKind: Map<string, main.ProviderInfo>;
+  deleteErr?: string;
+  onToggleEnabled: (p: types.Pool, next: boolean) => void;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: row.pool.id,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  const dragHandle = (
+    <span
+      {...attributes}
+      {...listeners}
+      className="cursor-grab active:cursor-grabbing text-slate-600 hover:text-slate-400 select-none px-1"
+      title="Drag to reorder preference"
+    >
+      ⠿
+    </span>
+  );
+  const hint = isFirst ? "← preferred" : isLast ? "← fallback" : null;
+  return (
+    <div ref={setNodeRef} style={style}>
+      <PoolRow
+        row={row}
+        role={role}
+        providerByKind={providerByKind}
+        deleteErr={deleteErr}
+        dragHandle={dragHandle}
+        preferenceHint={hint ?? undefined}
+        onToggleEnabled={onToggleEnabled}
+        onEdit={onEdit}
+        onRemove={onRemove}
+      />
+    </div>
+  );
+}
+
+function PoolRow({
+  row,
+  role,
+  providerByKind,
+  deleteErr,
+  dragHandle,
+  preferenceHint,
+  onToggleEnabled,
+  onEdit,
+  onRemove,
+}: {
+  row: workerpool.PoolStatus;
+  role: Role;
+  providerByKind: Map<string, main.ProviderInfo>;
+  deleteErr?: string;
+  dragHandle: React.ReactNode;
+  preferenceHint?: string;
+  onToggleEnabled: (p: types.Pool, next: boolean) => void;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
+  const info = providerByKind.get(row.pool.provider);
+  return (
+    <div className="border border-slate-800 rounded p-2 bg-slate-950/40">
+      <div className="flex items-center gap-2">
+        {dragHandle}
+        <div className="flex-1 min-w-0">
+          <div className="text-slate-100 font-mono text-xs flex items-center gap-2">
+            <span>{row.pool.name}</span>
+            <span className="text-slate-500">
+              ({info?.display_name ?? row.pool.provider})
+            </span>
+            {preferenceHint && (
+              <span className="text-slate-600 font-normal">{preferenceHint}</span>
+            )}
+          </div>
+          <div className="text-slate-500 text-xs">
+            {row.pool.model || "—"}
+            {row.pool.endpoint && ` · ${row.pool.endpoint}`}
+          </div>
+        </div>
+        {role !== "orchestrator" && (
+          <div className="font-mono text-slate-300 text-xs">
+            {row.active}/{row.pool.capacity}
+          </div>
+        )}
+        <label className="flex items-center gap-1 text-xs">
+          <input
+            type="checkbox"
+            checked={row.pool.enabled}
+            onChange={(e) => onToggleEnabled(row.pool, e.target.checked)}
+          />
+          enabled
+        </label>
+        <button
+          className="text-xs text-slate-300 hover:text-slate-100 px-2 py-1 border border-slate-700 rounded"
+          onClick={onEdit}
+        >
+          Edit
+        </button>
+        <button
+          className="text-xs text-rose-300 hover:text-rose-200 px-2 py-1 border border-rose-900 rounded"
+          onClick={onRemove}
+        >
+          Remove
+        </button>
+      </div>
+      {deleteErr && <div className="mt-1 text-xs text-rose-300">{deleteErr}</div>}
     </div>
   );
 }

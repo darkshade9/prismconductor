@@ -187,3 +187,38 @@ func TestAcquireForPlan_PrefersWorkspacePin(t *testing.T) {
 		t.Fatalf("AcquireForPlan with pin = (%q, %v), want (p2, true)", id, ok)
 	}
 }
+
+// TestPriorityOrderingPlanPools verifies that a pool with lower Priority value
+// is acquired before a pool with higher Priority value (issue #40).
+func TestPriorityOrderingPlanPools(t *testing.T) {
+	r := NewRegistry(func(types.Provider) bool { return true })
+	// p2 has priority 0 (preferred), p1 has priority 1 (fallback).
+	r.Sync([]types.Pool{
+		{ID: "p1", Provider: types.ProviderClaude, Capacity: 2, Enabled: true, Role: types.RolePlan, Priority: 1},
+		{ID: "p2", Provider: types.ProviderClaude, Capacity: 2, Enabled: true, Role: types.RolePlan, Priority: 0},
+	})
+	id, ok := r.AcquireForPlan(types.Workspace{})
+	if !ok || id != "p2" {
+		t.Fatalf("AcquireForPlan with priority ordering = (%q, %v), want (p2, true)", id, ok)
+	}
+}
+
+// TestPriorityFallbackWhenPreferredFull verifies fallback to lower-preference
+// pool when the preferred pool is at capacity (issue #40).
+func TestPriorityFallbackWhenPreferredFull(t *testing.T) {
+	r := NewRegistry(func(types.Provider) bool { return true })
+	r.Sync([]types.Pool{
+		{ID: "preferred", Provider: types.ProviderClaude, Capacity: 1, Enabled: true, Role: types.RolePlan, Priority: 0},
+		{ID: "fallback", Provider: types.ProviderClaude, Capacity: 1, Enabled: true, Role: types.RolePlan, Priority: 1},
+	})
+	// Fill the preferred pool.
+	first, ok := r.AcquireForPlan(types.Workspace{})
+	if !ok || first != "preferred" {
+		t.Fatalf("first acquire = (%q, %v), want (preferred, true)", first, ok)
+	}
+	// Second acquire should fall back to the fallback pool.
+	second, ok := r.AcquireForPlan(types.Workspace{})
+	if !ok || second != "fallback" {
+		t.Fatalf("second acquire = (%q, %v), want (fallback, true)", second, ok)
+	}
+}

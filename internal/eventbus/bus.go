@@ -28,6 +28,9 @@ const (
 	EvtLabelsUpdated     EventType = "labels_updated"
 	EvtAutoPullPausedChanged EventType = "auto_pull_paused_changed"
 	EvtIssuesArchived        EventType = "issues_archived"
+	// Issue #40: pending pool queue events.
+	EvtPendingPoolEnqueued EventType = "pending_pool_enqueued"
+	EvtPendingPoolDequeued EventType = "pending_pool_dequeued"
 )
 
 type Event struct {
@@ -42,6 +45,13 @@ type Event struct {
 type WorkerSlotFreed struct {
 	SessionID string `json:"session_id"`
 	PoolID    string `json:"pool_id"`
+}
+
+// PendingPoolChange is the payload for EvtPendingPoolEnqueued / Dequeued (#40).
+type PendingPoolChange struct {
+	WorkspaceID string `json:"workspace_id"`
+	IssueNumber int    `json:"issue_number"`
+	Role        string `json:"role"`
 }
 
 type Handler func(Event)
