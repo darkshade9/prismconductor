@@ -8,6 +8,7 @@ import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
 import { AnswerState, QuestionForm, emptyAnswers, initialAnswers, isComplete } from "./QuestionForm";
 import { LabelsModal } from "./LabelsModal";
 import { getContrastText } from "../lib/contrast";
+import { IssueSection } from "./IssueSection";
 
 const INTENT_GLYPH: Record<string, string> = {
   add: "+",
@@ -165,6 +166,10 @@ export function PlanModal({
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-3 text-sm space-y-4">
+          <IssueSection issue={issue} />
+
+          <hr className="border-slate-700" />
+
           {loading && <div className="text-slate-500">loading…</div>}
           {!loading && !plan && (
             <div className="text-slate-500">

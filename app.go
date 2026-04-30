@@ -60,6 +60,13 @@ type App struct {
 	notifyMu      sync.Mutex
 	lastNotifyKey string
 	lastNotifyAt  int64
+
+	issueDetailCache sync.Map // key: "workspaceID/number" → issueDetailEntry
+}
+
+type issueDetailEntry struct {
+	issue     types.Issue
+	expiresAt time.Time
 }
 
 func NewApp() *App { return &App{} }
@@ -637,6 +644,32 @@ func (a *App) ListArchivedIssues(workspaceID string) ([]types.Issue, error) {
 		return nil, fmt.Errorf("store unavailable")
 	}
 	return a.store.ListArchivedIssues(workspaceID)
+}
+
+// FetchIssueDetail returns fresh GitHub metadata for a single issue, cached for
+// 60 s. The frontend calls this lazily on modal open to surface up-to-date
+// body/labels without waiting for the next poll cycle.
+func (a *App) FetchIssueDetail(workspaceID string, issueNumber int) (types.Issue, error) {
+	if a.gh == nil || a.wsReg == nil {
+		return types.Issue{}, fmt.Errorf("github client unavailable")
+	}
+	key := workspaceID + "/" + strconv.Itoa(issueNumber)
+	if v, ok := a.issueDetailCache.Load(key); ok {
+		entry := v.(issueDetailEntry)
+		if time.Now().Before(entry.expiresAt) {
+			return entry.issue, nil
+		}
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return types.Issue{}, fmt.Errorf("workspace %q not found", workspaceID)
+	}
+	iss, err := a.gh.GetIssueDetail(a.ctx, ws, issueNumber)
+	if err != nil {
+		return types.Issue{}, err
+	}
+	a.issueDetailCache.Store(key, issueDetailEntry{issue: iss, expiresAt: time.Now().Add(60 * time.Second)})
+	return iss, nil
 }
 
 // ArchiveDone flags every DONE row in the workspace as archived (#34). Returns
