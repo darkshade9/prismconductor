@@ -46,21 +46,27 @@ func openAICompatPath(baseURL, leaf string) string {
 // every provider whose orchestrator path goes through OpenAI-compat (OpenAI,
 // LM Studio, LiteLLM, Ollama).
 //
+// temperature, when non-nil, is sent verbatim. When nil the field is omitted
+// so the provider uses its own default (required for models that reject an
+// explicit temperature, e.g. gpt-5-codex style models).
+//
 // onHeaders, if non-nil, is called with the HTTP response headers so callers
 // can harvest rate-limit metadata (e.g. x-ratelimit-*). Pass nil to skip.
-func openAICompatChat(ctx context.Context, client *http.Client, baseURL, apiKey, model, system, user string, onHeaders func(http.Header)) (string, error) {
+func openAICompatChat(ctx context.Context, client *http.Client, baseURL, apiKey, model, system, user string, temperature *float64, onHeaders func(http.Header)) (string, error) {
 	if model == "" {
 		return "", fmt.Errorf("orchestrator chat: model required")
 	}
 	url := chatCompletionsURL(baseURL)
 	reqBody := map[string]any{
-		"model":       model,
-		"temperature": 0.0,
-		"stream":      false,
+		"model":  model,
+		"stream": false,
 		"messages": []map[string]string{
 			{"role": "system", "content": system},
 			{"role": "user", "content": user},
 		},
+	}
+	if temperature != nil {
+		reqBody["temperature"] = *temperature
 	}
 	body, _ := json.Marshal(reqBody)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
@@ -146,9 +152,12 @@ func isPaddingOnly(b []byte) bool {
 // Studio, LiteLLM); each provider's ToolChat method resolves endpoint + auth
 // then delegates here.
 //
+// temperature, when non-nil, is sent verbatim. When nil the field is omitted
+// so the provider uses its own default.
+//
 // onHeaders, if non-nil, is called with the HTTP response headers so callers
 // can harvest rate-limit metadata. Pass nil to skip.
-func openAIToolChat(ctx context.Context, client *http.Client, baseURL, apiKey, model string, req ChatRequest, onHeaders func(http.Header)) (ChatResponse, error) {
+func openAIToolChat(ctx context.Context, client *http.Client, baseURL, apiKey, model string, req ChatRequest, temperature *float64, onHeaders func(http.Header)) (ChatResponse, error) {
 	if model == "" {
 		return ChatResponse{}, fmt.Errorf("tool chat: model required")
 	}
@@ -202,10 +211,12 @@ func openAIToolChat(ctx context.Context, client *http.Client, baseURL, apiKey, m
 	}
 
 	body := map[string]any{
-		"model":       model,
-		"temperature": 0.0,
-		"stream":      false,
-		"messages":    msgs,
+		"model":    model,
+		"stream":   false,
+		"messages": msgs,
+	}
+	if temperature != nil {
+		body["temperature"] = *temperature
 	}
 	if len(req.Tools) > 0 {
 		tools := make([]map[string]any, len(req.Tools))
