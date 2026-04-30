@@ -419,6 +419,7 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 		Mode:        mode,
 		State:       types.StateRunning,
 		StartedAt:   time.Now(),
+		PoolID:      pool.ID,
 	}
 	sess.Transcript = transcriptPath
 
