@@ -1764,6 +1764,28 @@ func (a *App) handleMidRunAnswerArrived(ps store.PausedSession) {
 	if err := a.store.UpdateSessionPendingQuestion(ps.SessionID, ""); err != nil {
 		log.Printf("answer resume: clear pending_question_id on %s: %v", ps.SessionID, err)
 	}
+	// Mark the OLD session terminal so the card no longer renders the orange
+	// "paused_for_question" state. Without this, both the old (paused) and
+	// new (running) sessions exist for the same issue and the frontend's
+	// pausedSession selector keeps the card stuck in the awaiting-answer
+	// look even though work has resumed. The old session's row is sealed —
+	// `completed` is the natural terminal state since the question round-
+	// trip succeeded and the new session inherits the work.
+	if err := a.store.UpdateSessionState(ps.SessionID, types.StateCompleted); err != nil {
+		log.Printf("answer resume: seal old session %s: %v", ps.SessionID, err)
+	} else {
+		// Push a synthesized session.state event so the frontend's session
+		// store refreshes the OLD row's state from `paused_for_question` to
+		// `completed`. Without this, the Card's pausedSession selector keeps
+		// the orange overlay until the next Wails reload.
+		wruntime.EventsEmit(a.ctx, "session.state", types.Session{
+			ID:          ps.SessionID,
+			WorkspaceID: ps.WorkspaceID,
+			IssueNumber: ps.IssueNumber,
+			Mode:        types.ModeExecute,
+			State:       types.StateCompleted,
+		})
+	}
 	pool, ok := a.acquireWorkPool(ws)
 	if !ok {
 		log.Printf("answer resume: no work pool available for #%d", ps.IssueNumber)
