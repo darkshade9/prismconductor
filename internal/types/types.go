@@ -83,6 +83,10 @@ type Pool struct {
 	// Lower value = higher preference. Default 0. Pools with equal priority
 	// are tried in ascending created_at order.
 	Priority int `json:"priority"`
+	// Temperature, when non-nil, is sent verbatim in the outgoing chat-completions
+	// request. When nil the field is omitted and the provider uses its default.
+	// This unblocks models that reject an explicit temperature (e.g. gpt-5-codex).
+	Temperature *float64 `json:"temperature,omitempty"`
 }
 
 // PendingPoolRequest is a persisted "waiting for pool" request. Created when

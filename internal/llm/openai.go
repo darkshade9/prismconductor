@@ -72,7 +72,7 @@ func (openaiProvider) SpawnArgs(_ types.Pool, _ string) ([]string, error) {
 func (o openaiProvider) ChatJSON(ctx context.Context, p types.Pool, system, user string) (string, error) {
 	endpoint, key := o.resolve(p)
 	onHeaders := o.headerCallback(p)
-	return openAICompatChat(ctx, o.client, endpoint, key, p.Model, system, user, onHeaders)
+	return openAICompatChat(ctx, o.client, endpoint, key, p.Model, system, user, p.Temperature, onHeaders)
 }
 
 // ToolChat drives a tool-using turn against OpenAI's /v1/chat/completions
@@ -80,7 +80,7 @@ func (o openaiProvider) ChatJSON(ctx context.Context, p types.Pool, system, user
 func (o openaiProvider) ToolChat(ctx context.Context, p types.Pool, req ChatRequest) (ChatResponse, error) {
 	endpoint, key := o.resolve(p)
 	onHeaders := o.headerCallback(p)
-	return openAIToolChat(ctx, o.client, endpoint, key, p.Model, req, onHeaders)
+	return openAIToolChat(ctx, o.client, endpoint, key, p.Model, req, p.Temperature, onHeaders)
 }
 
 func (o openaiProvider) resolve(p types.Pool) (string, string) {

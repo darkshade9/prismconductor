@@ -57,6 +57,9 @@ export function PoolEditModal({
   const [model, setModel] = useState<string>(initial?.model ?? "");
   const [capacity, setCapacity] = useState<number>(initial?.capacity ?? 1);
   const [enabled, setEnabled] = useState<boolean>(initial?.enabled ?? true);
+  const [temperatureStr, setTemperatureStr] = useState<string>(
+    initial?.temperature != null ? String(initial.temperature) : "",
+  );
   const [models, setModels] = useState<string[]>([]);
   const [probing, setProbing] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -145,6 +148,7 @@ export function PoolEditModal({
       const finalName = name.trim() || `${providerKind}-${modelTail(model) || "pool"}`;
       // Orchestrator runs are per-call HTTP, capacity is irrelevant. Persist 1.
       const finalCapacity = role === "orchestrator" ? 1 : capacity;
+      const parsedTemp = temperatureStr.trim() === "" ? undefined : parseFloat(temperatureStr);
       const pool = types.Pool.createFrom({
         id: initial?.id ?? "",
         name: finalName,
@@ -156,6 +160,7 @@ export function PoolEditModal({
         api_key: apiKey,
         role,
         created_at: initial?.created_at ?? new Date().toISOString(),
+        temperature: (parsedTemp != null && !isNaN(parsedTemp)) ? parsedTemp : undefined,
       });
       await SavePool(pool);
       onSaved();
@@ -312,6 +317,23 @@ export function PoolEditModal({
               placeholder={`${providerKind}-${modelTail(model) || "pool"}`}
               className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono text-xs"
             />
+          </div>
+
+          <div>
+            <div className="text-xs text-slate-500 mb-1">Temperature (optional)</div>
+            <input
+              type="number"
+              min={0}
+              max={2}
+              step={0.01}
+              value={temperatureStr}
+              onChange={(e) => setTemperatureStr(e.target.value)}
+              placeholder="leave empty to use provider default"
+              className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono text-xs"
+            />
+            <div className="text-[11px] text-slate-500 mt-1">
+              Leave empty for models that reject explicit temperature (e.g. gpt-5-codex). Set 0.0 for deterministic output.
+            </div>
           </div>
 
           <label className="flex items-center gap-2 text-xs text-slate-300">

@@ -194,6 +194,13 @@ CREATE TABLE IF NOT EXISTS pools (
 )`); err != nil {
 		return err
 	}
+	// Issue #85: optional per-pool temperature override. NULL = omit from request
+	// (provider uses its default). Non-null = send verbatim (including 0.0).
+	if _, err := s.DB.Exec(`ALTER TABLE pools ADD COLUMN temperature REAL`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
 	return nil
 }
 
