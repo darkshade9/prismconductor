@@ -4,3 +4,4 @@ frontend/dist
 .DS_Store
 *.log
 .prismconductor/
+test-results/

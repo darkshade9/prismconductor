@@ -20,6 +20,14 @@ wails dev      # hot-reloading dev server
 wails build    # produces build/bin/prismconductor.app
 ```
 
+## Tests
+
+```bash
+cd tests && npm install && npm run smoke:install && npm run smoke
+```
+
+Playwright smoke test: boots the app via `wails dev`, asserts React mounts into `#root`, and checks for console errors. Runs automatically in CI on every push to `feat/issue-*` and `main`.
+
 ## Status
 
 Day 1 of Phase 1 complete: scaffold + bound demo (`SpawnDemo` calls `claude --version` via PTY and streams output to the SessionDrawer). See open issues for remaining phases.
