@@ -25,7 +25,7 @@ func (ollamaProvider) Kind() types.Provider    { return types.ProviderOllama }
 func (ollamaProvider) DisplayName() string     { return "Ollama" }
 func (ollamaProvider) DefaultEndpoint() string { return defaultOllamaEndpoint }
 func (ollamaProvider) NeedsAPIKey() bool       { return true }
-func (ollamaProvider) CanSpawn() bool          { return false }
+func (ollamaProvider) CanSpawn() bool          { return true }
 
 // ListModels parses Ollama's /api/tags. Bearer auth is forwarded so a tunneled
 // (e.g. Tailscale Funnel) endpoint guarded by HTTP-basic-equivalent auth still
@@ -66,9 +66,23 @@ func (ollamaProvider) SpawnArgs(_ types.Pool, _ string) ([]string, error) {
 // large local models, so callers should pass a context with their own
 // deadline (the orchestrator gives 5 minutes).
 func (o ollamaProvider) ChatJSON(ctx context.Context, p types.Pool, system, user string) (string, error) {
+	endpoint := o.resolveEndpoint(p)
+	return openAICompatChat(ctx, o.client, endpoint, p.APIKey, p.Model, system, user)
+}
+
+// ToolChat drives a tool-using turn through Ollama's OpenAI-compat endpoint
+// (issue #58). Tool support requires an Ollama build that surfaces tool_calls
+// — older builds return content only, which the harness treats as a clean
+// stop.
+func (o ollamaProvider) ToolChat(ctx context.Context, p types.Pool, req ChatRequest) (ChatResponse, error) {
+	endpoint := o.resolveEndpoint(p)
+	return openAIToolChat(ctx, o.client, endpoint, p.APIKey, p.Model, req)
+}
+
+func (o ollamaProvider) resolveEndpoint(p types.Pool) string {
 	endpoint := strings.TrimRight(p.Endpoint, "/")
 	if endpoint == "" {
 		endpoint = defaultOllamaEndpoint
 	}
-	return openAICompatChat(ctx, o.client, endpoint, p.APIKey, p.Model, system, user)
+	return endpoint
 }

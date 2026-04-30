@@ -408,7 +408,7 @@ const (
 - `Registry.AcquireForWork(ws)` — strict `role=work` selection (no fallback to plan pools).
 - `Registry.OrchestratorPool()` — returns the at-most-one enabled `role=orchestrator` pool, or false. Used by the orchestrator's rank pass on each call so UI changes take effect on the next event tick.
 
-Per-workspace pinning lives in `SkillProfile.PreferredPlanPoolID` and `PreferredWorkPoolID`; selection falls back to round-robin among enabled role pools when unset. Roles do not gate providers — saving e.g. an OpenAI `role=plan` pool is allowed; spawn returns `llm.ErrNotSupported` until harness-v1 ships, surfaced as a runtime toast and an "Awaiting harness-v1" pool-row badge.
+Per-workspace pinning lives in `SkillProfile.PreferredPlanPoolID` and `PreferredWorkPoolID`; selection falls back to round-robin among enabled role pools when unset. Roles do not gate providers — issue #58 ships harness-v1, so all five providers (Claude + OpenAI / Ollama / LM Studio / LiteLLM) are spawnable: Claude via the subprocess strategy, the four OpenAI-compat providers via the in-process harness loop (§10.5).
 
 `api_key` is plaintext SQLite — same trust model as `~/.claude/.credentials.json`; no keychain integration. Empty `api_key` falls back to the per-provider env var (`OPENAI_API_KEY`, `LITELLM_API_KEY`, `ANTHROPIC_API_KEY`).
 
@@ -660,6 +660,22 @@ Bundled mode passes `CLAUDE_SKILLS_PATH=~/.prismconductor/skills/` (or the platf
 
 `buildExecuteCommand` and `buildCloseCommand` follow the same dispatch pattern with `NativeExecuteCommand` and `NativeCloseCommand` respectively.
 
+### 10.5 Harness-v1 (provider-agnostic spawn, issue #58)
+
+Claude pools spawn a `claude` CLI subprocess. The four OpenAI-compat providers (OpenAI, Ollama, LM Studio, LiteLLM) have no equivalent CLI binary, so the conductor drives the agent loop itself in-process — that's the harness. From the perspective of `tailAndParse`, `StreamParser`, and `matchPatterns`, the two strategies are indistinguishable: both feed line-delimited stream-json into the transcript file with the same role-prefix conventions.
+
+**The dispatch seam is a single `errors.Is(err, llm.ErrNotSupported)` check on `Provider.SpawnArgs`.** Claude's `SpawnArgs` returns `(argv, nil)` → subprocess strategy. The four OpenAI-compat providers return `(nil, ErrNotSupported)` → harness strategy. The session manager has no `ProviderClaude` literal in its dispatch — adding a sixth provider never edits `internal/session`.
+
+**Tool surface (seven tools).** The harness exposes a fixed tool set to the model: `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `TodoWrite`. Each is path-scoped to the worker's cwd (the worktree for execute, the repo root for plan). Tool errors are returned to the model as `is_error: true` tool results so it can recover; the harness never auto-emits `BLOCKED:` for a tool failure — only the model itself does.
+
+**Skill mode.** Bundled-only for v1. Hybrid and Native modes rely on a repo-side CLI that non-Claude providers don't have today; the harness emits `BLOCKED: harness-v1 supports SkillModeBundled only` and exits cleanly when asked.
+
+**Budgets.** Defaults: 60 turns, 200 K cumulative input tokens, 5-minute Bash timeout, 50 KB Bash output cap. Exhaustion of either turns or tokens emits the corresponding `BLOCKED: <reason>` sentinel; the existing `matchPatterns` flips state to `StateBlocked` cleanly. The model decides whether to retry on a tool failure.
+
+**Cancellation.** `Manager.Kill` calls `synthCmd.cancel()` → harness ctx cancels → in-flight HTTP/Bash returns → loop exits → `synthCmd.Wait()` returns `context.Canceled` → `mapTerminalState` lands on `Failed`. Worktree teardown runs identically to a Claude failure.
+
+The harness package (`internal/harness/`) is the only new package introduced in this phase. Provider extension: a new `ToolChat(ctx, pool, ChatRequest) (ChatResponse, error)` method on the `Provider` interface; Claude returns `ErrNotSupported`, the four OpenAI-compat providers delegate to a shared `openAIToolChat` helper that serializes `tools[]` / `tool_choice:"auto"` and decodes `choices[0].message.tool_calls[]`.
+
 ---
 
 ## 11. Local LLM (Orchestrator) Integration
@@ -669,6 +685,8 @@ Bundled mode passes `CLAUDE_SKILLS_PATH=~/.prismconductor/skills/` (or the platf
 Issue #39 moves the orchestrator's LLM client into the pool table. The user adds a single `role=orchestrator` row in **Settings → Pools** (no separate Ollama tab). The pool's provider can be Ollama, LM Studio, OpenAI, LiteLLM, or even Claude — the rank+deps call is a one-shot HTTP request through the `Provider.ChatJSON` method, not a tool-using session, so any provider works.
 
 The orchestrator resolves the pool on every `runRank` call (`Registry.OrchestratorPool()`), so changes via the UI take effect on the next event tick without an app restart. When no enabled `role=orchestrator` pool exists, `runRank` no-ops cleanly — same degraded behavior the user sees today when Ollama is unconfigured. **Strict routing contract (rev2):** there is no plan→work fallback; auto-pull pauses cleanly when no `role=plan` pool is enabled, with the Pools panel showing an informational banner.
+
+The session manager's spawn dispatch is now provider-literal-free, mirroring the §17 / #27 commitment for the workerpool/orchestrator: routing and dispatch decisions key on per-provider behavior (`SpawnArgs` returning argv vs. `ErrNotSupported`), not on `Kind() == ProviderClaude` comparisons. Adding a sixth provider doesn't touch `internal/session`. See §10.5 for the harness strategy that picks up the `ErrNotSupported` arm.
 
 Temperature is hardcoded to `0.0` for determinism. The Anthropic Messages call falls back to `claude -p --output-format json` when `ANTHROPIC_API_KEY` is unset, so a developer with only `claude` CLI auth can still run the orchestrator on a Claude pool.
 

@@ -133,6 +133,12 @@ func (c claudeProvider) ChatJSON(ctx context.Context, p types.Pool, system, user
 	return "", fmt.Errorf("anthropic returned no text content; body: %s", snippetN(string(raw), 200))
 }
 
+// ToolChat is unimplemented for Claude — Claude pools use the subprocess /
+// PTY path via SpawnArgs, not the harness. See PRISMCONDUCTOR_PLAN.md §10.5.
+func (claudeProvider) ToolChat(_ context.Context, _ types.Pool, _ ChatRequest) (ChatResponse, error) {
+	return ChatResponse{}, ErrNotSupported
+}
+
 // claudeCLIFallback shells `claude -p --output-format json` with a combined
 // prompt. Requires the user to be logged in via `claude` CLI. The CLI doesn't
 // expose a system-prompt flag for the headless print mode, so system+user are

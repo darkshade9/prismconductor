@@ -10,13 +10,17 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"prismconductor/internal/types"
 )
 
-// ErrNotSupported signals that the operation isn't wired up yet for a provider.
-// Non-Claude providers return it from SpawnArgs until harness-v1 lands.
+// ErrNotSupported signals that the operation isn't wired up for a provider.
+// Claude returns it from ToolChat (the harness only drives non-Claude pools
+// today); the four OpenAI-compat providers return it from SpawnArgs because
+// they have no native CLI to pty.Start — the harness drives their tool loop
+// via ToolChat instead.
 var ErrNotSupported = errors.New("llm: provider does not support this operation yet")
 
 // Provider drives one heterogeneous worker fleet kind.
@@ -26,9 +30,11 @@ type Provider interface {
 	DefaultEndpoint() string
 	NeedsAPIKey() bool
 
-	// CanSpawn reports whether SpawnArgs returns a working argv today. The
-	// worker-pool registry consults this to decide eligibility, so the
-	// orchestrator never compares against `ProviderClaude` literally.
+	// CanSpawn reports whether the session manager can spawn a worker for
+	// this provider — either via SpawnArgs (subprocess strategy) or via
+	// ToolChat (harness strategy). The workerpool registry consults this to
+	// decide eligibility, so the orchestrator never compares against
+	// ProviderClaude literally.
 	CanSpawn() bool
 
 	// ListModels probes the endpoint for available model IDs. Returns
@@ -37,7 +43,11 @@ type Provider interface {
 	ListModels(ctx context.Context, p types.Pool) ([]string, error)
 
 	// SpawnArgs returns the argv the session manager should pty.Start.
-	// Non-Claude providers return ErrNotSupported until harness-v1 lands.
+	// Returns ErrNotSupported for providers driven by the harness instead of
+	// a subprocess. The session manager dispatches:
+	//   - err == nil               → subprocess strategy (Claude today)
+	//   - errors.Is(err, ErrNotSupported) → harness strategy (uses ToolChat)
+	//   - other err                → surfaced to caller
 	SpawnArgs(p types.Pool, prompt string) ([]string, error)
 
 	// ChatJSON sends a system+user prompt and returns the raw model output.
@@ -49,6 +59,64 @@ type Provider interface {
 	//   - ProviderOllama:                  /v1/chat/completions (ollama serves
 	//                                      OpenAI-compat too).
 	ChatJSON(ctx context.Context, p types.Pool, system, user string) (string, error)
+
+	// ToolChat sends a tool-using chat turn and returns the assistant's
+	// content + any requested tool calls (issue #58). Non-streaming for v1.
+	// Claude returns ErrNotSupported — Claude pools keep the PTY/subprocess
+	// path for now. The four OpenAI-compat providers route through their
+	// /v1/chat/completions endpoint with `tools:` serialized.
+	ToolChat(ctx context.Context, p types.Pool, req ChatRequest) (ChatResponse, error)
+}
+
+// ChatRequest is the wire-shape carried into Provider.ToolChat (issue #58).
+type ChatRequest struct {
+	System  string
+	History []Message
+	Tools   []ToolDef
+}
+
+// Message is one turn in the chat history. Role is "user", "assistant", or
+// "tool". For assistant messages, ToolCalls may be populated. For tool
+// messages, ToolCallID identifies which assistant tool call this result
+// answers.
+type Message struct {
+	Role       string
+	Content    string
+	ToolCalls  []ToolCall
+	ToolCallID string
+}
+
+// ToolDef advertises a tool the model can call. Parameters is JSONSchema.
+type ToolDef struct {
+	Name        string
+	Description string
+	Parameters  json.RawMessage
+}
+
+// ToolCall is one model-issued tool invocation. Args is JSON matching the
+// corresponding ToolDef.Parameters.
+type ToolCall struct {
+	ID   string
+	Name string
+	Args json.RawMessage
+}
+
+// ChatResponse is the wire-shape returned from Provider.ToolChat.
+// Stop is true when the model signals end-of-turn with no tool calls
+// (i.e. native stop). Otherwise the harness sends each ToolCall through the
+// tool registry and feeds the results back as additional Messages.
+type ChatResponse struct {
+	Content   string
+	ToolCalls []ToolCall
+	Stop      bool
+	Usage     UsageCounts
+}
+
+// UsageCounts mirror the OpenAI usage block. Captured per-call but not yet
+// aggregated into a cost dashboard (out of scope for #58).
+type UsageCounts struct {
+	InputTokens  int
+	OutputTokens int
 }
 
 // Registry holds one Provider per kind plus a stable ordering for the UI.

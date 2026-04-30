@@ -26,12 +26,22 @@ func TestRegistryGetAndOrder(t *testing.T) {
 }
 
 func TestRegistryCanSpawn(t *testing.T) {
-	r := NewRegistry(NewClaudeProvider(), NewOpenAIProvider())
+	r := NewRegistry(NewClaudeProvider(), NewOpenAIProvider(), NewLiteLLMProvider(), NewLMStudioProvider(), NewOllamaProvider())
 	if !r.CanSpawn(types.ProviderClaude) {
 		t.Fatal("claude.CanSpawn should be true")
 	}
-	if r.CanSpawn(types.ProviderOpenAI) {
-		t.Fatal("openai.CanSpawn should be false until harness-v1")
+	// Issue #58: harness-v1 flips CanSpawn() to true on the four
+	// OpenAI-compat providers. The session manager dispatches them through
+	// the in-process loop instead of pty.Start.
+	for _, kind := range []types.Provider{
+		types.ProviderOpenAI,
+		types.ProviderLiteLLM,
+		types.ProviderLMStudio,
+		types.ProviderOllama,
+	} {
+		if !r.CanSpawn(kind) {
+			t.Errorf("%s.CanSpawn should be true post harness-v1", kind)
+		}
 	}
 	if r.CanSpawn(types.Provider("missing")) {
 		t.Fatal("unknown provider's CanSpawn should be false")
@@ -74,13 +84,46 @@ func TestNonClaudeProvidersReturnNotSupportedForSpawnArgs(t *testing.T) {
 	}
 	for _, p := range cases {
 		t.Run(string(p.Kind()), func(t *testing.T) {
-			if p.CanSpawn() {
-				t.Fatalf("%s.CanSpawn should be false until harness-v1", p.Kind())
+			// Issue #58: CanSpawn flipped to true; the session manager now
+			// drives these via the harness when SpawnArgs returns
+			// ErrNotSupported. SpawnArgs itself still signals "harness me"
+			// with ErrNotSupported.
+			if !p.CanSpawn() {
+				t.Fatalf("%s.CanSpawn should be true post harness-v1", p.Kind())
 			}
 			if _, err := p.SpawnArgs(types.Pool{}, "x"); err != ErrNotSupported {
 				t.Fatalf("%s.SpawnArgs returned %v, want ErrNotSupported", p.Kind(), err)
 			}
 		})
+	}
+}
+
+// TestClaudeToolChatNotSupported pins Claude's harness-side behavior: until
+// the harness drives Claude pools too (separate ticket), Claude's ToolChat
+// returns ErrNotSupported and the session manager keeps the PTY/subprocess
+// strategy via SpawnArgs.
+func TestClaudeToolChatNotSupported(t *testing.T) {
+	p := NewClaudeProvider()
+	if _, err := p.ToolChat(context.Background(), types.Pool{}, ChatRequest{}); err != ErrNotSupported {
+		t.Fatalf("claude.ToolChat returned %v, want ErrNotSupported", err)
+	}
+}
+
+// TestProvidersImplementToolChat is a compile-time-style guard that every
+// registered provider satisfies the harness-v1 Provider interface (issue
+// #58). If a future provider is added without ToolChat, this test fails to
+// compile.
+func TestProvidersImplementToolChat(t *testing.T) {
+	cases := []Provider{
+		NewClaudeProvider(),
+		NewOpenAIProvider(),
+		NewLiteLLMProvider(),
+		NewLMStudioProvider(),
+		NewOllamaProvider(),
+	}
+	for _, p := range cases {
+		var _ Provider = p
+		_ = p.Kind()
 	}
 }
 

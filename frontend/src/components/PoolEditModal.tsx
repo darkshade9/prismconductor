@@ -80,9 +80,6 @@ export function PoolEditModal({
     );
   }, [role, existingPools, initial]);
 
-  const harnessPending =
-    (role === "plan" || role === "work") && providerInfo && !providerInfo.can_spawn;
-
   useEffect(() => {
     if (initial) return;
     if (!providerInfo) return;
@@ -217,12 +214,6 @@ export function PoolEditModal({
                 </option>
               ))}
             </select>
-            {harnessPending && (
-              <div className="text-[11px] text-amber-300 mt-1">
-                Pools with this provider can be saved now but will return an
-                error on spawn until harness-v1 ships.
-              </div>
-            )}
           </div>
 
           {providerInfo && providerKind !== "claude" && (

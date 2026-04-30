@@ -26,7 +26,7 @@ func (lmstudioProvider) Kind() types.Provider    { return types.ProviderLMStudio
 func (lmstudioProvider) DisplayName() string     { return "LM Studio" }
 func (lmstudioProvider) DefaultEndpoint() string { return defaultLMStudioEndpoint }
 func (lmstudioProvider) NeedsAPIKey() bool       { return true }
-func (lmstudioProvider) CanSpawn() bool          { return false }
+func (lmstudioProvider) CanSpawn() bool          { return true }
 
 // ListModels prefers LM Studio's /api/v0/models (native — includes load state)
 // filtering to loaded entries, falling back to OpenAI-compat /v1/models when
@@ -73,9 +73,23 @@ func (lmstudioProvider) SpawnArgs(_ types.Pool, _ string) ([]string, error) {
 }
 
 func (l lmstudioProvider) ChatJSON(ctx context.Context, p types.Pool, system, user string) (string, error) {
+	endpoint := l.resolveEndpoint(p)
+	return openAICompatChat(ctx, l.client, endpoint, p.APIKey, p.Model, system, user)
+}
+
+// ToolChat drives a tool-using turn through LM Studio's OpenAI-compat endpoint
+// (issue #58). LM Studio's tool-calling support varies by loaded model; for
+// models without native tool tokens the server may emit content only and the
+// harness treats that as a clean stop.
+func (l lmstudioProvider) ToolChat(ctx context.Context, p types.Pool, req ChatRequest) (ChatResponse, error) {
+	endpoint := l.resolveEndpoint(p)
+	return openAIToolChat(ctx, l.client, endpoint, p.APIKey, p.Model, req)
+}
+
+func (l lmstudioProvider) resolveEndpoint(p types.Pool) string {
 	endpoint := strings.TrimRight(p.Endpoint, "/")
 	if endpoint == "" {
 		endpoint = defaultLMStudioEndpoint
 	}
-	return openAICompatChat(ctx, l.client, endpoint, p.APIKey, p.Model, system, user)
+	return endpoint
 }
