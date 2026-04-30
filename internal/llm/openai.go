@@ -11,7 +11,11 @@ import (
 	"prismconductor/internal/types"
 )
 
-const defaultOpenAIEndpoint = "https://api.openai.com/v1"
+// defaultOpenAIEndpoint is the bare host. The `/v1` segment is added by
+// `chatCompletionsURL` (orchestrator_chat.go) and by ListModels below; keeping
+// it out of the constant means a user pasting `https://api.openai.com/v1` into
+// the pool editor doesn't double-prefix into `…/v1/v1/chat/completions`.
+const defaultOpenAIEndpoint = "https://api.openai.com"
 
 type openaiProvider struct {
 	client *http.Client
@@ -36,7 +40,7 @@ func (o openaiProvider) ListModels(ctx context.Context, p types.Pool) ([]string,
 	if key == "" {
 		key = os.Getenv("OPENAI_API_KEY")
 	}
-	body, err := httpGetWithBearer(ctx, o.client, endpoint+"/models", key)
+	body, err := httpGetWithBearer(ctx, o.client, modelsURL(endpoint), key)
 	if err != nil {
 		return nil, err
 	}
