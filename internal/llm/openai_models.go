@@ -24,8 +24,15 @@ func decodeOpenAIModels(r io.Reader) ([]string, error) {
 	}
 	ids := make([]string, 0, len(out.Data))
 	for _, m := range out.Data {
-		if m.ID != "" {
-			ids = append(ids, m.ID)
+		// Gemini's OpenAI-compat /models endpoint returns IDs in its native
+		// form `models/<id>` (e.g. `models/gemini-2.0-flash`). The chat
+		// completions surface, however, expects the bare ID. Strip the prefix
+		// here so the dropdown surfaces a model the user can immediately use.
+		// LM Studio / OpenAI / LiteLLM never emit this prefix, so the trim is a
+		// no-op for them.
+		id := strings.TrimPrefix(m.ID, "models/")
+		if id != "" {
+			ids = append(ids, id)
 		}
 	}
 	sort.Strings(ids)

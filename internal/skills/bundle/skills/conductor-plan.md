@@ -82,8 +82,43 @@ Bundled by PrismConductor. Used in Bundled and Hybrid skill modes (PRISMCONDUCTO
    **One recommendation per question — always.** If you find yourself wanting to recommend more than one answer for a single question, the question's scope is too large. Split it into multiple `yes_no` questions (or smaller `single_choice` questions), each with exactly one recommendation. This applies to `multi_choice` in particular: if you'd recommend two or more options, replace the `multi_choice` question with one `yes_no` per option.
 
    Refusing to recommend ("I'm not sure, you decide") is not allowed. If you genuinely cannot pick, the question should be split into smaller yes_no questions or removed.
-6. Write the plan to `.prismconductor/plans/<issue>-rev1.json` matching §9.1 exactly. Include the
-   suggestions as the `suggested_labels` array (omit the field entirely if empty).
+6. Write the plan to `.prismconductor/plans/<issue>-rev1.json` using **exactly** these top-level keys (verbatim — `issue_number`, `revision`, etc., not `issue` / `rev`):
+
+   ```json
+   {
+     "issue_number": 53,
+     "revision": 1,
+     "goal_summary": "...",
+     "executive_summary": "...",
+     "plan_markdown": "...",
+     "files_to_modify": [
+       { "path": "frontend/src/components/Card.tsx", "intent": "modify" }
+     ],
+     "dependencies_detected": [],
+     "suggested_labels": ["enhancement"],
+     "questions": [
+       {
+         "id": "q1",
+         "type": "single_choice",
+         "prompt": "...",
+         "options": ["A", "B"],
+         "default": "A",
+         "required": true
+       }
+     ],
+     "estimated_complexity": "S",
+     "ready_to_execute": false
+   }
+   ```
+
+   Field name rules (strict — the conductor's validator requires the canonical names):
+   - `issue_number` (NOT `issue`).
+   - `revision` (NOT `rev`).
+   - `files_to_modify` is an array of `{path, intent}` objects, NOT `{add, modify, delete}` lists.
+   - `suggested_labels` is an array of plain label strings (`"enhancement"`), NOT label-with-action strings (`"enhancement (create)"`).
+   - Omit `suggested_labels` entirely if empty.
+   - Do NOT include `workspace_id` — the conductor attaches it on read.
+
 7. Print `Plan written to .prismconductor/plans/<issue>-rev1.json` so the conductor's PTY parser picks it up (§10.3).
 8. Stop. Do not edit code.
 
