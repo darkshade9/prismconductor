@@ -17,12 +17,28 @@ import (
 // the pool editor doesn't double-prefix into `…/v1/v1/chat/completions`.
 const defaultOpenAIEndpoint = "https://api.openai.com"
 
+// UsageSink is called by OpenAI ChatJSON/ToolChat after every successful HTTP
+// response with any rate-limit snapshots parsed from the response headers.
+// Implementations should be non-blocking (fire-and-forget is fine).
+type UsageSink func([]types.PoolUsage)
+
 type openaiProvider struct {
-	client *http.Client
+	client    *http.Client
+	usageSink UsageSink
 }
 
+// NewOpenAIProvider returns a provider with no usage sink.
 func NewOpenAIProvider() Provider {
 	return openaiProvider{client: &http.Client{Timeout: 5 * time.Minute}}
+}
+
+// NewOpenAIProviderWithSink returns a provider that calls sink after each
+// successful call with any rate-limit snapshots found in response headers.
+func NewOpenAIProviderWithSink(sink UsageSink) Provider {
+	return openaiProvider{
+		client:    &http.Client{Timeout: 5 * time.Minute},
+		usageSink: sink,
+	}
 }
 
 func (openaiProvider) Kind() types.Provider    { return types.ProviderOpenAI }
@@ -55,14 +71,16 @@ func (openaiProvider) SpawnArgs(_ types.Pool, _ string) ([]string, error) {
 // OPENAI_API_KEY so existing operator setups keep working.
 func (o openaiProvider) ChatJSON(ctx context.Context, p types.Pool, system, user string) (string, error) {
 	endpoint, key := o.resolve(p)
-	return openAICompatChat(ctx, o.client, endpoint, key, p.Model, system, user)
+	onHeaders := o.headerCallback(p)
+	return openAICompatChat(ctx, o.client, endpoint, key, p.Model, system, user, onHeaders)
 }
 
 // ToolChat drives a tool-using turn against OpenAI's /v1/chat/completions
 // (issue #58). Used by the harness when SpawnArgs returns ErrNotSupported.
 func (o openaiProvider) ToolChat(ctx context.Context, p types.Pool, req ChatRequest) (ChatResponse, error) {
 	endpoint, key := o.resolve(p)
-	return openAIToolChat(ctx, o.client, endpoint, key, p.Model, req)
+	onHeaders := o.headerCallback(p)
+	return openAIToolChat(ctx, o.client, endpoint, key, p.Model, req, onHeaders)
 }
 
 func (o openaiProvider) resolve(p types.Pool) (string, string) {
@@ -75,4 +93,21 @@ func (o openaiProvider) resolve(p types.Pool) (string, string) {
 		key = os.Getenv("OPENAI_API_KEY")
 	}
 	return endpoint, key
+}
+
+// headerCallback returns a closure that parses rate-limit headers and forwards
+// them to the usage sink. Returns nil when no sink is configured.
+func (o openaiProvider) headerCallback(p types.Pool) func(http.Header) {
+	if o.usageSink == nil {
+		return nil
+	}
+	sink := o.usageSink
+	poolID := p.ID
+	poolName := p.Name
+	return func(h http.Header) {
+		usages := ParseOpenAIRateLimitHeaders(h, poolID, poolName)
+		if len(usages) > 0 {
+			sink(usages)
+		}
+	}
 }

@@ -72,7 +72,7 @@ func (litellmProvider) SpawnArgs(_ types.Pool, _ string) ([]string, error) {
 
 func (l litellmProvider) ChatJSON(ctx context.Context, p types.Pool, system, user string) (string, error) {
 	endpoint, key := l.resolve(p)
-	return openAICompatChat(ctx, l.client, endpoint, key, p.Model, system, user)
+	return openAICompatChat(ctx, l.client, endpoint, key, p.Model, system, user, nil)
 }
 
 // ToolChat drives a tool-using turn through LiteLLM's OpenAI-compat endpoint
@@ -80,7 +80,7 @@ func (l litellmProvider) ChatJSON(ctx context.Context, p types.Pool, system, use
 // model emits tool_calls depends on the backend.
 func (l litellmProvider) ToolChat(ctx context.Context, p types.Pool, req ChatRequest) (ChatResponse, error) {
 	endpoint, key := l.resolve(p)
-	return openAIToolChat(ctx, l.client, endpoint, key, p.Model, req)
+	return openAIToolChat(ctx, l.client, endpoint, key, p.Model, req, nil)
 }
 
 func (l litellmProvider) resolve(p types.Pool) (string, string) {

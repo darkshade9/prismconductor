@@ -17,9 +17,9 @@ export function AddWorkspace(arg1:types.Workspace):Promise<void>;
 
 export function ApprovePlan(arg1:string,arg2:number,arg3:number):Promise<void>;
 
-export function ContinueWork(arg1:string,arg2:number,arg3:string):Promise<void>;
-
 export function ArchiveDone(arg1:string):Promise<number>;
+
+export function ContinueWork(arg1:string,arg2:number,arg3:string):Promise<void>;
 
 export function CreateLabel(arg1:string,arg2:types.Label):Promise<types.Label>;
 
@@ -44,6 +44,8 @@ export function GetMidRunQuestion(arg1:string,arg2:number,arg3:string):Promise<t
 export function GetNotifyPrefs():Promise<main.NotifyPrefs>;
 
 export function GetPollInterval():Promise<number>;
+
+export function GetPoolUsage():Promise<Array<types.PoolUsage>>;
 
 export function GitHubAuthStatus():Promise<githubauth.User>;
 

@@ -22,6 +22,10 @@ export function ArchiveDone(arg1) {
   return window['go']['main']['App']['ArchiveDone'](arg1);
 }
 
+export function ContinueWork(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ContinueWork'](arg1, arg2, arg3);
+}
+
 export function CreateLabel(arg1, arg2) {
   return window['go']['main']['App']['CreateLabel'](arg1, arg2);
 }
@@ -36,10 +40,6 @@ export function DeleteLabel(arg1, arg2) {
 
 export function DeletePool(arg1) {
   return window['go']['main']['App']['DeletePool'](arg1);
-}
-
-export function ContinueWork(arg1, arg2, arg3) {
-  return window['go']['main']['App']['ContinueWork'](arg1, arg2, arg3);
 }
 
 export function FetchIssueDetail(arg1, arg2) {
@@ -72,6 +72,10 @@ export function GetNotifyPrefs() {
 
 export function GetPollInterval() {
   return window['go']['main']['App']['GetPollInterval']();
+}
+
+export function GetPoolUsage() {
+  return window['go']['main']['App']['GetPoolUsage']();
 }
 
 export function GitHubAuthStatus() {
