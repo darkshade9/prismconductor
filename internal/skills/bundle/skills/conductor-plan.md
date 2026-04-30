@@ -111,12 +111,15 @@ Bundled by PrismConductor. Used in Bundled and Hybrid skill modes (PRISMCONDUCTO
    }
    ```
 
-   Field name rules (strict — the conductor's validator requires the canonical names):
+   The harness validates this file against the §9.1 contract **before** writing it to disk. If the validator rejects your plan you'll receive a tool_result with `is_error: true` and a specific message naming the offending field — fix that field and call `Write` again with the corrected content. Do not proceed (no `Plan written to ...`, no other tool calls) until the validator accepts the plan.
+
+   Field name rules:
    - `issue_number` (NOT `issue`).
    - `revision` (NOT `rev`).
    - `files_to_modify` is an array of `{path, intent}` objects, NOT `{add, modify, delete}` lists.
-   - `suggested_labels` is an array of plain label strings (`"enhancement"`), NOT label-with-action strings (`"enhancement (create)"`).
-   - Omit `suggested_labels` entirely if empty.
+   - `suggested_labels` is an array of plain label strings (`"enhancement"`), NOT label-with-action strings (`"enhancement (create)"`). Omit entirely if empty.
+   - `dependencies_detected` is required — use `[]` if there are none.
+   - `ready_to_execute` is required — emit a literal `true` or `false`.
    - Do NOT include `workspace_id` — the conductor attaches it on read.
 
 7. Print `Plan written to .prismconductor/plans/<issue>-rev1.json` so the conductor's PTY parser picks it up (§10.3).

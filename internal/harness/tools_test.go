@@ -61,6 +61,84 @@ func TestToolWrite_AtomicAndScoped(t *testing.T) {
 	}
 }
 
+// TestToolWrite_RejectsBadPlan pins the harness's pre-write validation
+// boundary (issue #71): a plan written under .prismconductor/plans/ that
+// doesn't satisfy §9.1 must be rejected, no file landing on disk, and the
+// error must name the offending field so the model can self-correct on
+// the next turn.
+func TestToolWrite_RejectsBadPlan(t *testing.T) {
+	e := newEnv(t)
+	body := `{
+		"issue": 5,
+		"rev": 1,
+		"plan_markdown": "x",
+		"files_to_modify": [],
+		"dependencies_detected": [],
+		"questions": [],
+		"estimated_complexity": "S",
+		"ready_to_execute": false
+	}`
+	args, _ := json.Marshal(map[string]string{
+		"file_path": ".prismconductor/plans/5-rev1.json",
+		"content":   body,
+	})
+	_, err := toolWrite(context.Background(), e, args)
+	if err == nil {
+		t.Fatal("expected validator rejection for bad plan, got nil")
+	}
+	if !strings.Contains(err.Error(), "issue_number") {
+		t.Errorf("error should name `issue_number` so the model can fix: %v", err)
+	}
+	// File must NOT exist on disk.
+	if _, statErr := os.Stat(filepath.Join(e.Cwd, ".prismconductor/plans/5-rev1.json")); statErr == nil {
+		t.Error("rejected plan should not have been written to disk")
+	}
+}
+
+// TestToolWrite_AcceptsGoodPlan pins the happy path: a §9.1-conforming plan
+// under the plans dir writes successfully through the validator.
+func TestToolWrite_AcceptsGoodPlan(t *testing.T) {
+	e := newEnv(t)
+	body := `{
+		"issue_number": 5,
+		"revision": 1,
+		"plan_markdown": "x",
+		"files_to_modify": [],
+		"dependencies_detected": [],
+		"questions": [],
+		"estimated_complexity": "S",
+		"ready_to_execute": false
+	}`
+	args, _ := json.Marshal(map[string]string{
+		"file_path": ".prismconductor/plans/5-rev1.json",
+		"content":   body,
+	})
+	out, err := toolWrite(context.Background(), e, args)
+	if err != nil {
+		t.Fatalf("good plan rejected: %v", err)
+	}
+	if !strings.Contains(out, "5-rev1.json") {
+		t.Errorf("write result should reference the path: %q", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(e.Cwd, ".prismconductor/plans/5-rev1.json")); statErr != nil {
+		t.Errorf("good plan should be on disk: %v", statErr)
+	}
+}
+
+// TestToolWrite_NonPlanPathBypassesValidator pins that the validator is
+// scoped to plan-file paths only — regular code edits under the worktree
+// are not subject to §9.1.
+func TestToolWrite_NonPlanPathBypassesValidator(t *testing.T) {
+	e := newEnv(t)
+	args, _ := json.Marshal(map[string]string{
+		"file_path": "src/main.go",
+		"content":   `package main // not a plan file`,
+	})
+	if _, err := toolWrite(context.Background(), e, args); err != nil {
+		t.Fatalf("non-plan write should bypass validator: %v", err)
+	}
+}
+
 func TestToolEdit_NonUniqueOldStringRejected(t *testing.T) {
 	e := newEnv(t)
 	if err := os.WriteFile(filepath.Join(e.Cwd, "f.txt"), []byte("foo bar foo"), 0o644); err != nil {

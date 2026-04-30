@@ -31,42 +31,27 @@ func AnswerPath(repoPath string, issueNumber, revision int) string {
 	return filepath.Join(repoPath, subdirAnswers, fmt.Sprintf("%d-rev%d.json", issueNumber, revision))
 }
 
-// ReadPlan reads + validates a plan JSON file against the §9.1 contract.
+// ReadPlan reads a plan file and runs strict §9.1 validation. By the time a
+// plan reaches this codepath the harness's Write tool has already validated
+// it (issue #71); the duplication here exists for plans loaded from disk on
+// startup, replan, etc. — i.e. paths that don't pass through the harness.
 //
-// Two leniency arms exist for non-Claude planners (issue #67):
-//
-//  1. `issue` is accepted as an alias for `issue_number`, `rev` for `revision`.
-//     gpt-5-mini and similar abbreviate these consistently; rather than fight
-//     each model's tendencies via prompt-tuning, the validator normalizes.
-//  2. `workspace_id` is no longer required at the worker boundary. The worker
-//     has no way to know the conductor's internal workspace id; the conductor
-//     attaches it post-read (see app.handlePlanReady).
+// `workspace_id` is intentionally not required: the worker has no way to know
+// the conductor's internal workspace id, so the conductor attaches it post-
+// read in app.handlePlanReady. Any other field-name divergence is rejected
+// — there is no alias acceptance and no per-model fallback. The contract is
+// the contract.
 func ReadPlan(path string) (*types.Plan, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	if err := ValidatePlanJSON(b); err != nil {
+		return nil, fmt.Errorf("plan validation failed for %s: %w", path, err)
+	}
 	var p types.Plan
 	if err := json.Unmarshal(b, &p); err != nil {
 		return nil, fmt.Errorf("invalid plan JSON at %s: %w", path, err)
-	}
-	if p.IssueNumber == 0 || p.Revision == 0 {
-		// Try the abbreviated aliases used by some hosted models.
-		var aliased struct {
-			Issue int `json:"issue"`
-			Rev   int `json:"rev"`
-		}
-		if err := json.Unmarshal(b, &aliased); err == nil {
-			if p.IssueNumber == 0 {
-				p.IssueNumber = aliased.Issue
-			}
-			if p.Revision == 0 {
-				p.Revision = aliased.Rev
-			}
-		}
-	}
-	if p.IssueNumber == 0 || p.Revision == 0 {
-		return nil, errors.New("plan JSON missing required fields (issue_number/issue, revision/rev)")
 	}
 	if p.GeneratedAt.IsZero() {
 		p.GeneratedAt = time.Now()
