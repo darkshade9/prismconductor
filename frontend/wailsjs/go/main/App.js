@@ -142,10 +142,6 @@ export function MoveIssueColumn(arg1, arg2, arg3) {
   return window['go']['main']['App']['MoveIssueColumn'](arg1, arg2, arg3);
 }
 
-export function Notify(arg1, arg2) {
-  return window['go']['main']['App']['Notify'](arg1, arg2);
-}
-
 export function OnboardCheck(arg1) {
   return window['go']['main']['App']['OnboardCheck'](arg1);
 }

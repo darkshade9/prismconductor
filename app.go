@@ -27,7 +27,6 @@ import (
 	"prismconductor/internal/planio"
 	"prismconductor/internal/githubauth"
 	"prismconductor/internal/llm"
-	"prismconductor/internal/notify"
 	"prismconductor/internal/orchestrator"
 	"prismconductor/internal/session"
 	"prismconductor/internal/skills/bundle"
@@ -247,7 +246,7 @@ func (a *App) startup(ctx context.Context) {
 }
 
 // handleSessionStateChange runs on every session state transition. Fans the
-// new state to the UI as a Wails event and fires an OS notification per §15.6.
+// new state to the UI as a Wails event and fires an in-app toast per §15.6.
 func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionState) {
 	wruntime.EventsEmit(a.ctx, "session.state", sess)
 
@@ -272,9 +271,22 @@ func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionSta
 			return
 		}
 
-		title := titleForWorkspace(a.wsReg, sess.WorkspaceID)
-		body := notifyBody(sess)
-		_ = notify.Send(title, body)
+		var level string
+		switch sess.State {
+		case types.StateBlocked, types.StateFailed:
+			level = "error"
+		case types.StateWaitingForInput, types.StatePausedForQuestion:
+			level = "warning"
+		case types.StateCompleted:
+			level = "info"
+		default:
+			return
+		}
+		a.emitToast(level, toastWorkspaceName(a.wsReg, sess.WorkspaceID), notifyBody(sess), map[string]any{
+			"workspace_id": sess.WorkspaceID,
+			"issue_number": sess.IssueNumber,
+			"action":       "focus_card",
+		})
 	}
 }
 
@@ -352,12 +364,16 @@ func (a *App) SetNotifyPrefs(p NotifyPrefs) error {
 	return nil
 }
 
-func titleForWorkspace(reg *workspace.Registry, id string) string {
+// toastWorkspaceName returns the workspace's display name for use as a toast
+// title. Falls back to "PrismConductor" when the workspace ID is empty/unknown.
+// Toasts render inside the app frame, so the long-form "PrismConductor — X"
+// title from the prior osascript path is no longer needed.
+func toastWorkspaceName(reg *workspace.Registry, id string) string {
 	if reg == nil || id == "" {
 		return "PrismConductor"
 	}
 	if ws, ok := reg.Get(id); ok {
-		return "PrismConductor — " + ws.DisplayName
+		return ws.DisplayName
 	}
 	return "PrismConductor"
 }
@@ -392,6 +408,26 @@ func (a *App) emitLine(sessionID, line string) {
 		"session_id": sessionID,
 		"line":       line,
 	})
+}
+
+// emitToast sends a transient in-app toast to the frontend via Wails event.
+// Replaces the old osascript-backed notify.Send (issue #32). The level drives
+// styling on the frontend; payload carries click-target metadata
+// (workspace_id, issue_number, optional pr_url, action).
+func (a *App) emitToast(level, title, body string, payload map[string]any) {
+	if a.ctx == nil {
+		return
+	}
+	msg := map[string]any{
+		"id":    uuid.NewString(),
+		"level": level,
+		"title": title,
+		"body":  body,
+	}
+	for k, v := range payload {
+		msg[k] = v
+	}
+	wruntime.EventsEmit(a.ctx, "toast", msg)
 }
 
 // gcWorktreesAll prunes orphan worktree records and removes any
@@ -1380,8 +1416,16 @@ func (a *App) handlePlanReady(sess types.Session, relPath string) {
 	})
 	// Move the card to the PLAN column if it isn't there already.
 	_ = a.store.MoveIssueColumn(sess.WorkspaceID, sess.IssueNumber, types.ColPlan)
-	_ = notify.Send(titleForWorkspace(a.wsReg, sess.WorkspaceID),
-		fmt.Sprintf("#%d plan ready (rev %d, %d questions)", sess.IssueNumber, plan.Revision, len(plan.Questions)))
+	if a.notificationsSuppressed() {
+		return
+	}
+	a.emitToast("info", toastWorkspaceName(a.wsReg, sess.WorkspaceID),
+		fmt.Sprintf("#%d plan ready (rev %d, %d questions)", sess.IssueNumber, plan.Revision, len(plan.Questions)),
+		map[string]any{
+			"workspace_id": sess.WorkspaceID,
+			"issue_number": sess.IssueNumber,
+			"action":       "open_plan",
+		})
 }
 
 // pullNumberRegexp extracts the PR number from a github.com pull URL.
@@ -1431,15 +1475,24 @@ func (a *App) handlePROpened(sess types.Session, prURL string) {
 		"pr_number":    n,
 		"pr_url":       prURL,
 	})
-	_ = notify.Send(titleForWorkspace(a.wsReg, sess.WorkspaceID),
-		fmt.Sprintf("#%d opened PR #%d", sess.IssueNumber, n))
+	if a.notificationsSuppressed() {
+		return
+	}
+	a.emitToast("success", toastWorkspaceName(a.wsReg, sess.WorkspaceID),
+		fmt.Sprintf("#%d opened PR #%d", sess.IssueNumber, n),
+		map[string]any{
+			"workspace_id": sess.WorkspaceID,
+			"issue_number": sess.IssueNumber,
+			"pr_url":       prURL,
+			"action":       "open_pr",
+		})
 }
 
-// notifyOnPRStateChange fires an OS notification when the poller publishes
-// a pr_merged or pr_closed_unmerged event (#33). The poller can't call
-// notify.Send directly without an awkward layering import; the bus.Subscribe
+// notifyOnPRStateChange fires an in-app toast when the poller publishes
+// a pr_merged or pr_closed_unmerged event (#33). The poller can't emit
+// toasts directly without an awkward layering import; the bus.Subscribe
 // callback is the cleanest seam. Honors the same mute/quiet-hours gate as
-// session-state notifications.
+// session-state toasts.
 func (a *App) notifyOnPRStateChange(e eventbus.Event) {
 	if e.Type != eventbus.EvtPRMerged && e.Type != eventbus.EvtPRClosedUnmerged {
 		return
@@ -1457,15 +1510,32 @@ func (a *App) notifyOnPRStateChange(e eventbus.Event) {
 	if v, ok := payload["issue_number"].(int); ok {
 		issNum = v
 	}
-	title := titleForWorkspace(a.wsReg, wsID)
-	var body string
+	prURL, _ := payload["pr_url"].(string)
+	title := toastWorkspaceName(a.wsReg, wsID)
+	var (
+		body   string
+		level  string
+		action string
+	)
 	switch e.Type {
 	case eventbus.EvtPRMerged:
 		body = fmt.Sprintf("#%d merged → DONE", issNum)
+		level = "success"
+		action = "open_pr"
 	case eventbus.EvtPRClosedUnmerged:
 		body = fmt.Sprintf("#%d PR closed without merge", issNum)
+		level = "error"
+		action = "focus_card"
 	}
-	_ = notify.Send(title, body)
+	toastPayload := map[string]any{
+		"workspace_id": wsID,
+		"issue_number": issNum,
+		"action":       action,
+	}
+	if prURL != "" {
+		toastPayload["pr_url"] = prURL
+	}
+	a.emitToast(level, title, body, toastPayload)
 }
 
 // LatestPlan returns the highest-revision plan for an issue.
@@ -1940,9 +2010,6 @@ func (a *App) KillSession(id string) error { return a.mgr.Kill(id) }
 
 // SendInput writes user input to a PTY session.
 func (a *App) SendInput(id, text string) error { return a.mgr.SendInput(id, text) }
-
-// Notify shows an OS notification.
-func (a *App) Notify(title, body string) error { return notify.Send(title, body) }
 
 // --- GitHub login (OAuth Device Flow) ---
 

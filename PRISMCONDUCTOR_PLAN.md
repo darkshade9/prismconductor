@@ -981,6 +981,12 @@ When user drags between columns, that's a workflow state change. Emit appropriat
 - Quiet hours configurable.
 - App badge count = total cards in `waiting_for_input` or `blocked` state.
 
+> Transport changed from OS notification (`osascript`) to a Wails-event-driven
+> in-app toast stack rendered bottom-right (max 3 visible, 6s auto-dismiss,
+> click routes to PlanModal or PR URL). Background-window alerts and the dock
+> badge count are deferred to a future Swift `UNUserNotificationCenter`
+> helper (issue #32).
+
 ### 15.7 Bundled Skills
 
 The conductor ships four universal skills with the binary:
@@ -1095,8 +1101,6 @@ prismconductor/
 │   │   └── queries.go
 │   ├── eventbus/
 │   │   └── bus.go
-│   ├── notify/
-│   │   └── notify.go
 │   ├── workspace/
 │   │   ├── registry.go
 │   │   └── detect.go              # SkillProfile auto-detection (Phase 4.5)
