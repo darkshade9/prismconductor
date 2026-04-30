@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ApprovePlan, LatestPlan, RejectPlan, SetIssueLabels, SubmitAnswers } from "../../wailsjs/go/main/App";
@@ -38,11 +38,18 @@ export function PlanModal({
     open: false,
   });
 
+  const handleClose = useCallback(() => {
+    setRefineText("");
+    setAnswers(emptyAnswers());
+    onClose();
+  }, [onClose]);
+
   useEffect(() => {
     if (!open || !issue) return;
     setLoading(true);
     setError(null);
     setAnswers(emptyAnswers());
+    setRefineText("");
     LatestPlan(issue.workspace_id, issue.number)
       .then((p) => {
         setPlan(p ?? null);
@@ -81,7 +88,9 @@ export function PlanModal({
           multi: answers.multi,
         }),
       );
-      onClose();
+      setRefineText("");
+      setAnswers(emptyAnswers());
+      handleClose();
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -96,7 +105,7 @@ export function PlanModal({
     try {
       await ApprovePlan(issue.workspace_id, issue.number, plan.revision);
       await refreshIssues();
-      onClose();
+      handleClose();
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -111,7 +120,7 @@ export function PlanModal({
     try {
       await RejectPlan(issue.workspace_id, issue.number);
       await refreshIssues();
-      onClose();
+      handleClose();
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -126,7 +135,7 @@ export function PlanModal({
           <div className="text-slate-200">
             Plan: #{issue.number} — <span className="text-slate-400">{issue.title}</span>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-200">✕</button>
+          <button onClick={handleClose} className="text-slate-400 hover:text-slate-200">✕</button>
         </div>
         <div className="px-4 py-3 text-xs text-slate-500 flex items-center gap-3 border-b border-slate-800">
           <span>{issue.workspace_id}</span>
