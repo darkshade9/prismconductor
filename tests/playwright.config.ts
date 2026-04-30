@@ -14,7 +14,7 @@ export default defineConfig({
     // own Xorg/Quartz handles it natively. Detection via CI=true (set by
     // GitHub Actions and the same env Playwright already keys on).
     command: process.env.CI
-      ? "xvfb-run --auto-servernum --server-args=-screen 0 1280x800x24 wails dev -loglevel error"
+      ? "xvfb-run --auto-servernum --server-args='-screen 0 1280x800x24' wails dev -loglevel error"
       : "wails dev -loglevel error",
     url: "http://localhost:34115",
     reuseExistingServer: !process.env.CI,
