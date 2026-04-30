@@ -477,3 +477,121 @@ func TestSaveIssuePreservesArchivedAtOnClosedRoundtrip(t *testing.T) {
 		t.Errorf("archived row count = %d, want 1 (preserved)", len(arch))
 	}
 }
+
+func TestAccumulateIssueWork(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      10,
+		Title:       "timer test",
+		State:       "open",
+	}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+
+	// First session: 60s of plan work.
+	if err := s.AccumulateIssueWork("ws1", 10, types.ModePlan, 60); err != nil {
+		t.Fatalf("AccumulateIssueWork plan: %v", err)
+	}
+	// Second session: 120s of execute work.
+	if err := s.AccumulateIssueWork("ws1", 10, types.ModeExecute, 120); err != nil {
+		t.Fatalf("AccumulateIssueWork execute: %v", err)
+	}
+
+	issues, err := s.ListIssues("ws1")
+	if err != nil || len(issues) != 1 {
+		t.Fatalf("ListIssues: %v len=%d", err, len(issues))
+	}
+	iss := issues[0]
+	if iss.WorkSeconds != 180 {
+		t.Errorf("WorkSeconds = %d, want 180", iss.WorkSeconds)
+	}
+	if iss.WorkSecondsPlan != 60 {
+		t.Errorf("WorkSecondsPlan = %d, want 60", iss.WorkSecondsPlan)
+	}
+	if iss.WorkSecondsExecute != 120 {
+		t.Errorf("WorkSecondsExecute = %d, want 120", iss.WorkSecondsExecute)
+	}
+
+	// Verify SaveIssue (GitHub poll) preserves accumulated work seconds.
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      10,
+		Title:       "timer test updated",
+		State:       "open",
+	}); err != nil {
+		t.Fatalf("SaveIssue (re-save): %v", err)
+	}
+	issues2, _ := s.ListIssues("ws1")
+	if issues2[0].WorkSeconds != 180 {
+		t.Errorf("WorkSeconds after re-save = %d, want 180 (should be preserved)", issues2[0].WorkSeconds)
+	}
+
+	// Verify zero-second calls are no-ops (no error, no change).
+	if err := s.AccumulateIssueWork("ws1", 10, types.ModePlan, 0); err != nil {
+		t.Errorf("AccumulateIssueWork with 0 seconds: %v", err)
+	}
+	issues3, _ := s.ListIssues("ws1")
+	if issues3[0].WorkSeconds != 180 {
+		t.Errorf("WorkSeconds after zero-second call = %d, want 180", issues3[0].WorkSeconds)
+	}
+}
+
+func TestAccumulateIssueWorkMissingIssue(t *testing.T) {
+	s := newTestStore(t)
+	err := s.AccumulateIssueWork("ws1", 999, types.ModePlan, 30)
+	if err == nil {
+		t.Error("expected error for missing issue, got nil")
+	}
+}
+
+func TestAccumulateIssueWorkPreservesExistingTime(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID:        "ws1",
+		Number:             20,
+		Title:              "existing",
+		State:              "open",
+		WorkSeconds:        300,
+		WorkSecondsPlan:    100,
+		WorkSecondsExecute: 200,
+	}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+	if err := s.AccumulateIssueWork("ws1", 20, types.ModeExecute, 50); err != nil {
+		t.Fatalf("AccumulateIssueWork: %v", err)
+	}
+	issues, _ := s.ListIssues("ws1")
+	iss := issues[0]
+	if iss.WorkSeconds != 350 {
+		t.Errorf("WorkSeconds = %d, want 350", iss.WorkSeconds)
+	}
+	if iss.WorkSecondsExecute != 250 {
+		t.Errorf("WorkSecondsExecute = %d, want 250", iss.WorkSecondsExecute)
+	}
+	if iss.WorkSecondsPlan != 100 {
+		t.Errorf("WorkSecondsPlan = %d, want 100 (unchanged)", iss.WorkSecondsPlan)
+	}
+}
+
+func TestAccumulateIssueWorkTimestampPreserved(t *testing.T) {
+	s := newTestStore(t)
+	ts := time.Now().Add(-time.Hour)
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      30,
+		Title:       "ts test",
+		State:       "open",
+		UpdatedAt:   ts,
+	}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+	if err := s.AccumulateIssueWork("ws1", 30, types.ModePlan, 10); err != nil {
+		t.Fatalf("AccumulateIssueWork: %v", err)
+	}
+	issues, _ := s.ListIssues("ws1")
+	// updated_at should be unchanged by AccumulateIssueWork
+	if issues[0].Title != "ts test" {
+		t.Errorf("title changed after AccumulateIssueWork, got %q", issues[0].Title)
+	}
+}

@@ -195,6 +195,15 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         prNumber={issue.pr_number ?? null}
         onContinue={() => setContinueOpen(true)}
       />
+      <div className="flex justify-end mt-0.5">
+        <WorkTimerChip
+          baseSecs={issue.work_seconds ?? 0}
+          planBaseSecs={issue.work_seconds_plan ?? 0}
+          executeBaseSecs={issue.work_seconds_execute ?? 0}
+          activeSince={activeSession ? new Date(activeSession.started_at as any) : null}
+          activeMode={activeSession ? (activeSession.mode as "plan" | "execute") : null}
+        />
+      </div>
       {pausedSession && pausedSession.pending_question_id && (
         <MidRunQuestionModal
           open={midRunOpen}
@@ -224,6 +233,60 @@ function useNow(intervalMs: number) {
     return () => clearInterval(t);
   }, [intervalMs]);
   return now;
+}
+
+function formatWorkDuration(s: number): string {
+  if (s < 60) return `${s}s`;
+  if (s < 3600) {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m}m${sec.toString().padStart(2, "0")}s`;
+  }
+  if (s < 86400) {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return `${h}h${m.toString().padStart(2, "0")}m`;
+  }
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  return `${d}d${h.toString().padStart(2, "0")}h`;
+}
+
+function WorkTimerChip({
+  baseSecs,
+  planBaseSecs,
+  executeBaseSecs,
+  activeSince,
+  activeMode,
+}: {
+  baseSecs: number;
+  planBaseSecs: number;
+  executeBaseSecs: number;
+  activeSince: Date | null;
+  activeMode: "plan" | "execute" | null;
+}) {
+  const now = useNow(activeSince ? 1000 : 60000);
+  const liveDelta = activeSince ? Math.max(0, Math.floor((now - activeSince.getTime()) / 1000)) : 0;
+  const total = baseSecs + liveDelta;
+  if (total <= 0) return null;
+
+  const planTotal = planBaseSecs + (activeMode === "plan" ? liveDelta : 0);
+  const execTotal = executeBaseSecs + (activeMode === "execute" ? liveDelta : 0);
+  const tooltip = [
+    planTotal > 0 ? `plan: ${formatWorkDuration(planTotal)}` : null,
+    execTotal > 0 ? `execute: ${formatWorkDuration(execTotal)}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <span
+      className="text-[10px] text-slate-500 font-mono tabular-nums"
+      title={tooltip || undefined}
+    >
+      ⏱ {formatWorkDuration(total)}
+    </span>
+  );
 }
 
 function StatusRow({

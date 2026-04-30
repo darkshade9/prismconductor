@@ -190,6 +190,13 @@ type Issue struct {
 	// WaitingForPool is set true when a spawn attempt was queued because no
 	// pool had free capacity (issue #40). Cleared on successful drain.
 	WaitingForPool bool `json:"waiting_for_pool,omitempty"`
+
+	// WorkSeconds is the cumulative active work time (plan + execute sessions)
+	// accumulated from completed sessions. Updated atomically when a session
+	// ends; preserved across GitHub poll re-saves (issue #46).
+	WorkSeconds        int64 `json:"work_seconds,omitempty"`
+	WorkSecondsPlan    int64 `json:"work_seconds_plan,omitempty"`
+	WorkSecondsExecute int64 `json:"work_seconds_execute,omitempty"`
 }
 
 type BoardColumn string

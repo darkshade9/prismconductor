@@ -71,6 +71,12 @@ func (s *Store) SaveIssue(iss types.Issue) (bool, error) {
 			if prev.PRURL != "" {
 				iss.PRURL = prev.PRURL
 			}
+			// Preserve accumulated work time — GitHub polls don't know about sessions.
+			if prev.WorkSeconds > 0 {
+				iss.WorkSeconds = prev.WorkSeconds
+				iss.WorkSecondsPlan = prev.WorkSecondsPlan
+				iss.WorkSecondsExecute = prev.WorkSecondsExecute
+			}
 		}
 	}
 	iss.Column = col
@@ -303,6 +309,47 @@ func (s *Store) ReorderIssues(workspaceID string, column types.BoardColumn, orde
 		); err != nil {
 			return err
 		}
+	}
+	return tx.Commit()
+}
+
+// AccumulateIssueWork adds seconds to the issue's work_seconds counters using
+// a read-modify-write transaction. Called when a plan or execute session ends
+// so the card shows cumulative active work time (issue #46).
+func (s *Store) AccumulateIssueWork(workspaceID string, number int, mode types.SessionMode, seconds int64) error {
+	if s == nil || s.DB == nil {
+		return errors.New("store unavailable")
+	}
+	if seconds <= 0 {
+		return nil
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var raw string
+	if err := tx.QueryRow(`SELECT json FROM issues WHERE workspace_id = ? AND number = ?`, workspaceID, number).Scan(&raw); err != nil {
+		return err
+	}
+	var iss types.Issue
+	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+		return err
+	}
+	iss.WorkSeconds += seconds
+	switch mode {
+	case types.ModePlan:
+		iss.WorkSecondsPlan += seconds
+	case types.ModeExecute:
+		iss.WorkSecondsExecute += seconds
+	}
+	b, err := json.Marshal(iss)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE issues SET json = ? WHERE workspace_id = ? AND number = ?`, string(b), workspaceID, number); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

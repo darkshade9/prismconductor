@@ -85,6 +85,9 @@ func (p *fakePersister) UpdateSessionTranscriptOffset(id string, off int64) erro
 	p.offsetUpd[id] = off
 	return nil
 }
+func (p *fakePersister) AccumulateIssueWork(_ string, _ int, _ types.SessionMode, _ int64) error {
+	return nil
+}
 
 func TestMatchPatternsQuestionPending(t *testing.T) {
 	const qid = "11111111-2222-3333-4444-555555555555"

@@ -34,6 +34,8 @@ type Persister interface {
 	UpdateSessionState(id string, state types.SessionState) error
 	UpdateSessionPendingQuestion(id, questionID string) error
 	UpdateSessionTranscriptOffset(id string, off int64) error
+	// AccumulateIssueWork adds elapsed seconds to the issue's work timer (issue #46).
+	AccumulateIssueWork(workspaceID string, number int, mode types.SessionMode, seconds int64) error
 }
 
 // StateChangeHandler is fired on every state transition. Used by the App layer
@@ -665,6 +667,15 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 	rs.sess.EndedAt = &end
 	if m.store != nil {
 		_ = m.store.UpdateSessionState(rs.sess.ID, rs.sess.State)
+		// Accumulate work time for plan/execute sessions so the card timer persists
+		// across restarts. We record the full session duration regardless of
+		// terminal state — partial work (failed, paused) still counts (issue #46).
+		if rs.sess.Mode == types.ModePlan || rs.sess.Mode == types.ModeExecute {
+			secs := int64(end.Sub(rs.sess.StartedAt).Seconds())
+			if secs > 0 {
+				_ = m.store.AccumulateIssueWork(rs.sess.WorkspaceID, rs.sess.IssueNumber, rs.sess.Mode, secs)
+			}
+		}
 	}
 	if m.onStateChange != nil && prev != rs.sess.State {
 		m.onStateChange(*rs.sess, prev)
