@@ -189,6 +189,42 @@ func (a *App) startup(ctx context.Context) {
 			})
 		}
 
+		// Issue #40: wire work-role spawn for pending-pool drain (approve_execute
+		// requests that were queued because no work pool had free capacity).
+		if a.wsReg != nil {
+			a.orch.SetSpawnWork(func(workspaceID string, issueNumber int, poolID string) error {
+				ws, ok := a.wsReg.Get(workspaceID)
+				if !ok {
+					return fmt.Errorf("unknown workspace %q", workspaceID)
+				}
+				pool, err := a.store.GetPool(poolID)
+				if err != nil {
+					return fmt.Errorf("resolve pool %q: %w", poolID, err)
+				}
+				issue, err := a.store.LoadIssue(workspaceID, issueNumber)
+				if err != nil {
+					return fmt.Errorf("load issue #%d: %w", issueNumber, err)
+				}
+				plan, err := a.store.LatestPlan(workspaceID, issueNumber)
+				if err != nil || plan == nil {
+					return fmt.Errorf("load plan for #%d: %w", issueNumber, err)
+				}
+				if err := a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColInProgress); err != nil {
+					return fmt.Errorf("move column #%d: %w", issueNumber, err)
+				}
+				_, err = a.mgr.SpawnExecute(ws, issue, *plan, pool)
+				if err != nil {
+					_ = a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColPlan)
+					a.poolReg.ReleaseByPool(poolID)
+				}
+				return err
+			})
+		}
+
+		// Issue #40: drain any pending pool requests from before this startup
+		// so queued work survives conductor restarts.
+		go a.orch.KickDrain("startup")
+
 		// Persist every event for debugging + Phase 7 transcript pattern detector.
 		a.bus.Subscribe(func(e eventbus.Event) {
 			_ = a.store.LogEvent(string(e.Type), e.Payload)
@@ -1895,7 +1931,19 @@ func (a *App) ApprovePlan(workspaceID string, issueNumber, revision int) error {
 	}
 	pool, ok := a.acquireWorkPool(ws)
 	if !ok {
-		return fmt.Errorf("no work pool available")
+		// No work slot available — persist intent and show waiting decoration.
+		// The card stays in IN_PROGRESS; drain fires it when a slot frees.
+		_ = a.store.EnqueuePendingPool(workspaceID, issueNumber, types.RoleWork, "approve_execute")
+		if iss, lerr := a.store.LoadIssue(workspaceID, issueNumber); lerr == nil {
+			iss.WaitingForPool = true
+			_, _ = a.store.SaveIssue(iss)
+		}
+		a.bus.Publish(eventbus.EvtPendingPoolEnqueued, eventbus.PendingPoolChange{
+			WorkspaceID: workspaceID,
+			IssueNumber: issueNumber,
+			Role:        string(types.RoleWork),
+		})
+		return nil
 	}
 	if _, err := a.mgr.SpawnExecute(ws, issue, plan, pool); err != nil {
 		a.poolReg.ReleaseByPool(pool.ID)

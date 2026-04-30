@@ -1151,11 +1151,12 @@ export namespace types {
 	    pr_url?: string;
 	    // Go type: time
 	    archived_at?: any;
-	
+	    waiting_for_pool?: boolean;
+
 	    static createFrom(source: any = {}) {
 	        return new Issue(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.number = source["number"];
@@ -1177,6 +1178,7 @@ export namespace types {
 	        this.pr_number = source["pr_number"];
 	        this.pr_url = source["pr_url"];
 	        this.archived_at = this.convertValues(source["archived_at"], null);
+	        this.waiting_for_pool = source["waiting_for_pool"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1243,11 +1245,12 @@ export namespace types {
 	    role: string;
 	    // Go type: time
 	    created_at: any;
-	
+	    priority: number;
+
 	    static createFrom(source: any = {}) {
 	        return new Pool(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1260,6 +1263,7 @@ export namespace types {
 	        this.api_key = source["api_key"];
 	        this.role = source["role"];
 	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.priority = source["priority"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

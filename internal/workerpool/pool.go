@@ -227,18 +227,39 @@ func (r *Registry) acquireRoundRobin(role types.Role) (string, bool) {
 		r.mu.Unlock()
 		return "", false
 	}
-	start := 0
-	switch role {
-	case types.RolePlan:
-		start = r.nextPlanIdx % len(ids)
-	case types.RoleWork:
-		start = r.nextWorkIdx % len(ids)
+	// Sort by priority ASC (lower = preferred). Pools with equal priority keep
+	// their insertion order (SliceStable). This implements #40 preference ordering.
+	sort.SliceStable(ids, func(i, j int) bool {
+		return r.meta[ids[i]].Priority < r.meta[ids[j]].Priority
+	})
+	// Apply round-robin within the lowest-priority-value group so equal-priority
+	// pools share load. Higher-priority groups (lower number) are always tried
+	// first before falling back to lower-priority groups.
+	if len(ids) > 0 {
+		topPriority := r.meta[ids[0]].Priority
+		prefixLen := 0
+		for _, id := range ids {
+			if r.meta[id].Priority != topPriority {
+				break
+			}
+			prefixLen++
+		}
+		start := 0
+		switch role {
+		case types.RolePlan:
+			start = r.nextPlanIdx % prefixLen
+			r.nextPlanIdx = (r.nextPlanIdx + 1) % prefixLen
+		case types.RoleWork:
+			start = r.nextWorkIdx % prefixLen
+			r.nextWorkIdx = (r.nextWorkIdx + 1) % prefixLen
+		}
+		// Rotate the preferred group to start at `start`, leave rest unchanged.
+		preferred := append(ids[start:prefixLen:prefixLen], ids[:start]...)
+		ids = append(preferred, ids[prefixLen:]...)
 	}
 	r.mu.Unlock()
 
-	for off := 0; off < len(ids); off++ {
-		idx := (start + off) % len(ids)
-		id := ids[idx]
+	for _, id := range ids {
 		r.mu.RLock()
 		p := r.pools[id]
 		r.mu.RUnlock()
@@ -246,14 +267,6 @@ func (r *Registry) acquireRoundRobin(role types.Role) (string, bool) {
 			continue
 		}
 		if p.TryAcquire() {
-			r.mu.Lock()
-			switch role {
-			case types.RolePlan:
-				r.nextPlanIdx = (idx + 1) % len(ids)
-			case types.RoleWork:
-				r.nextWorkIdx = (idx + 1) % len(ids)
-			}
-			r.mu.Unlock()
 			return id, true
 		}
 	}
@@ -343,7 +356,12 @@ func (r *Registry) Snapshot() []PoolStatus {
 		}
 		out = append(out, PoolStatus{Pool: meta, Active: active})
 	}
+	// Sort by priority ASC, then created_at for tie-breaking (matches pool
+	// selection order so the UI reflects actual acquisition preference).
 	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Pool.Priority != out[j].Pool.Priority {
+			return out[i].Pool.Priority < out[j].Pool.Priority
+		}
 		return out[i].Pool.CreatedAt.Before(out[j].Pool.CreatedAt)
 	})
 	return out
