@@ -30,6 +30,7 @@ import { useLabelsStore } from "./stores/labelsStore";
 import { usePoolsStore } from "./stores/usePoolsStore";
 import { Toast } from "./components/Toast";
 import { useToastStore, type Toast as ToastT } from "./stores/toastStore";
+import { TitleSearch } from "./components/Header";
 
 type PlanRef = { workspace_id: string; number: number };
 type PlanTarget = PlanRef | null;
@@ -292,6 +293,7 @@ function App() {
     <div className="h-screen flex flex-col bg-slate-950 text-slate-200">
       <header className="flex items-center justify-between px-4 py-2 border-b border-slate-800">
         <div className="font-semibold">PrismConductor</div>
+        <TitleSearch />
         <div className="flex items-center gap-2">
           {selectedWorkspace && (
             <>

@@ -15,10 +15,12 @@ export type Column = "todo" | "plan" | "in_progress" | "review" | "done";
 type State = {
   issues: types.Issue[];
   loading: boolean;
+  searchQuery: string;
   refresh: (workspaceID?: string) => Promise<void>;
   moveColumn: (workspaceID: string, number: number, column: Column) => Promise<void>;
   reorder: (workspaceID: string, column: Column, ordered: number[]) => Promise<void>;
   remove: (workspaceID: string, number: number) => Promise<void>;
+  setSearchQuery: (q: string) => void;
   // Optimistic local update before backend confirms — keeps drag UX smooth.
   applyLocalMove: (workspaceID: string, number: number, column: Column) => void;
   applyLocalReorder: (workspaceID: string, column: Column, ordered: number[]) => void;
@@ -27,6 +29,8 @@ type State = {
 export const useIssueStore = create<State>((set, get) => ({
   issues: [],
   loading: false,
+  searchQuery: "",
+  setSearchQuery: (q) => set({ searchQuery: q }),
   refresh: async (workspaceID) => {
     set({ loading: true });
     try {

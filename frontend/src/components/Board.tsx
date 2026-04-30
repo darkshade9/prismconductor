@@ -17,6 +17,7 @@ import { arrayMove } from "@dnd-kit/sortable";
 import { ArchiveDone, FilterIssuesByActiveGoal } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 import { useIssueStore, Column as ColumnID } from "../stores/issueStore";
+import { matchesQuery } from "../lib/matchesQuery";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { Card } from "./Card";
 import { Column } from "./Column";
@@ -54,7 +55,7 @@ const fromCardID = (id: string) => {
 };
 
 export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => void }) {
-  const { issues, refresh, applyLocalMove, applyLocalReorder, moveColumn, reorder } = useIssueStore();
+  const { issues, refresh, applyLocalMove, applyLocalReorder, moveColumn, reorder, searchQuery } = useIssueStore();
   const { workspaces, selectedID } = useWorkspaceStore();
   const [filteredTodoNums, setFilteredTodoNums] = useState<Set<string> | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -111,13 +112,14 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
     for (const i of issues) {
       const col = (i.column || "todo") as ColumnID;
       if (col === "todo" && filteredTodoNums && !filteredTodoNums.has(cardID(i))) continue;
+      if (!matchesQuery(i.title, searchQuery)) continue;
       if (out[col]) out[col].push(i);
     }
     // ListIssues already returns by (column, manual_order, number). For TODO, if
     // every item shares manual_order=0 (no human reorder yet), use priority.
     out.todo = sortTodoByPriority(out.todo);
     return out;
-  }, [issues, filteredTodoNums]);
+  }, [issues, filteredTodoNums, searchQuery]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
