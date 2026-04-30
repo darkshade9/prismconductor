@@ -29,5 +29,11 @@ export default defineConfig({
     cwd: "..",
     stdout: "pipe",
     stderr: "pipe",
+    // Force-shutdown the dev server when tests finish. Without this,
+    // xvfb-run's process tree on CI doesn't relay SIGTERM to wails, so
+    // playwright hangs after the smoke test passes and the job runs out
+    // the 15-minute job timeout. SIGKILL is brutal but acceptable for a
+    // dev process we don't need to flush state from.
+    gracefulShutdown: { signal: "SIGKILL", timeout: 5_000 },
   },
 });
