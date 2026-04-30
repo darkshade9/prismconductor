@@ -1402,12 +1402,14 @@ func (a *App) handlePlanReady(sess types.Session, relPath string) {
 	plan, err := planio.ReadPlan(abs)
 	if err != nil {
 		log.Printf("plan ingest failed: %v\n", err)
+		a.markSessionBlocked(sess, fmt.Sprintf("plan ingest failed: %v", err))
 		return
 	}
 	plan.WorkspaceID = sess.WorkspaceID
 	plan.IssueNumber = sess.IssueNumber
 	if err := a.store.SavePlan(*plan); err != nil {
 		log.Printf("plan save failed: %v\n", err)
+		a.markSessionBlocked(sess, fmt.Sprintf("plan save failed: %v", err))
 		return
 	}
 	// Issue #24: auto-apply planner-suggested labels before announcing plan_ready
@@ -1460,11 +1462,13 @@ func (a *App) handlePROpened(sess types.Session, prURL string) {
 	prURL = strings.TrimSpace(prURL)
 	if prURL == "" {
 		log.Printf("PR_OPENED: empty URL on session %s, skipping", sess.ID)
+		a.markSessionBlocked(sess, "PR_OPENED sentinel had empty URL")
 		return
 	}
 	n, ok := pullNumberFromURL(prURL)
 	if !ok {
 		log.Printf("PR_OPENED: could not parse PR number from %q (session %s), skipping", prURL, sess.ID)
+		a.markSessionBlocked(sess, fmt.Sprintf("PR_OPENED URL %q had no /pull/<n> segment", prURL))
 		return
 	}
 	if _, ok := a.wsReg.Get(sess.WorkspaceID); !ok {
@@ -1473,6 +1477,7 @@ func (a *App) handlePROpened(sess types.Session, prURL string) {
 	}
 	if err := a.store.MarkPROpened(sess.WorkspaceID, sess.IssueNumber, n, prURL); err != nil {
 		log.Printf("PR_OPENED: MarkPROpened failed for #%d: %v", sess.IssueNumber, err)
+		a.markSessionBlocked(sess, fmt.Sprintf("PR_OPENED store update failed: %v", err))
 		return
 	}
 	a.bus.Publish(eventbus.EvtPROpened, map[string]any{
@@ -2060,6 +2065,33 @@ func (a *App) GitHubLoginPoll() (*githubauth.User, error) {
 
 // GitHubLogout clears the cached token.
 func (a *App) GitHubLogout() error { return githubauth.ClearToken(a.cfgDir) }
+
+// markSessionBlocked retroactively flips a session row to BLOCKED with the
+// given reason and re-publishes the state change so the card surfaces the
+// failure (issue #67). Used by post-completion handlers (plan ingest, plan
+// save, …) where the session is already `completed` from the worker's POV
+// but the conductor's downstream processing failed silently. Without this,
+// the card looks "completed" while no plan exists and the user has no
+// indication anything went wrong.
+func (a *App) markSessionBlocked(sess types.Session, reason string) {
+	if a.store == nil {
+		return
+	}
+	if len(reason) > 500 {
+		reason = reason[:500]
+	}
+	prev := sess.State
+	sess.State = types.StateBlocked
+	sess.BlockedReason = reason
+	if err := a.store.SaveSession(&sess, sess.Transcript); err != nil {
+		log.Printf("markSessionBlocked: SaveSession %s: %v", sess.ID, err)
+		return
+	}
+	if err := a.store.UpdateSessionState(sess.ID, types.StateBlocked); err != nil {
+		log.Printf("markSessionBlocked: UpdateSessionState %s: %v", sess.ID, err)
+	}
+	a.handleSessionStateChange(sess, prev)
+}
 
 // GitHubListRepos returns repos the authenticated user can access. Used by the
 // "Add Workspace" picker so the user doesn't have to type a path.

@@ -32,6 +32,15 @@ func AnswerPath(repoPath string, issueNumber, revision int) string {
 }
 
 // ReadPlan reads + validates a plan JSON file against the §9.1 contract.
+//
+// Two leniency arms exist for non-Claude planners (issue #67):
+//
+//  1. `issue` is accepted as an alias for `issue_number`, `rev` for `revision`.
+//     gpt-5-mini and similar abbreviate these consistently; rather than fight
+//     each model's tendencies via prompt-tuning, the validator normalizes.
+//  2. `workspace_id` is no longer required at the worker boundary. The worker
+//     has no way to know the conductor's internal workspace id; the conductor
+//     attaches it post-read (see app.handlePlanReady).
 func ReadPlan(path string) (*types.Plan, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -41,8 +50,23 @@ func ReadPlan(path string) (*types.Plan, error) {
 	if err := json.Unmarshal(b, &p); err != nil {
 		return nil, fmt.Errorf("invalid plan JSON at %s: %w", path, err)
 	}
-	if p.IssueNumber == 0 || p.WorkspaceID == "" || p.Revision == 0 {
-		return nil, errors.New("plan JSON missing required fields (issue_number, workspace_id, revision)")
+	if p.IssueNumber == 0 || p.Revision == 0 {
+		// Try the abbreviated aliases used by some hosted models.
+		var aliased struct {
+			Issue int `json:"issue"`
+			Rev   int `json:"rev"`
+		}
+		if err := json.Unmarshal(b, &aliased); err == nil {
+			if p.IssueNumber == 0 {
+				p.IssueNumber = aliased.Issue
+			}
+			if p.Revision == 0 {
+				p.Revision = aliased.Rev
+			}
+		}
+	}
+	if p.IssueNumber == 0 || p.Revision == 0 {
+		return nil, errors.New("plan JSON missing required fields (issue_number/issue, revision/rev)")
 	}
 	if p.GeneratedAt.IsZero() {
 		p.GeneratedAt = time.Now()

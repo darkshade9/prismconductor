@@ -144,6 +144,27 @@ func TestDecodeOpenAIModelsParsesEnvelope(t *testing.T) {
 	}
 }
 
+// TestDecodeOpenAIModelsStripsGeminiPrefix pins the Gemini OpenAI-compat
+// dropdown fix: /v1beta/openai/models returns IDs like `models/gemini-2.0-flash`
+// but the chat-completions surface expects the bare ID. The decoder strips the
+// `models/` prefix so the UI surfaces a model name the user can pick directly.
+func TestDecodeOpenAIModelsStripsGeminiPrefix(t *testing.T) {
+	body := `{"data":[{"id":"models/gemini-2.0-flash"},{"id":"models/gemini-2.5-flash"},{"id":"gpt-4o"}]}`
+	got, err := decodeOpenAIModels(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("decodeOpenAIModels error: %v", err)
+	}
+	want := []string{"gemini-2.0-flash", "gemini-2.5-flash", "gpt-4o"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("got[%d] = %s, want %s", i, got[i], want[i])
+		}
+	}
+}
+
 func TestClaudeListModelsReturnsCanonicalSet(t *testing.T) {
 	got, err := NewClaudeProvider().ListModels(context.Background(), types.Pool{})
 	if err != nil {
