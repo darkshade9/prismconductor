@@ -1155,11 +1155,11 @@ export namespace types {
 	    work_seconds?: number;
 	    work_seconds_plan?: number;
 	    work_seconds_execute?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Issue(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.number = source["number"];
@@ -1252,11 +1252,11 @@ export namespace types {
 	    // Go type: time
 	    created_at: any;
 	    priority: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Pool(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
