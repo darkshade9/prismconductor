@@ -12,9 +12,11 @@ export function IssueSection({ issue }: { issue: types.Issue }) {
 
   useEffect(() => {
     setDetail(issue);
+    let cancelled = false;
     FetchIssueDetail(issue.workspace_id, issue.number)
-      .then((fresh) => setDetail(fresh))
-      .catch(() => {/* keep existing data on error */});
+      .then((fresh) => { if (!cancelled) setDetail(fresh); })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [issue.workspace_id, issue.number]);
 
   const isOpen = detail.state !== "closed";

@@ -7,8 +7,8 @@ import { useIssueStore } from "../stores/issueStore";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
 import { AnswerState, QuestionForm, emptyAnswers, initialAnswers, isComplete } from "./QuestionForm";
 import { LabelsModal } from "./LabelsModal";
-import { getContrastText } from "../lib/contrast";
 import { IssueSection } from "./IssueSection";
+import { getContrastText } from "../lib/contrast";
 
 const INTENT_GLYPH: Record<string, string> = {
   add: "+",

@@ -61,7 +61,7 @@ type App struct {
 	lastNotifyKey string
 	lastNotifyAt  int64
 
-	issueDetailCache sync.Map // key: "workspaceID/number" → issueDetailEntry
+	issueDetailCache sync.Map // key: "wsID#number" → issueDetailEntry
 }
 
 type issueDetailEntry struct {
@@ -635,6 +635,50 @@ func (a *App) ListIssues(workspaceID string) ([]types.Issue, error) {
 		return nil, fmt.Errorf("store unavailable")
 	}
 	return a.store.ListIssues(workspaceID)
+}
+
+// FetchIssueDetail fetches fresh GitHub metadata for a single issue and caches
+// the result for 60 seconds. Falls back to the locally mirrored issue on error.
+func (a *App) FetchIssueDetail(workspaceID string, issueNumber int) (*types.Issue, error) {
+	key := fmt.Sprintf("%s#%d", workspaceID, issueNumber)
+	if v, ok := a.issueDetailCache.Load(key); ok {
+		entry := v.(issueDetailEntry)
+		if time.Now().Before(entry.expiresAt) {
+			iss := entry.issue
+			return &iss, nil
+		}
+	}
+	if a.gh == nil || a.wsReg == nil {
+		if iss, ok := a.findIssue(workspaceID, issueNumber); ok {
+			return &iss, nil
+		}
+		return nil, fmt.Errorf("github client unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return nil, fmt.Errorf("workspace %q not found", workspaceID)
+	}
+	iss, err := a.gh.FetchIssueDetail(a.ctx, ws, issueNumber)
+	if err != nil {
+		if local, ok := a.findIssue(workspaceID, issueNumber); ok {
+			return &local, nil
+		}
+		return nil, err
+	}
+	// Preserve column/plan/session fields from local mirror.
+	if local, ok := a.findIssue(workspaceID, issueNumber); ok {
+		iss.Column = local.Column
+		iss.Plan = local.Plan
+		iss.SessionID = local.SessionID
+		iss.GoalID = local.GoalID
+		iss.Priority = local.Priority
+		iss.Dependencies = local.Dependencies
+		iss.DepRationale = local.DepRationale
+		iss.PRNumber = local.PRNumber
+		iss.PRURL = local.PRURL
+	}
+	a.issueDetailCache.Store(key, issueDetailEntry{issue: *iss, expiresAt: time.Now().Add(60 * time.Second)})
+	return iss, nil
 }
 
 // ListArchivedIssues returns archived rows for the drawer (#34). Empty
