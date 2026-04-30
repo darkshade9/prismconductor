@@ -1036,6 +1036,8 @@ The conductor ships four universal skills with the binary:
 
 **Authoring stability**: bundled skills are hand-curated and stable. Do NOT use the Phase 7 skill-authoring skills to regenerate them. The recursion stops at one level (Phase 7 authors per-repo skills, not bundled ones).
 
+**Smoke gate (issue #19)**: `conductor-execute` step 10b runs `npx --prefix tests playwright test tests/e2e/startup.spec.ts` after build if the spec exists; prints `⚠ smoke test skipped` and continues (non-blocking) if the spec is absent.
+
 ### 15.8 Graceful Degradation for Bare Repos
 
 The conductor handles missing repo enrichments silently — no warnings, no blocking gates:

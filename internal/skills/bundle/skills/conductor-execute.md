@@ -66,6 +66,7 @@ These run before commit. Failures here are **stop-the-world** events: print `BLO
     - For Go-only: `go build ./...`.
     - For Node-only: `npm run build` (or pnpm/yarn equivalent).
     Non-zero exit → `BLOCKED: build failed — <command> exited <code>` and exit.
+10b. **Smoke test (UI runtime regression gate):** if `tests/e2e/startup.spec.ts` exists in the repo, run `npx --prefix tests playwright test tests/e2e/startup.spec.ts`. Non-zero exit → `BLOCKED: smoke test failed — UI did not mount cleanly; transcript above` and exit, leaving the branch in place. If the spec file does NOT exist (older feature branches / non-Wails workspaces), print `⚠ smoke test skipped — tests/e2e/startup.spec.ts not present in this repo` to the PTY (visible to the user and surfaced in the PR body's verification section) and continue with step 11. Do NOT block.
 11. **Run tests**:
     - If `PRISMCONDUCTOR_TEST_CMD` is set, run it. Else fall back to `go test ./...` for Go projects, `npm test` (or vitest/jest) for Node, `pytest` for Python.
     - Non-zero exit → `BLOCKED: tests failed — <N> failures; full output below` then dump the last 50 lines of test output and exit.
@@ -79,7 +80,7 @@ These run before commit. Failures here are **stop-the-world** events: print `BLO
 15. **Single-PR enforcement (#17, Q6):** before `gh pr create`, run `gh pr list --head <branch> --json number,url`. If non-empty, an earlier resume already opened the PR — append a follow-up comment via `gh pr comment <num> --body-file -` summarizing this leg's work, capture the existing URL, and SKIP `gh pr create`. Otherwise: `gh pr create --draft --base <BASE> --title "<short subject> (#<num>)" --body-file -`. The body should contain:
     - A 1-2 sentence summary
     - The list of files modified
-    - **Verification:** lint command + result, build command + result, test command + result with pass/fail counts
+    - **Verification:** lint command + result, build command + result, smoke command + result (`pass` / `fail` with first console error / `skipped — spec not present`), test command + result with pass/fail counts
     - Anything skipped or flagged for human review
     - `Workspace mode: per-execute worktree at <pwd>` — surfaces the conductor isolation mode for reviewers (run `pwd` to fill the path).
     - The literal trailer line `Closes #<num>`
