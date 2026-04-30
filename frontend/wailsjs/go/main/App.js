@@ -38,6 +38,10 @@ export function DeletePool(arg1) {
   return window['go']['main']['App']['DeletePool'](arg1);
 }
 
+export function FetchIssueDetail(arg1, arg2) {
+  return window['go']['main']['App']['FetchIssueDetail'](arg1, arg2);
+}
+
 export function FilterIssuesByActiveGoal(arg1) {
   return window['go']['main']['App']['FilterIssuesByActiveGoal'](arg1);
 }
