@@ -250,6 +250,12 @@ type Session struct {
 	BlockedReason     string       `json:"blocked_reason,omitempty"`
 	PendingQuestionID string       `json:"pending_question_id,omitempty"`
 
+	// PoolID identifies which worker pool slot this session reserved.
+	// Persisted so reattach can release the right slot if the conductor
+	// goes down mid-session — without it the in-memory active count drifts
+	// every restart and eventually saturates at capacity.
+	PoolID string `json:"pool_id,omitempty"`
+
 	// TranscriptOffset is the byte offset into the transcript file of the
 	// last fully-processed line (issue #54). Lives on the sessions column,
 	// excluded from the JSON blob to keep external snapshots schema-stable.

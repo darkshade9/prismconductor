@@ -80,6 +80,11 @@ func buildReattachedRuntime(sess types.Session, ws *types.Workspace) *runtimeSes
 		transcriptPath:   sess.Transcript,
 		transcriptOffset: sess.TranscriptOffset,
 		reattached:       true,
+		// Without this, the WorkerSlotFreed event published from
+		// classifyDeadWorker carries an empty pool ID and the registry's
+		// ReleaseByPool is a no-op — the in-memory active counter then
+		// drifts up by one per app restart per dead-on-restart session.
+		poolID: sess.PoolID,
 	}
 	if ws != nil {
 		rs.repoPath = ws.RepoPath

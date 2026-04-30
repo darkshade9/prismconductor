@@ -20,7 +20,7 @@ type litellmProvider struct {
 }
 
 func NewLiteLLMProvider() Provider {
-	return litellmProvider{client: &http.Client{Timeout: 30 * time.Second}}
+	return litellmProvider{client: &http.Client{Timeout: 5 * time.Minute}}
 }
 
 func (litellmProvider) Kind() types.Provider    { return types.ProviderLiteLLM }

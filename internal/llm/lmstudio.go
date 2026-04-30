@@ -19,7 +19,7 @@ type lmstudioProvider struct {
 }
 
 func NewLMStudioProvider() Provider {
-	return lmstudioProvider{client: &http.Client{Timeout: 30 * time.Second}}
+	return lmstudioProvider{client: &http.Client{Timeout: 5 * time.Minute}}
 }
 
 func (lmstudioProvider) Kind() types.Provider    { return types.ProviderLMStudio }

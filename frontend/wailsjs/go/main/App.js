@@ -190,6 +190,10 @@ export function Replan(arg1, arg2) {
   return window['go']['main']['App']['Replan'](arg1, arg2);
 }
 
+export function ResetPoolCounters() {
+  return window['go']['main']['App']['ResetPoolCounters']();
+}
+
 export function RunOrchestrator() {
   return window['go']['main']['App']['RunOrchestrator']();
 }
@@ -256,4 +260,8 @@ export function UpdateLabel(arg1, arg2, arg3) {
 
 export function UpdateWorkspace(arg1) {
   return window['go']['main']['App']['UpdateWorkspace'](arg1);
+}
+
+export function WriteAnswersOnly(arg1) {
+  return window['go']['main']['App']['WriteAnswersOnly'](arg1);
 }

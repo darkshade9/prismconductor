@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 
@@ -154,13 +155,17 @@ func Execute(ctx context.Context, r Run) error {
 		}
 
 		if r.Budget.MaxInputTokens > 0 && state.InputTokens() >= r.Budget.MaxInputTokens {
-			em.assistantMessage("BLOCKED: token budget exceeded", nil)
+			em.assistantMessage(fmt.Sprintf(
+				"BLOCKED: harness input-token cap reached (%d of %d cumulative). This is PrismConductor's local safety budget, NOT a provider rate-limit or account balance issue. Raise harness.DefaultBudget().MaxInputTokens or per-pool budget if the model genuinely needs more context.",
+				state.InputTokens(), r.Budget.MaxInputTokens), nil)
 			em.done()
 			return nil
 		}
 	}
 
-	em.assistantMessage("BLOCKED: turn budget exceeded", nil)
+	em.assistantMessage(fmt.Sprintf(
+		"BLOCKED: harness turn cap reached (%d turns). This is PrismConductor's local safety budget, NOT a provider issue. Raise harness.DefaultBudget().MaxTurns if the model needs more iterations.",
+		r.Budget.MaxTurns), nil)
 	em.done()
 	return nil
 }

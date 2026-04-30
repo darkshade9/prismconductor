@@ -160,8 +160,8 @@ func TestExecute_TurnBudgetEmitsBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(out.String(), "BLOCKED: turn budget exceeded") {
-		t.Errorf("expected BLOCKED: turn budget exceeded sentinel, got: %s", out.String())
+	if !strings.Contains(out.String(), "BLOCKED: harness turn cap reached") {
+		t.Errorf("expected BLOCKED turn-cap sentinel, got: %s", out.String())
 	}
 }
 
@@ -195,8 +195,8 @@ func TestExecute_TokenBudgetEmitsBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(out.String(), "BLOCKED: token budget exceeded") {
-		t.Errorf("expected token budget BLOCKED sentinel, got: %s", out.String())
+	if !strings.Contains(out.String(), "BLOCKED: harness input-token cap reached") {
+		t.Errorf("expected token-cap BLOCKED sentinel, got: %s", out.String())
 	}
 }
 

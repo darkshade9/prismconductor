@@ -729,6 +729,14 @@ func (a *App) MoveIssueColumn(workspaceID string, number int, column string) err
 			log.Printf("drag-to-PLAN: #%d already has an active plan session, skipping spawn", number)
 		} else if a.hasExistingPlan(workspaceID, number) {
 			log.Printf("drag-to-PLAN: #%d already has a plan; user must click Re-plan to force a new revision", number)
+		} else if a.hasPriorPlanSession(workspaceID, number) {
+			// A prior plan session exists for this issue (likely BLOCKED or
+			// FAILED — otherwise hasExistingPlan above would have caught the
+			// successful-write path). Don't silently auto-respawn: a runaway
+			// or token-budget-blocked plan run is expensive, and dropping the
+			// card back into PLAN should not re-bill the user. Force them to
+			// click Re-plan if they actually want to retry.
+			log.Printf("drag-to-PLAN: #%d has a prior plan session that did not produce a plan; click Re-plan to retry explicitly", number)
 		} else {
 			ws, ok := a.wsReg.Get(workspaceID)
 			if !ok {
@@ -798,6 +806,22 @@ func (a *App) RecentLogs() []logbuffer.Entry {
 		return nil
 	}
 	return a.logs.Snapshot()
+}
+
+// hasPriorPlanSession returns true when a plan-mode session row exists for
+// the issue in the store, regardless of state. Used to block drag-to-PLAN
+// auto-spawn after a previous plan run failed without producing a plan, so
+// the user has to click Re-plan explicitly to incur another paid call.
+func (a *App) hasPriorPlanSession(workspaceID string, number int) bool {
+	if a.store == nil {
+		return false
+	}
+	has, err := a.store.HasPriorPlanSession(workspaceID, number)
+	if err != nil {
+		log.Printf("hasPriorPlanSession #%d: %v", number, err)
+		return false
+	}
+	return has
 }
 
 // hasActivePlanSession returns true if a plan-mode worker is currently running
@@ -1203,6 +1227,23 @@ func (a *App) ListPools() []workerpool.PoolStatus {
 		return nil
 	}
 	return a.poolReg.Snapshot()
+}
+
+// ResetPoolCounters zeros the in-memory active-slot counter on every pool.
+// Used to recover from drift caused by orphaned sessions (e.g. conductor
+// killed mid-session before tailAndParse could publish WorkerSlotFreed).
+// Does not touch any actual running worker — only the counter accounting.
+// Returns the number of pools whose counter was reset.
+func (a *App) ResetPoolCounters() int {
+	if a.poolReg == nil {
+		return 0
+	}
+	n := a.poolReg.ResetAllActive()
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtAgentCountChanged, "manual_reset")
+	}
+	log.Printf("ResetPoolCounters: zeroed active counters on %d pools", n)
+	return n
 }
 
 // SavePool upserts a pool row and re-syncs the registry.
@@ -1703,6 +1744,29 @@ type AnswerSubmission struct {
 	Revision    int                 `json:"revision"`
 	Answers     map[string]string   `json:"answers"`
 	Multi       map[string][]string `json:"multi"`
+}
+
+// WriteAnswersOnly persists the answers file without spawning a re-plan.
+// Frontend calls this when the user clicks "Approve & execute" with answers
+// filled in: the execute skill picks the answers up at the same revision,
+// and we save the cost of another paid planner round-trip on a model that
+// likely produces the same questions on rev2/rev3 anyway (issue #67's
+// follow-up, observed in the wild on gpt-5-mini via OpenRouter).
+func (a *App) WriteAnswersOnly(sub AnswerSubmission) error {
+	if a.wsReg == nil || a.store == nil {
+		return fmt.Errorf("registry/store unavailable")
+	}
+	ws, ok := a.wsReg.Get(sub.WorkspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", sub.WorkspaceID)
+	}
+	if err := planio.WriteAnswers(ws.RepoPath, sub.IssueNumber, sub.Revision, planio.AnswerSet{
+		Answers: sub.Answers,
+		Multi:   sub.Multi,
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 // SubmitAnswers writes the answers file and re-spawns plan mode for the next

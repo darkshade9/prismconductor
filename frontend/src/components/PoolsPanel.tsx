@@ -4,6 +4,7 @@ import {
   ListProviders,
   SavePool,
   DeletePool,
+  ResetPoolCounters,
 } from "../../wailsjs/go/main/App";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 import { main, types, workerpool } from "../../wailsjs/go/models";
@@ -183,12 +184,24 @@ export function PoolsPanel() {
         );
       })}
 
-      <button
-        className="text-xs text-slate-200 hover:text-slate-50 px-3 py-1 border border-slate-700 rounded"
-        onClick={() => setAdding(true)}
-      >
-        + Add pool
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          className="text-xs text-slate-200 hover:text-slate-50 px-3 py-1 border border-slate-700 rounded"
+          onClick={() => setAdding(true)}
+        >
+          + Add pool
+        </button>
+        <button
+          className="text-xs text-slate-400 hover:text-slate-200 px-3 py-1 border border-slate-800 rounded"
+          title="Zero the in-memory active-slot counter on every pool. Use when a pool shows 0/N free but no worker is actually running (drift from a conductor crash or kill mid-session)."
+          onClick={async () => {
+            await ResetPoolCounters();
+            await refresh();
+          }}
+        >
+          Reset counters
+        </button>
+      </div>
 
       {(editing || adding) && (
         <PoolEditModal

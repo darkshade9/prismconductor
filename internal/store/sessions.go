@@ -149,6 +149,33 @@ func (s *Store) ListPausedForQuestionSessions() ([]PausedSession, error) {
 	return out, rows.Err()
 }
 
+// HasPriorPlanSession reports whether any plan-mode session row exists for
+// the (workspace, issue) tuple. Used to gate drag-to-PLAN auto-spawn so a
+// previously-failed expensive plan run doesn't silently re-fire (and re-bill
+// the user) on the next drop. The user must explicitly click Replan instead.
+//
+// Both terminal and live states qualify; the in-memory active-session check
+// in app.go covers the live case but doesn't see history.
+func (s *Store) HasPriorPlanSession(workspaceID string, issueNumber int) (bool, error) {
+	if s == nil || s.DB == nil {
+		return false, nil
+	}
+	row := s.DB.QueryRow(`
+		SELECT 1 FROM sessions
+		WHERE workspace_id = ? AND issue_number = ?
+		  AND json_extract(json, '$.mode') = 'plan'
+		LIMIT 1`, workspaceID, issueNumber)
+	var one int
+	err := row.Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // MostRecentEndedAtForWorktree resolves the most recent terminal-state session
 // for the issue whose number is encoded in the worktree directory name
 // (`<wsID>-<num>`), returning its EndedAt timestamp.

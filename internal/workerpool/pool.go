@@ -67,6 +67,17 @@ func (p *Pool) Release() {
 	p.mu.Unlock()
 }
 
+// ResetActive zeros the in-memory active counter. Used by the Settings →
+// "Reset pool counters" button to recover from drift caused by orphaned
+// sessions (e.g. conductor killed mid-session before tailAndParse could
+// publish WorkerSlotFreed). Does not affect any actual running worker —
+// only the counter accounting.
+func (p *Pool) ResetActive() {
+	p.mu.Lock()
+	p.active = 0
+	p.mu.Unlock()
+}
+
 // PoolStatus is the per-pool snapshot surfaced to the UI.
 type PoolStatus struct {
 	Pool   types.Pool `json:"pool"`
@@ -247,6 +258,22 @@ func (r *Registry) acquireRoundRobin(role types.Role) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// ResetAllActive zeros the in-memory active counter on every registered pool.
+// Used by the Settings → "Reset pool counters" admin action to recover from
+// drift. Returns the number of pools touched.
+func (r *Registry) ResetAllActive() int {
+	r.mu.RLock()
+	pools := make([]*Pool, 0, len(r.pools))
+	for _, p := range r.pools {
+		pools = append(pools, p)
+	}
+	r.mu.RUnlock()
+	for _, p := range pools {
+		p.ResetActive()
+	}
+	return len(pools)
 }
 
 // ReleaseByPool returns a slot to the named pool. No-op if the pool was

@@ -22,7 +22,7 @@ type openaiProvider struct {
 }
 
 func NewOpenAIProvider() Provider {
-	return openaiProvider{client: &http.Client{Timeout: 30 * time.Second}}
+	return openaiProvider{client: &http.Client{Timeout: 5 * time.Minute}}
 }
 
 func (openaiProvider) Kind() types.Provider    { return types.ProviderOpenAI }

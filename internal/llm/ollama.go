@@ -18,7 +18,7 @@ type ollamaProvider struct {
 }
 
 func NewOllamaProvider() Provider {
-	return ollamaProvider{client: &http.Client{Timeout: 30 * time.Second}}
+	return ollamaProvider{client: &http.Client{Timeout: 5 * time.Minute}}
 }
 
 func (ollamaProvider) Kind() types.Provider    { return types.ProviderOllama }

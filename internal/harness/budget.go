@@ -11,12 +11,16 @@ type Budget struct {
 	OutputCap      int           // bytes captured per Bash call
 }
 
-// DefaultBudget mirrors the defaults documented in §10.5: 60 turns, 200k
-// cumulative input tokens, 5-minute Bash timeout, 50 KB Bash output cap.
+// DefaultBudget caps a single harness session. Bumped from the original
+// §10.5 numbers (60 turns / 200K tokens) because real plan runs against
+// gpt-5-mini and Gemini regularly re-read files and accumulate cumulative
+// input tokens fast — 200K was tripping mid-plan for legitimate, non-runaway
+// runs. The new envelope (120 turns / 1M cumulative input tokens) is still
+// a hard wall against truly stuck loops, just a less aggressive one.
 func DefaultBudget() Budget {
 	return Budget{
-		MaxTurns:       60,
-		MaxInputTokens: 200_000,
+		MaxTurns:       120,
+		MaxInputTokens: 1_000_000,
 		BashTimeout:    5 * time.Minute,
 		OutputCap:      50 * 1024,
 	}

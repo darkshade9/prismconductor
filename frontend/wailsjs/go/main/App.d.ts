@@ -103,6 +103,8 @@ export function ReorderIssues(arg1:string,arg2:string,arg3:Array<number>):Promis
 
 export function Replan(arg1:string,arg2:number):Promise<void>;
 
+export function ResetPoolCounters():Promise<number>;
+
 export function RunOrchestrator():Promise<void>;
 
 export function SaveGoal(arg1:types.Goal):Promise<void>;
@@ -136,3 +138,5 @@ export function UnarchiveIssue(arg1:string,arg2:number):Promise<void>;
 export function UpdateLabel(arg1:string,arg2:string,arg3:types.Label):Promise<types.Label>;
 
 export function UpdateWorkspace(arg1:types.Workspace):Promise<void>;
+
+export function WriteAnswersOnly(arg1:main.AnswerSubmission):Promise<void>;

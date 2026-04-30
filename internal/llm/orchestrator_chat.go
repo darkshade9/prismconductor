@@ -77,6 +77,9 @@ func openAICompatChat(ctx context.Context, client *http.Client, baseURL, apiKey,
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("LLM HTTP %d: %s", resp.StatusCode, snippetN(string(raw), 200))
 	}
+	if isPaddingOnly(raw) {
+		return "", fmt.Errorf("LLM returned only keep-alive padding (request likely timed out before model finished). Try a smaller/faster model. body: %s", snippetN(string(raw), 200))
+	}
 	var out struct {
 		Choices []struct {
 			Message struct {
@@ -104,6 +107,28 @@ func snippetN(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// isPaddingOnly returns true when the response body contains nothing but
+// whitespace and/or SSE-comment lines (`: keepalive\n`). OpenRouter and
+// similar gateways emit these while a slow upstream call is processing; if
+// the client timeout fires before the actual JSON body arrives we'd
+// otherwise crash the decoder with an unhelpful "unexpected end of JSON
+// input" error.
+func isPaddingOnly(b []byte) bool {
+	for _, line := range strings.Split(string(b), "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" {
+			continue
+		}
+		if strings.HasPrefix(t, ":") {
+			// SSE comment. Keep scanning.
+			continue
+		}
+		// Real content found.
+		return false
+	}
+	return true
 }
 
 // openAIToolChat is the harness-side sibling of openAICompatChat. It serializes
@@ -212,6 +237,14 @@ func openAIToolChat(ctx context.Context, client *http.Client, baseURL, apiKey, m
 	respRaw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return ChatResponse{}, fmt.Errorf("LLM HTTP %d: %s", resp.StatusCode, snippetN(string(respRaw), 200))
+	}
+	// OpenRouter (and similar gateways) send whitespace + SSE-comment
+	// keep-alive padding while a slow request is processing. If the client
+	// timeout fires before the actual JSON body arrives we end up with a
+	// padding-only body that would crash the decoder with a useless
+	// "unexpected end of JSON input". Detect and surface the real cause.
+	if isPaddingOnly(respRaw) {
+		return ChatResponse{}, fmt.Errorf("LLM returned only keep-alive padding (request likely timed out before model finished). Try a smaller/faster model or a shorter context. body: %s", snippetN(string(respRaw), 200))
 	}
 	var out struct {
 		Choices []struct {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ApprovePlan, LatestPlan, RejectPlan, SetIssueLabels, SubmitAnswers } from "../../wailsjs/go/main/App";
+import { ApprovePlan, LatestPlan, RejectPlan, SetIssueLabels, SubmitAnswers, WriteAnswersOnly } from "../../wailsjs/go/main/App";
 import { main, types } from "../../wailsjs/go/models";
 import { useIssueStore } from "../stores/issueStore";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
@@ -107,6 +107,25 @@ export function PlanModal({
     setBusy(true);
     setError(null);
     try {
+      // If the user filled in answers / refinement before clicking Approve,
+      // persist them to the answers file so the execute skill picks them up
+      // — but DO NOT re-spawn the planner (no extra $$ on a re-plan loop).
+      // The bundled execute skill reads .prismconductor/answers/<n>-rev<N>.json
+      // at the same revision; that's enough to carry the user's choices into
+      // execution without burning another planner run.
+      if (hasQuestions && allRequiredAnswered) {
+        const merged = { ...answers.single };
+        if (refineText.trim()) merged.__refine = refineText.trim();
+        await WriteAnswersOnly(
+          new main.AnswerSubmission({
+            workspace_id: issue.workspace_id,
+            issue_number: issue.number,
+            revision: plan.revision,
+            answers: merged,
+            multi: answers.multi,
+          }),
+        );
+      }
       await ApprovePlan(issue.workspace_id, issue.number, plan.revision);
       await refreshIssues();
       handleClose();
@@ -274,18 +293,22 @@ export function PlanModal({
                   ? "Answer all required questions first"
                   : !hasQuestions && !refineText.trim()
                   ? "Type a refinement to request a revision"
-                  : ""
+                  : "Spawn another planner run (costs another paid plan call)"
               }
             >
-              {hasQuestions ? "Submit answers & request revision" : "Request revision"}
+              {hasQuestions ? "Re-plan with these answers" : "Request revision"}
             </button>
             <button
               onClick={approve}
-              disabled={busy || (hasQuestions && !plan.ready_to_execute)}
+              disabled={busy || (hasQuestions && !allRequiredAnswered)}
               className="px-3 py-1 bg-emerald-700 hover:bg-emerald-600 rounded disabled:opacity-50"
-              title={hasQuestions && !plan.ready_to_execute ? "Submit answers and wait for the next revision before approving" : ""}
+              title={
+                hasQuestions && !allRequiredAnswered
+                  ? "Answer all required questions first"
+                  : "Approve and execute with these answers — skips another paid planner run"
+              }
             >
-              {busy ? "…" : "Approve"}
+              {busy ? "…" : "Approve & execute"}
             </button>
           </div>
         )}
