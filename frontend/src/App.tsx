@@ -27,6 +27,8 @@ import { useArchivedStore, useIssueStore } from "./stores/issueStore";
 import { useGoalStore } from "./stores/goalStore";
 import { usePlanReadyStore } from "./stores/planReadyStore";
 import { useLabelsStore } from "./stores/labelsStore";
+import { Toast } from "./components/Toast";
+import { useToastStore, type Toast as ToastT } from "./stores/toastStore";
 
 type PlanTarget = { workspace_id: string; number: number } | null;
 
@@ -180,6 +182,8 @@ function App() {
       refreshArchived(selectedWorkspace ?? "");
       refreshArchivedCount();
     });
+    const pushToast = useToastStore.getState().push;
+    const offToast = EventsOn("toast", (t: ToastT) => pushToast(t));
     return () => {
       if (typeof offLine === "function") offLine();
       if (typeof offState === "function") offState();
@@ -203,6 +207,7 @@ function App() {
       if (typeof offLabelsUpdated === "function") offLabelsUpdated();
       if (typeof offPause === "function") offPause();
       if (typeof offArchived === "function") offArchived();
+      if (typeof offToast === "function") offToast();
     };
   }, [appendLine, setMeta, refreshWorkspaces, refreshGoals, refreshIssues, markPlanReady, clearPlanReady, selectedWorkspace, refreshArchived, refreshArchivedCount]);
 
@@ -353,6 +358,11 @@ function App() {
         open={planTarget !== null}
         onClose={() => setPlanTarget(null)}
         issue={planIssue}
+      />
+      <Toast
+        onOpenCard={(wsID, num) =>
+          setPlanTarget({ workspace_id: wsID, number: num })
+        }
       />
       <ArchivedDrawer
         open={archivedOpen}

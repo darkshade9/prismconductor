@@ -79,8 +79,6 @@ export function ListWorkspaces():Promise<Array<types.Workspace>>;
 
 export function MoveIssueColumn(arg1:string,arg2:number,arg3:string):Promise<void>;
 
-export function Notify(arg1:string,arg2:string):Promise<void>;
-
 export function OnboardCheck(arg1:string):Promise<Array<workspace.OnboardCheck>>;
 
 export function OpenBundledSkill(arg1:string):Promise<void>;

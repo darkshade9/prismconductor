@@ -34,7 +34,7 @@ export function NotifyPanel() {
     <div className="space-y-3 text-sm">
       <label className="flex items-center gap-2">
         <input type="checkbox" checked={muted} onChange={(e) => setMuted(e.target.checked)} />
-        <span className="text-slate-300">Mute all OS notifications</span>
+        <span className="text-slate-300">Mute all alerts</span>
       </label>
 
       <div>

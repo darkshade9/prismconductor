@@ -13,7 +13,7 @@ The product spec lives in `PRISMCONDUCTOR_PLAN.md`. Treat it as the source of tr
 ## Layout
 
 - `internal/types/` — cross-package data model (§6).
-- `internal/{eventbus,session,store,workerpool,ollama,orchestrator,workspace,github,notify,skills/bundle}/` — one package per backend concern (§17).
+- `internal/{eventbus,session,store,workerpool,ollama,orchestrator,workspace,github,skills/bundle}/` — one package per backend concern (§17). Notifications are now in-app Wails-event toasts emitted directly from `app.go`'s `emitToast` (issue #32); no dedicated package.
 - `frontend/src/components/` — Board, Card, Column, PlanModal, QuestionForm, SessionDrawer, GoalPane, WorkspaceSwitcher, Settings.
 - `frontend/wailsjs/` — auto-generated bindings; never edit by hand. Run `wails generate module` after adding bound methods.
 
