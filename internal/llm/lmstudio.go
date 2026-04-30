@@ -61,7 +61,7 @@ func (l lmstudioProvider) ListModels(ctx context.Context, p types.Pool) ([]strin
 		}
 	}
 
-	body, err := httpGetWithBearer(ctx, l.client, endpoint+"/v1/models", key)
+	body, err := httpGetWithBearer(ctx, l.client, modelsURL(endpoint), key)
 	if err != nil {
 		return nil, err
 	}

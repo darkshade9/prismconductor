@@ -7,8 +7,39 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 )
+
+// versionedPathRE matches a baseURL whose path already ends with a
+// version-like segment (`/v1`, `/v2beta`, `/v1beta/openai`, etc.). When it
+// matches we append only `/chat/completions`; otherwise we prepend `/v1/`.
+//
+// Concretely: Gemini's OpenAI-compat base is
+// `https://generativelanguage.googleapis.com/v1beta/openai`, OpenAI's default
+// is `https://api.openai.com/v1`, and LM Studio / Ollama / LiteLLM defaults
+// are bare `http://host:port`. All three shapes need to resolve to a single
+// `…/chat/completions` URL.
+var versionedPathRE = regexp.MustCompile(`/v\d+[A-Za-z0-9]*(/[A-Za-z0-9]+)*/?$`)
+
+// chatCompletionsURL composes the final POST URL for an OpenAI-compatible
+// chat-completions call, idempotent on the trailing version segment.
+func chatCompletionsURL(baseURL string) string {
+	return openAICompatPath(baseURL, "chat/completions")
+}
+
+// modelsURL composes the GET URL for an OpenAI-compatible /models listing.
+func modelsURL(baseURL string) string {
+	return openAICompatPath(baseURL, "models")
+}
+
+func openAICompatPath(baseURL, leaf string) string {
+	trimmed := strings.TrimRight(baseURL, "/")
+	if versionedPathRE.MatchString(trimmed) {
+		return trimmed + "/" + leaf
+	}
+	return trimmed + "/v1/" + leaf
+}
 
 // openAICompatChat sends a system+user prompt to an OpenAI-compatible
 // /v1/chat/completions endpoint and returns the assistant's content. Shared by
@@ -18,7 +49,7 @@ func openAICompatChat(ctx context.Context, client *http.Client, baseURL, apiKey,
 	if model == "" {
 		return "", fmt.Errorf("orchestrator chat: model required")
 	}
-	url := strings.TrimRight(baseURL, "/") + "/v1/chat/completions"
+	url := chatCompletionsURL(baseURL)
 	reqBody := map[string]any{
 		"model":       model,
 		"temperature": 0.0,
@@ -87,7 +118,7 @@ func openAIToolChat(ctx context.Context, client *http.Client, baseURL, apiKey, m
 	if model == "" {
 		return ChatResponse{}, fmt.Errorf("tool chat: model required")
 	}
-	url := strings.TrimRight(baseURL, "/") + "/v1/chat/completions"
+	url := chatCompletionsURL(baseURL)
 
 	msgs := make([]map[string]any, 0, len(req.History)+1)
 	if req.System != "" {
