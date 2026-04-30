@@ -43,11 +43,42 @@ jobs:
         run: |
           npm ci
           npx playwright install chromium --with-deps
+      - name: start wails dev
+        # Run wails dev under xvfb-run in the background. We manage the
+        # process here instead of letting Playwright's webServer block
+        # handle it — Playwright's cleanup doesn't reliably traverse the
+        # xvfb-run process tree to kill the inner wails process, and the
+        # job hangs until the 15-minute job timeout fires.
+        run: |
+          set -m
+          xvfb-run --auto-servernum --server-args='-screen 0 1280x800x24' \
+            wails dev -loglevel error > /tmp/wails-dev.log 2>&1 &
+          echo "WAILS_PID=$!" >> "$GITHUB_ENV"
+          # Wait for the dev server to come up. Cap at 4 minutes — first
+          # build pulls deps + compiles cgo + bundles the frontend.
+          for i in $(seq 1 240); do
+            if curl -fsS -o /dev/null http://localhost:34115; then
+              echo "wails dev ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "wails dev did not come up in 240s; tail of log:"
+          tail -100 /tmp/wails-dev.log
+          exit 1
       - name: smoke
         working-directory: tests
         run: npx playwright test e2e/startup.spec.ts
         env:
           CI: "true"
+      - name: stop wails dev
+        if: always()
+        run: |
+          # Kill the wails dev background process and any lingering
+          # Xvfb / wails children. `|| true` because steps with no
+          # matching processes shouldn't fail the job.
+          pkill -9 -f 'wails dev' || true
+          pkill -9 Xvfb || true
       - name: upload trace on failure
         if: failure()
         uses: actions/upload-artifact@v4
