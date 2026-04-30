@@ -42,11 +42,28 @@ Bundled by PrismConductor. Used in Bundled and Hybrid skill modes (PRISMCONDUCTO
    Axis names MUST map to existing repo labels via the priority lists above — do not invent
    axis names. The "suggest even if missing" rule applies to topicals only.
 5. Compose a plan that lists:
-   - What to do (markdown)
+   - **Goal summary** (`goal_summary`, REQUIRED — non-empty): 2-3 paragraphs at medium-high level,
+     what the issue is actually trying to accomplish. Intent, not implementation. The planner's
+     restatement of the issue body in their own words. If a reader only sees this, they should be
+     able to say "yes that's right" or "no, replan with this clarification." If you genuinely cannot
+     summarize the goal, the issue is too thin to plan — add a `Question` asking the user to clarify
+     intent rather than producing an empty `goal_summary`.
+   - **Executive summary** (`executive_summary`, REQUIRED — non-empty): 3-4 plain-language sentences
+     a non-coder PM would understand. What does the user get when this ships? Outcome-focused.
+     **No file paths, no symbol names, no code references.** If you're tempted to mention
+     `Foo.bar()`, write it differently.
+   - **Plan markdown** (`plan_markdown`, REQUIRED): the technical body. Step-by-step, file
+     rationale, code-level decisions. Lives under the collapsed `The Code` section in the PlanModal,
+     so the audience for this content is a reviewer who's already decided to dig in — not a top-line
+     summary.
    - Files to add/modify/delete
    - Detected dependencies (other open issue numbers)
    - Suggested labels (from step 4; empty array if nothing matches)
    - Open questions to ask the user (structured per §6.4 Question schema)
+
+   The `goal_summary` and `executive_summary` fields are tagged `omitempty` in the Go struct so old
+   on-disk plans deserialize cleanly, but the skill-level requirement is that NEW plans MUST have
+   both populated. This is the dual interpretation: schema-level optional, skill-level required.
 
    **Question authoring rules (NON-NEGOTIABLE — the UI rendering depends on these):**
    - The `prompt` field is the *question only* — one or two sentences. Do NOT inline the answer choices into the prompt text ("A) … B) … C) …"). The prompt should read cleanly without the options.

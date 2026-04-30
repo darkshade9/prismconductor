@@ -1075,6 +1075,8 @@ export namespace types {
 	    issue_number: number;
 	    workspace_id: string;
 	    revision: number;
+	    goal_summary?: string;
+	    executive_summary?: string;
 	    plan_markdown: string;
 	    files_to_modify: FileIntent[];
 	    dependencies_detected: number[];
@@ -1096,6 +1098,8 @@ export namespace types {
 	        this.issue_number = source["issue_number"];
 	        this.workspace_id = source["workspace_id"];
 	        this.revision = source["revision"];
+	        this.goal_summary = source["goal_summary"];
+	        this.executive_summary = source["executive_summary"];
 	        this.plan_markdown = source["plan_markdown"];
 	        this.files_to_modify = this.convertValues(source["files_to_modify"], FileIntent);
 	        this.dependencies_detected = source["dependencies_detected"];

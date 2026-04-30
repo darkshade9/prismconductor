@@ -184,13 +184,22 @@ export function PlanModal({
                 onIssueRefresh={refreshIssues}
               />
 
-              <Section title="What the agent plans to do">
-                <Markdown text={plan.plan_markdown} />
-              </Section>
+              <CollapsibleSection title="The Goal" defaultOpen={true}>
+                {plan.goal_summary ? (
+                  <Markdown text={plan.goal_summary} />
+                ) : (
+                  <>
+                    <Markdown text={plan.plan_markdown} />
+                    <p className="text-xs text-slate-500 mt-2">
+                      Older plan format — showing implementation detail. Reject and replan to populate the goal summary.
+                    </p>
+                  </>
+                )}
+              </CollapsibleSection>
 
-              {(plan.files_to_modify ?? []).length > 0 && (
-                <Section title="Files to modify">
-                  <ul className="font-mono text-xs space-y-0.5">
+              <CollapsibleSection title="The Code" defaultOpen={false}>
+                {(plan.files_to_modify ?? []).length > 0 && (
+                  <ul className="font-mono text-xs space-y-0.5 mb-3">
                     {plan.files_to_modify.map((f) => (
                       <li key={f.path} className="text-slate-300">
                         <span className="text-slate-500 w-3 inline-block">{INTENT_GLYPH[f.intent] ?? "?"}</span>{" "}
@@ -199,18 +208,24 @@ export function PlanModal({
                       </li>
                     ))}
                   </ul>
-                </Section>
-              )}
-
-              {(plan.dependencies_detected ?? []).length > 0 && (
-                <Section title="Detected dependencies">
-                  <ul className="text-xs space-y-0.5">
+                )}
+                {plan.goal_summary && <Markdown text={plan.plan_markdown} />}
+                {(plan.dependencies_detected ?? []).length > 0 && (
+                  <ul className="text-xs space-y-0.5 mt-3">
                     {plan.dependencies_detected.map((n) => (
                       <li key={n} className="text-amber-300">• Depends on #{n}</li>
                     ))}
                   </ul>
-                </Section>
-              )}
+                )}
+              </CollapsibleSection>
+
+              <CollapsibleSection title="Executive Summary" defaultOpen={true}>
+                {plan.executive_summary ? (
+                  <Markdown text={plan.executive_summary} />
+                ) : (
+                  <p className="text-slate-500 text-xs italic">Planner didn't produce one — replan to fill in.</p>
+                )}
+              </CollapsibleSection>
 
               {hasQuestions && (
                 <Section title={`Questions (${questions.length})`}>
@@ -415,6 +430,36 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     <div>
       <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">{title}</div>
       {children}
+    </div>
+  );
+}
+
+function CollapsibleSection({
+  title,
+  defaultOpen = true,
+  children,
+}: {
+  title: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-2 text-left text-xs uppercase tracking-wide text-slate-500 hover:text-slate-300 mb-1"
+      >
+        <span
+          className="transition-transform duration-150"
+          style={{ display: "inline-block", transform: open ? "rotate(90deg)" : "rotate(0)" }}
+        >
+          ▶
+        </span>
+        {title}
+      </button>
+      {open && <div>{children}</div>}
     </div>
   );
 }

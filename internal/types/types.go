@@ -184,6 +184,8 @@ type Plan struct {
 	IssueNumber          int          `json:"issue_number"`
 	WorkspaceID          string       `json:"workspace_id"`
 	Revision             int          `json:"revision"`
+	GoalSummary          string       `json:"goal_summary,omitempty"`
+	ExecutiveSummary     string       `json:"executive_summary,omitempty"`
 	PlanMarkdown         string       `json:"plan_markdown"`
 	FilesToModify        []FileIntent `json:"files_to_modify"`
 	DependenciesDetected []int        `json:"dependencies_detected"`
