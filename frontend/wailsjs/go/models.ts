@@ -1152,6 +1152,9 @@ export namespace types {
 	    // Go type: time
 	    archived_at?: any;
 	    waiting_for_pool?: boolean;
+	    work_seconds?: number;
+	    work_seconds_plan?: number;
+	    work_seconds_execute?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Issue(source);
@@ -1179,6 +1182,9 @@ export namespace types {
 	        this.pr_url = source["pr_url"];
 	        this.archived_at = this.convertValues(source["archived_at"], null);
 	        this.waiting_for_pool = source["waiting_for_pool"];
+	        this.work_seconds = source["work_seconds"];
+	        this.work_seconds_plan = source["work_seconds_plan"];
+	        this.work_seconds_execute = source["work_seconds_execute"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
