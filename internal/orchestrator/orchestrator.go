@@ -24,6 +24,12 @@ type Store interface {
 	DepCacheGet(workspaceID string, issueNumber int, goalID, bodyHash string) (string, bool, error)
 	DepCachePut(workspaceID string, issueNumber int, goalID, bodyHash string, payload any) error
 	MoveIssueColumn(workspaceID string, number int, column types.BoardColumn) error
+	// Issue #40: pending pool queue.
+	LoadIssue(workspaceID string, number int) (types.Issue, error)
+	EnqueuePendingPool(workspaceID string, issueNumber int, role types.Role, action string) error
+	ListPendingPools(limit int) ([]types.PendingPoolRequest, error)
+	DequeuePendingPool(id int64) error
+	DeletePendingForIssue(workspaceID string, issueNumber int) error
 }
 
 // PoolRouter is the slice of *workerpool.Registry we need (issue #27,
@@ -33,6 +39,7 @@ type Store interface {
 // exclusively — no fallback to work pools.
 type PoolRouter interface {
 	AcquireForPlan(ws types.Workspace) (poolID string, ok bool)
+	AcquireForWork(ws types.Workspace) (poolID string, ok bool) // issue #40 drain
 	ReleaseByPool(poolID string)
 	FreePlanSlots() int
 }
@@ -49,6 +56,10 @@ type LLMResolver func() LLM
 // and threading the Pool through to the session manager.
 type SpawnPlanFunc func(workspaceID string, issueNumber int, poolID string) error
 
+// SpawnWorkFunc mirrors SpawnPlanFunc for execute-mode workers (issue #40
+// pending pool drain for work role).
+type SpawnWorkFunc func(workspaceID string, issueNumber int, poolID string) error
+
 // WorkspaceLookup returns the full Workspace by ID. Optional — when nil, the
 // orchestrator falls back to a bare-ID Workspace, which means PreferredPlanPoolID
 // pinning is ignored (round-robin only).
@@ -60,6 +71,7 @@ type Orchestrator struct {
 	store      Store
 	pool       PoolRouter
 	spawn      SpawnPlanFunc
+	spawnWork  SpawnWorkFunc // issue #40: work-role drain callback
 	lookupWS   WorkspaceLookup
 
 	mu      sync.Mutex
@@ -111,6 +123,13 @@ func (o *Orchestrator) SetAutoPull(pool PoolRouter, spawn SpawnPlanFunc) {
 // works without it (round-robin among plan pools).
 func (o *Orchestrator) SetWorkspaceLookup(f WorkspaceLookup) { o.lookupWS = f }
 
+// SetSpawnWork wires the work-role spawn callback used by the pending-pool
+// drain when draining approve_execute requests (issue #40).
+func (o *Orchestrator) SetSpawnWork(fn SpawnWorkFunc) { o.spawnWork = fn }
+
+// KickDrain triggers a drain pass outside the normal bus flow (e.g. startup).
+func (o *Orchestrator) KickDrain(reason string) { go o.drainPendingPools(reason) }
+
 // handle is the per-event router from §8.
 //
 // Note: LLM-driven runRank is intentionally NOT auto-fired on issue_added /
@@ -139,7 +158,12 @@ func (o *Orchestrator) handle(e eventbus.Event) {
 				o.pool.ReleaseByPool(payload.PoolID)
 			}
 		}
-		go o.autoPull("worker_slot_freed")
+		go func() {
+			// Drain persisted pending requests first (FIFO: earlier approvals
+			// get the freed slot before new auto-pull candidates).
+			o.drainPendingPools("worker_slot_freed")
+			o.autoPull("worker_slot_freed")
+		}()
 	case eventbus.EvtAgentCountChanged:
 		go o.autoPull("agent_count_changed")
 	case eventbus.EvtPlanRejected:
@@ -184,6 +208,16 @@ func (o *Orchestrator) autoPull(reason string) {
 	// Order by priority desc, with blocked items last.
 	sortByOrchestratorPriority(candidates)
 
+	// If all plan slots are taken, enqueue the next candidate so the drain can
+	// retry as soon as a slot frees (issue #40). Skip if nothing is queued.
+	if o.pool.FreePlanSlots() <= 0 {
+		next := pickNextUnblocked(candidates, all)
+		if next != nil {
+			o.enqueuePending(next, types.RolePlan, "spawn:plan")
+		}
+		return
+	}
+
 	for o.pool.FreePlanSlots() > 0 {
 		next := pickNextUnblocked(candidates, all)
 		if next == nil {
@@ -200,8 +234,13 @@ func (o *Orchestrator) autoPull(reason string) {
 		}
 		poolID, ok := o.pool.AcquireForPlan(ws)
 		if !ok {
+			// Race: slot taken between FreePlanSlots() check and AcquireForPlan.
+			// Enqueue and stop — the drain will retry on next slot-freed event.
+			o.enqueuePending(next, types.RolePlan, "spawn:plan")
 			return
 		}
+		// Clear any pre-existing waiting state before moving to PLAN.
+		o.clearWaitingForPool(next.WorkspaceID, next.Number)
 		if err := o.store.MoveIssueColumn(next.WorkspaceID, next.Number, types.ColPlan); err != nil {
 			o.pool.ReleaseByPool(poolID)
 			return

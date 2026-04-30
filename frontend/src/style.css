@@ -43,4 +43,9 @@ body {
 .card-glow-execute { animation: card-glow-execute 1.6s ease-in-out infinite; }
 .card-glow-ready   { animation: card-glow-ready   2.4s ease-in-out infinite; }
 .card-glow-blocked { animation: card-glow-blocked 1.2s ease-in-out infinite; }
+@keyframes card-glow-waiting {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(244, 114, 182, 0.55), 0 0 12px 2px rgba(244, 114, 182, 0.20); }
+  50%      { box-shadow: 0 0 0 2px rgba(244, 114, 182, 0.90), 0 0 24px 6px rgba(244, 114, 182, 0.45); }
+}
+.card-glow-waiting { animation: card-glow-waiting 2.0s ease-in-out infinite; }
 

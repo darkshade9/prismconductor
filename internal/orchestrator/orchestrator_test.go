@@ -21,7 +21,15 @@ func (s *stubStore) ListIssues(string) ([]types.Issue, error) {
 	s.listIssuesHits++
 	return s.issues, nil
 }
-func (s *stubStore) SaveIssue(types.Issue) (bool, error) { return false, nil }
+func (s *stubStore) SaveIssue(iss types.Issue) (bool, error) {
+	for i := range s.issues {
+		if s.issues[i].WorkspaceID == iss.WorkspaceID && s.issues[i].Number == iss.Number {
+			s.issues[i] = iss
+			return false, nil
+		}
+	}
+	return false, nil
+}
 func (s *stubStore) ListGoals() ([]types.Goal, error) {
 	s.listGoalsHits++
 	return s.goals, nil
@@ -32,6 +40,20 @@ func (s *stubStore) DepCacheGet(string, int, string, string) (string, bool, erro
 }
 func (s *stubStore) DepCachePut(string, int, string, string, any) error    { return nil }
 func (s *stubStore) MoveIssueColumn(string, int, types.BoardColumn) error { return nil }
+
+// Issue #40 additions.
+func (s *stubStore) LoadIssue(workspaceID string, number int) (types.Issue, error) {
+	for _, iss := range s.issues {
+		if iss.WorkspaceID == workspaceID && iss.Number == number {
+			return iss, nil
+		}
+	}
+	return types.Issue{}, nil
+}
+func (s *stubStore) EnqueuePendingPool(string, int, types.Role, string) error { return nil }
+func (s *stubStore) ListPendingPools(int) ([]types.PendingPoolRequest, error)  { return nil, nil }
+func (s *stubStore) DequeuePendingPool(int64) error                            { return nil }
+func (s *stubStore) DeletePendingForIssue(string, int) error                   { return nil }
 
 type stubPool struct {
 	free        int
@@ -49,7 +71,8 @@ func (p *stubPool) AcquireForPlan(types.Workspace) (string, bool) {
 	p.free--
 	return "stub-pool", true
 }
-func (p *stubPool) ReleaseByPool(string) { p.releases++; p.free++ }
+func (p *stubPool) AcquireForWork(types.Workspace) (string, bool) { return "", false }
+func (p *stubPool) ReleaseByPool(string)                          { p.releases++; p.free++ }
 
 func TestSetPausedToggles(t *testing.T) {
 	o := New(eventbus.New(), nil)

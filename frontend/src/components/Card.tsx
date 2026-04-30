@@ -134,6 +134,8 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
           ? "border-purple-500 card-glow-execute"
           : planReady
           ? "border-amber-500 card-glow-ready"
+          : issue.waiting_for_pool
+          ? "border-pink-500 card-glow-waiting"
           : "border-slate-700",
       )}
     >
@@ -185,6 +187,8 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         labels={issue.labels ?? []}
         workspaceID={issue.workspace_id}
         issueNumber={issue.number}
+        waitingForPool={issue.waiting_for_pool ?? false}
+        pools={pools}
       />
       {pausedSession && pausedSession.pending_question_id && (
         <MidRunQuestionModal
@@ -220,6 +224,8 @@ function StatusRow({
   labels,
   workspaceID,
   issueNumber,
+  waitingForPool,
+  pools,
 }: {
   activeSession: types.Session | null;
   activity: SessionActivity | null;
@@ -232,6 +238,8 @@ function StatusRow({
   labels: string[];
   workspaceID: string;
   issueNumber: number;
+  waitingForPool: boolean;
+  pools: Record<string, import("../stores/usePoolsStore").PoolEntry>;
 }) {
   if (pausedSession) {
     return (
@@ -271,6 +279,20 @@ function StatusRow({
         {activity && activity.last_action && (
           <ActivityHint activity={activity} />
         )}
+      </div>
+    );
+  }
+  if (!activeSession && waitingForPool) {
+    // Build tooltip: "waiting for an available work pool — 0 of 7 slots free (Opus, Sonnet)"
+    const poolNames = Object.values(pools).map((p) => p.name);
+    const tooltip =
+      poolNames.length > 0
+        ? `waiting for an available agent pool — ${poolNames.join(", ")}`
+        : "no agent pools configured — add one in Settings → Pools";
+    return (
+      <div className="text-[11px] mt-1.5 flex items-center gap-1.5 flex-wrap" title={tooltip}>
+        <Pulse className="bg-pink-400" />
+        <span className="text-pink-300">waiting for available agent pool…</span>
       </div>
     );
   }

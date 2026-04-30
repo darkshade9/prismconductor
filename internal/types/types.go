@@ -79,6 +79,21 @@ type Pool struct {
 	APIKey    string    `json:"api_key,omitempty"`
 	Role      Role      `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
+	// Priority controls pool selection order within a role group (issue #40).
+	// Lower value = higher preference. Default 0. Pools with equal priority
+	// are tried in ascending created_at order.
+	Priority int `json:"priority"`
+}
+
+// PendingPoolRequest is a persisted "waiting for pool" request. Created when
+// a spawn attempt finds no free slot; drained when a slot frees (issue #40).
+type PendingPoolRequest struct {
+	ID          int64     `json:"id"`
+	WorkspaceID string    `json:"workspace_id"`
+	IssueNumber int       `json:"issue_number"`
+	Role        Role      `json:"role"`
+	Action      string    `json:"action"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Role names which step in the orchestration loop a pool serves (issue #39).
@@ -172,6 +187,9 @@ type Issue struct {
 	PRNumber     *int        `json:"pr_number,omitempty"`
 	PRURL        string      `json:"pr_url,omitempty"`
 	ArchivedAt   *time.Time  `json:"archived_at,omitempty"`
+	// WaitingForPool is set true when a spawn attempt was queued because no
+	// pool had free capacity (issue #40). Cleared on successful drain.
+	WaitingForPool bool `json:"waiting_for_pool,omitempty"`
 }
 
 type BoardColumn string
