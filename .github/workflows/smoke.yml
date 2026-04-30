@@ -26,7 +26,8 @@ jobs:
           npm ci
           npx playwright install chromium --with-deps
       - name: smoke
-        run: npx --prefix tests playwright test tests/e2e/startup.spec.ts
+        working-directory: tests
+        run: npx playwright test e2e/startup.spec.ts
         env:
           CI: "true"
       - name: upload trace on failure
