@@ -20,10 +20,14 @@ export function PlanModal({
   open,
   onClose,
   issue,
+  queueDepth = 0,
+  onPopNext,
 }: {
   open: boolean;
   onClose: () => void;
   issue: types.Issue | null;
+  queueDepth?: number;
+  onPopNext?: () => void;
 }) {
   const refreshIssues = useIssueStore((s) => s.refresh);
   const refreshLabels = useLabelsStore((s) => s.refresh);
@@ -132,8 +136,20 @@ export function PlanModal({
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
       <div className="w-[700px] max-h-[85vh] bg-slate-900 border border-slate-700 rounded-lg flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800">
-          <div className="text-slate-200">
-            Plan: #{issue.number} — <span className="text-slate-400">{issue.title}</span>
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="text-slate-200 truncate">
+              Plan: #{issue.number} — <span className="text-slate-400">{issue.title}</span>
+            </div>
+            {queueDepth > 0 && onPopNext && (
+              <button
+                type="button"
+                onClick={onPopNext}
+                className="shrink-0 text-xs px-2 py-0.5 rounded-full border border-amber-700 bg-amber-950/40 text-amber-200 hover:bg-amber-900/40"
+                title="Open next plan that became ready while you were reviewing"
+              >
+                +{queueDepth} more plan{queueDepth === 1 ? "" : "s"} ready
+              </button>
+            )}
           </div>
           <button onClick={handleClose} className="text-slate-400 hover:text-slate-200">✕</button>
         </div>
