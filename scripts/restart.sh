@@ -63,13 +63,43 @@ else
 fi
 
 # ── 3. kill existing processes ──────────────────────────────────────
+# Match BOTH the build/bin path AND the bundle name, so a launched-from-
+# Dock / ~/Applications / spotlight copy doesn't survive. Done in two
+# pkill passes because -f can't OR alternatives portably.
 echo "→ killing any running prismconductor processes"
-pkill -f "build/bin/prismconductor" 2>/dev/null || true
+pkill -9 -f "build/bin/prismconductor" 2>/dev/null || true
+pkill -9 -f "prismconductor.app/Contents/MacOS/prismconductor" 2>/dev/null || true
+pkill -9 -x "prismconductor" 2>/dev/null || true
 sleep 1
 
+# ── 3b. regenerate Wails bindings ───────────────────────────────────
+# `wails generate module` rewrites frontend/wailsjs/go/* from the current
+# Go-side bound-method signatures. If we skip this, freshly-pulled
+# `App.NewMethod` calls stay invisible to the frontend bundle even after
+# build, because Vite still imports the OLD App.js / App.d.ts on disk.
+echo "→ regenerating Wails bindings"
+if ! wails generate module >/dev/null 2>&1; then
+  echo "✗ wails generate module failed" >&2
+  exit 3
+fi
+
+# ── 3c. wipe stale build artifacts ──────────────────────────────────
+# wails build is incremental and will happily ship a Frankenstein bundle
+# (new Go + old JS) if any of these caches disagree with the source.
+# Nuke them to force every layer to rebuild from current sources.
+echo "→ wiping build/bin + frontend/dist + vite cache"
+rm -rf "$REPO/build/bin"
+rm -rf "$REPO/frontend/dist"
+rm -rf "$REPO/frontend/node_modules/.vite"
+
 # ── 4. build ────────────────────────────────────────────────────────
+# bash 3.2 (macOS default) trips on `${WAILS_FLAGS[@]}` under `set -u`
+# when the array is empty — it treats an empty array as unbound. The
+# `${arr[@]+"${arr[@]}"}` idiom expands to nothing when unset, and to
+# the array's elements otherwise, dodging the error on every bash from
+# 3.2 through 5.x.
 echo "→ wails build${WAILS_FLAGS[*]:+ ${WAILS_FLAGS[*]}}"
-if ! wails build "${WAILS_FLAGS[@]}"; then
+if ! wails build ${WAILS_FLAGS[@]+"${WAILS_FLAGS[@]}"}; then
   echo "✗ wails build failed" >&2
   exit 3
 fi
@@ -79,9 +109,24 @@ if [[ ! -x "$BIN" ]]; then
   exit 4
 fi
 
+# Sanity-check the binary is genuinely fresh: its mtime must be within
+# the last minute. If it's older we've shipped a stale bundle (build
+# silently no-op'd despite the wipe) and the user would never see new
+# code — fail loudly instead.
+BIN_AGE=$(( $(date +%s) - $(stat -f %m "$BIN") ))
+if [[ "$BIN_AGE" -gt 60 ]]; then
+  echo "✗ binary is ${BIN_AGE}s old — wails build appears to have skipped" >&2
+  exit 4
+fi
+echo "→ binary mtime check ok (${BIN_AGE}s old)"
+
 # ── 5. relaunch ─────────────────────────────────────────────────────
+# `open -n` forces a NEW instance instead of letting LaunchServices
+# activate a cached one. Without -n macOS Sequoia/Sonoma may bring an
+# already-running copy to the front (and on bundle-ID match even resurrect
+# a recently-quit one) — and the user sees old code.
 echo "→ launching $APP"
-open "$APP"
+open -n "$APP"
 
 # Show the resulting PID for sanity.
 sleep 1
