@@ -86,6 +86,32 @@ func (c *Client) FetchOpenIssues(ctx context.Context, ws types.Workspace) ([]typ
 	return out, nil
 }
 
+// FetchIssueDetail fetches a single issue by number. Callers are expected to cache the result.
+func (c *Client) FetchIssueDetail(ctx context.Context, ws types.Workspace, number int) (*types.Issue, error) {
+	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {
+		return nil, fmt.Errorf("workspace %q missing github_owner / github_repo", ws.ID)
+	}
+	iss, _, err := c.api.Issues.Get(ctx, ws.GitHubOwner, ws.GitHubRepo, number)
+	if err != nil {
+		return nil, err
+	}
+	labels := make([]string, 0, len(iss.Labels))
+	for _, l := range iss.Labels {
+		labels = append(labels, l.GetName())
+	}
+	out := &types.Issue{
+		Number:      iss.GetNumber(),
+		WorkspaceID: ws.ID,
+		Title:       iss.GetTitle(),
+		Body:        iss.GetBody(),
+		Labels:      labels,
+		State:       iss.GetState(),
+		URL:         iss.GetHTMLURL(),
+		UpdatedAt:   iss.GetUpdatedAt().Time,
+	}
+	return out, nil
+}
+
 // ListLabels returns every label defined on the workspace's GitHub repo.
 func (c *Client) ListLabels(ctx context.Context, ws types.Workspace) ([]types.Label, error) {
 	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {
@@ -209,6 +235,32 @@ func (c *Client) FetchPRState(ctx context.Context, ws types.Workspace, prNumber 
 		out.ClosedAt = &ts
 	}
 	return out, nil
+}
+
+// GetIssueDetail fetches a single issue by number from GitHub. Used for the
+// lazy modal fetch (App.FetchIssueDetail) to surface fresher metadata.
+func (c *Client) GetIssueDetail(ctx context.Context, ws types.Workspace, issueNumber int) (types.Issue, error) {
+	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {
+		return types.Issue{}, fmt.Errorf("workspace %q missing github_owner / github_repo", ws.ID)
+	}
+	iss, _, err := c.api.Issues.Get(ctx, ws.GitHubOwner, ws.GitHubRepo, issueNumber)
+	if err != nil {
+		return types.Issue{}, err
+	}
+	labels := make([]string, 0, len(iss.Labels))
+	for _, l := range iss.Labels {
+		labels = append(labels, l.GetName())
+	}
+	return types.Issue{
+		Number:      iss.GetNumber(),
+		WorkspaceID: ws.ID,
+		Title:       iss.GetTitle(),
+		Body:        iss.GetBody(),
+		Labels:      labels,
+		State:       iss.GetState(),
+		URL:         iss.GetHTMLURL(),
+		UpdatedAt:   iss.GetUpdatedAt().Time,
+	}, nil
 }
 
 // SetIssueLabels replaces an issue's labels with the given set.

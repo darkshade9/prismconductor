@@ -205,6 +205,56 @@ func TestApp_ArchiveDone_PublishesEventAndExcludesFromListIssues(t *testing.T) {
 	}
 }
 
+// FetchIssueDetail falls back to the local mirror when the github client is unavailable.
+func TestApp_FetchIssueDetail_FallbackToLocal(t *testing.T) {
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      42,
+		Title:       "test issue",
+		Body:        "body text",
+		State:       "open",
+		Column:      types.ColTodo,
+	}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+
+	a := &App{store: s, gh: nil}
+	iss, err := a.FetchIssueDetail("ws1", 42)
+	if err != nil {
+		t.Fatalf("FetchIssueDetail: %v", err)
+	}
+	if iss.Number != 42 || iss.Body != "body text" {
+		t.Errorf("unexpected issue: %+v", iss)
+	}
+}
+
+// FetchIssueDetail returns a cached result on the second call without hitting GitHub.
+func TestApp_FetchIssueDetail_Cache(t *testing.T) {
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	a := &App{store: s, gh: nil}
+	cached := types.Issue{WorkspaceID: "ws1", Number: 7, Title: "cached", Body: "cached body", State: "open"}
+	a.issueDetailCache.Store("ws1#7", issueDetailEntry{issue: cached, expiresAt: time.Now().Add(60 * time.Second)})
+
+	iss, err := a.FetchIssueDetail("ws1", 7)
+	if err != nil {
+		t.Fatalf("FetchIssueDetail: %v", err)
+	}
+	if iss.Title != "cached" {
+		t.Errorf("expected cached title, got %q", iss.Title)
+	}
+}
+
 func TestLabelSetEqual(t *testing.T) {
 	cases := []struct {
 		a, b []string

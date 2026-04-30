@@ -60,6 +60,13 @@ type App struct {
 	notifyMu      sync.Mutex
 	lastNotifyKey string
 	lastNotifyAt  int64
+
+	issueDetailCache sync.Map // key: "wsID#number" → issueDetailEntry
+}
+
+type issueDetailEntry struct {
+	issue     types.Issue
+	expiresAt time.Time
 }
 
 func NewApp() *App { return &App{} }
@@ -630,6 +637,50 @@ func (a *App) ListIssues(workspaceID string) ([]types.Issue, error) {
 	return a.store.ListIssues(workspaceID)
 }
 
+// FetchIssueDetail fetches fresh GitHub metadata for a single issue and caches
+// the result for 60 seconds. Falls back to the locally mirrored issue on error.
+func (a *App) FetchIssueDetail(workspaceID string, issueNumber int) (*types.Issue, error) {
+	key := fmt.Sprintf("%s#%d", workspaceID, issueNumber)
+	if v, ok := a.issueDetailCache.Load(key); ok {
+		entry := v.(issueDetailEntry)
+		if time.Now().Before(entry.expiresAt) {
+			iss := entry.issue
+			return &iss, nil
+		}
+	}
+	if a.gh == nil || a.wsReg == nil {
+		if iss, ok := a.findIssue(workspaceID, issueNumber); ok {
+			return &iss, nil
+		}
+		return nil, fmt.Errorf("github client unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return nil, fmt.Errorf("workspace %q not found", workspaceID)
+	}
+	iss, err := a.gh.FetchIssueDetail(a.ctx, ws, issueNumber)
+	if err != nil {
+		if local, ok := a.findIssue(workspaceID, issueNumber); ok {
+			return &local, nil
+		}
+		return nil, err
+	}
+	// Preserve column/plan/session fields from local mirror.
+	if local, ok := a.findIssue(workspaceID, issueNumber); ok {
+		iss.Column = local.Column
+		iss.Plan = local.Plan
+		iss.SessionID = local.SessionID
+		iss.GoalID = local.GoalID
+		iss.Priority = local.Priority
+		iss.Dependencies = local.Dependencies
+		iss.DepRationale = local.DepRationale
+		iss.PRNumber = local.PRNumber
+		iss.PRURL = local.PRURL
+	}
+	a.issueDetailCache.Store(key, issueDetailEntry{issue: *iss, expiresAt: time.Now().Add(60 * time.Second)})
+	return iss, nil
+}
+
 // ListArchivedIssues returns archived rows for the drawer (#34). Empty
 // workspaceID returns archived rows across every workspace.
 func (a *App) ListArchivedIssues(workspaceID string) ([]types.Issue, error) {
@@ -637,6 +688,32 @@ func (a *App) ListArchivedIssues(workspaceID string) ([]types.Issue, error) {
 		return nil, fmt.Errorf("store unavailable")
 	}
 	return a.store.ListArchivedIssues(workspaceID)
+}
+
+// FetchIssueDetail returns fresh GitHub metadata for a single issue, cached for
+// 60 s. The frontend calls this lazily on modal open to surface up-to-date
+// body/labels without waiting for the next poll cycle.
+func (a *App) FetchIssueDetail(workspaceID string, issueNumber int) (types.Issue, error) {
+	if a.gh == nil || a.wsReg == nil {
+		return types.Issue{}, fmt.Errorf("github client unavailable")
+	}
+	key := workspaceID + "/" + strconv.Itoa(issueNumber)
+	if v, ok := a.issueDetailCache.Load(key); ok {
+		entry := v.(issueDetailEntry)
+		if time.Now().Before(entry.expiresAt) {
+			return entry.issue, nil
+		}
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return types.Issue{}, fmt.Errorf("workspace %q not found", workspaceID)
+	}
+	iss, err := a.gh.GetIssueDetail(a.ctx, ws, issueNumber)
+	if err != nil {
+		return types.Issue{}, err
+	}
+	a.issueDetailCache.Store(key, issueDetailEntry{issue: iss, expiresAt: time.Now().Add(60 * time.Second)})
+	return iss, nil
 }
 
 // ArchiveDone flags every DONE row in the workspace as archived (#34). Returns
