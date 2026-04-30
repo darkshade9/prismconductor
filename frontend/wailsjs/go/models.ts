@@ -1252,11 +1252,12 @@ export namespace types {
 	    // Go type: time
 	    created_at: any;
 	    priority: number;
-	
+	    temperature?: number;
+
 	    static createFrom(source: any = {}) {
 	        return new Pool(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1270,6 +1271,7 @@ export namespace types {
 	        this.role = source["role"];
 	        this.created_at = this.convertValues(source["created_at"], null);
 	        this.priority = source["priority"];
+	        this.temperature = source["temperature"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

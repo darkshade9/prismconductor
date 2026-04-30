@@ -67,7 +67,7 @@ func (ollamaProvider) SpawnArgs(_ types.Pool, _ string) ([]string, error) {
 // deadline (the orchestrator gives 5 minutes).
 func (o ollamaProvider) ChatJSON(ctx context.Context, p types.Pool, system, user string) (string, error) {
 	endpoint := o.resolveEndpoint(p)
-	return openAICompatChat(ctx, o.client, endpoint, p.APIKey, p.Model, system, user, nil)
+	return openAICompatChat(ctx, o.client, endpoint, p.APIKey, p.Model, system, user, p.Temperature, nil)
 }
 
 // ToolChat drives a tool-using turn through Ollama's OpenAI-compat endpoint
@@ -76,7 +76,7 @@ func (o ollamaProvider) ChatJSON(ctx context.Context, p types.Pool, system, user
 // stop.
 func (o ollamaProvider) ToolChat(ctx context.Context, p types.Pool, req ChatRequest) (ChatResponse, error) {
 	endpoint := o.resolveEndpoint(p)
-	return openAIToolChat(ctx, o.client, endpoint, p.APIKey, p.Model, req, nil)
+	return openAIToolChat(ctx, o.client, endpoint, p.APIKey, p.Model, req, p.Temperature, nil)
 }
 
 func (o ollamaProvider) resolveEndpoint(p types.Pool) string {
