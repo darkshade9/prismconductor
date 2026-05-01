@@ -6,6 +6,7 @@ import { main, types } from "../../wailsjs/go/models";
 import { useIssueStore } from "../stores/issueStore";
 import { useIssueViewStore } from "../stores/useIssueViewStore";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 import { AnswerState, QuestionForm, emptyAnswers, initialAnswers, isComplete } from "./QuestionForm";
 import { LabelsModal } from "./LabelsModal";
 import { IssueSection } from "./IssueSection";
@@ -33,6 +34,13 @@ export function PlanModal({
 }) {
   const refreshIssues = useIssueStore((s) => s.refresh);
   const loadIssueViews = useIssueViewStore((s) => s.loadForWorkspace);
+  // Always refresh issues at the SAME scope the Board is currently rendering
+  // (the chip-selected workspace, or "" for All). Calling refreshIssues()
+  // without an arg defaults to ListIssues("") which silently swaps the
+  // global issueStore over to All — Board.tsx then renders every workspace's
+  // cards while the chip still says prismconductor, exactly the
+  // background-context-switch bug from the ApprovePlan path.
+  const selectedWorkspace = useWorkspaceStore((s) => s.selectedID);
   const refreshLabels = useLabelsStore((s) => s.refresh);
   const labelsCache = useLabelsStore((s) => (issue ? s.byWorkspace[issue.workspace_id] ?? EMPTY_LABELS : EMPTY_LABELS));
   const [plan, setPlan] = useState<types.Plan | null>(null);
@@ -135,7 +143,7 @@ export function PlanModal({
         );
       }
       await ApprovePlan(issue.workspace_id, issue.number, plan.revision);
-      await Promise.all([refreshIssues(), loadIssueViews(issue.workspace_id)]);
+      await Promise.all([refreshIssues(selectedWorkspace ?? ""), loadIssueViews(issue.workspace_id)]);
       handleClose();
     } catch (e: any) {
       setError(String(e?.message ?? e));
@@ -150,7 +158,7 @@ export function PlanModal({
     setError(null);
     try {
       await RejectPlan(issue.workspace_id, issue.number);
-      await Promise.all([refreshIssues(), loadIssueViews(issue.workspace_id)]);
+      await Promise.all([refreshIssues(selectedWorkspace ?? ""), loadIssueViews(issue.workspace_id)]);
       handleClose();
     } catch (e: any) {
       setError(String(e?.message ?? e));

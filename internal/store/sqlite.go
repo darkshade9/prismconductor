@@ -222,6 +222,20 @@ CREATE TABLE IF NOT EXISTS pools (
 			return err
 		}
 	}
+	// One-time backfill: sync `$.state` inside the JSON blob to the indexed
+	// `state` column for any drifted rows. Pre-fix (UpdateSessionState only
+	// touched the indexed column), every terminal transition left
+	// json.state="running" while the indexed column moved to
+	// completed/failed/blocked. The IssueView assembler reads state from
+	// the JSON blob, so those rows surfaced as zombie active sessions
+	// forever. Idempotent: WHERE filter no-ops once everything is in sync.
+	if _, err := s.DB.Exec(
+		`UPDATE sessions
+		    SET json = json_set(json, '$.state', state)
+		  WHERE json_extract(json, '$.state') IS NOT NULL
+		    AND json_extract(json, '$.state') <> state`); err != nil {
+		return fmt.Errorf("backfill session json.state: %w", err)
+	}
 	return nil
 }
 

@@ -339,3 +339,30 @@ func TestAssemble_NoCrossIssueContamination(t *testing.T) {
 		t.Error("mutation via viewA.ActiveSession leaked into viewB — pointer aliasing detected")
 	}
 }
+
+// TestSelectSessions_BlockedInDoneIsSuppressed_ScenarioFromIssue113 reproduces
+// the recurring "DONE cards glow blue/purple even though they're done" symptom
+// users hit. The DB has stale state=blocked plan sessions in history; the
+// assembler must NOT surface them as active_session or lastFail for a card
+// that's reached the DONE column.
+func TestSelectSessions_BlockedInDoneIsSuppressed_ScenarioFromIssue113(t *testing.T) {
+	pn := 42
+	sessions := []types.Session{
+		makeSession(types.StateBlocked, t2, "BLOCKED: model thrashed", false),
+		makeSession(types.StateBlocked, t1, "BLOCKED: token cap", false),
+	}
+	for i := range sessions {
+		sessions[i].Mode = types.ModePlan
+	}
+	iss := types.Issue{Column: types.ColDone, PRNumber: &pn}
+	active, paused, lastFail := selectSessions(iss, sessions)
+	if active != nil {
+		t.Errorf("DONE card with state=blocked must NOT have active session, got %+v", active)
+	}
+	if paused != nil {
+		t.Errorf("expected paused nil, got %+v", paused)
+	}
+	if lastFail != nil {
+		t.Errorf("DONE column suppression must clear lastFail, got %+v", lastFail)
+	}
+}

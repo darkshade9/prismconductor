@@ -29,6 +29,43 @@ func saveBlockedSession(t *testing.T, s *Store, wsID string, issueNum int, id st
 	}
 }
 
+// UpdateSessionState must keep `state` column AND `$.state` inside the JSON
+// blob in lock-step. ListSessionsForIssue (and the IssueView assembler that
+// drives card glow) reads state from the JSON blob — if the blob lags
+// behind the indexed column, terminal sessions surface as "running"
+// forever, producing the zombie-glow class of bug.
+func TestUpdateSessionState_PatchesJSONBlob(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	sess := &types.Session{
+		ID:          "sess-1",
+		WorkspaceID: "ws1",
+		IssueNumber: 1,
+		Mode:        types.ModeExecute,
+		State:       types.StateRunning,
+		StartedAt:   now,
+	}
+	if err := s.SaveSession(sess, ""); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+
+	if err := s.UpdateSessionState("sess-1", types.StateCompleted); err != nil {
+		t.Fatalf("UpdateSessionState: %v", err)
+	}
+
+	got, err := s.ListSessionsForIssue("ws1", 1)
+	if err != nil {
+		t.Fatalf("ListSessionsForIssue: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(got))
+	}
+	if got[0].State != types.StateCompleted {
+		t.Fatalf("state from JSON blob = %q, want %q (json_set drift bug)",
+			got[0].State, types.StateCompleted)
+	}
+}
+
 func TestAcknowledgeLatestFailure_SetsAcknowledgedAt(t *testing.T) {
 	s := newTestStore(t)
 	saveBlockedSession(t, s, "ws1", 10, "sess-1")

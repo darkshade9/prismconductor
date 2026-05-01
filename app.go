@@ -891,7 +891,25 @@ func (a *App) MoveIssueColumn(workspaceID string, number int, column string) err
 				log.Printf("drag-to-PLAN: spawning plan worker for %s#%d (no existing plan)", workspaceID, number)
 				pool, ok := a.acquirePlanPool(ws)
 				if !ok {
-					log.Printf("auto-spawn plan #%d: no plan pool available", number)
+					// No plan slot — persist intent so the orchestrator's drain
+					// loop spawns the worker as soon as a slot frees, and flip
+					// WaitingForPool so the card shows the pink "waiting"
+					// decoration instead of sitting idle in the PLAN column
+					// with no glow and no indicator. Without this, dragging a
+					// 2nd card into PLAN while the planner pool is saturated
+					// silently no-ops — looks like the system "forgot" the
+					// card.
+					log.Printf("auto-spawn plan #%d: no plan pool available — enqueuing", number)
+					_ = a.store.EnqueuePendingPool(workspaceID, number, types.RolePlan, "drag_to_plan")
+					if iss, lerr := a.store.LoadIssue(workspaceID, number); lerr == nil && !iss.WaitingForPool {
+						iss.WaitingForPool = true
+						_, _ = a.store.SaveIssue(iss)
+					}
+					a.bus.Publish(eventbus.EvtPendingPoolEnqueued, eventbus.PendingPoolChange{
+						WorkspaceID: workspaceID,
+						IssueNumber: number,
+						Role:        string(types.RolePlan),
+					})
 				} else {
 					sess, err := a.mgr.SpawnPlan(ws, types.Issue{Number: number, WorkspaceID: workspaceID}, pool)
 					if err != nil {
@@ -926,6 +944,19 @@ func (a *App) ClearIssueFailure(workspaceID string, issueNumber int) error {
 	}
 	if sess != nil {
 		wruntime.EventsEmit(a.ctx, "session.state", *sess)
+		// Publish to the in-process bus too so the IssueView assembler
+		// reassembles and emits a fresh bus.issue_view_updated. Without
+		// this, the assembler keeps surfacing the now-acknowledged session
+		// as last_failure, the card's red overlay never clears, and the
+		// "Clear Failure" button looks broken even though the DB row is
+		// correctly acknowledged.
+		if a.bus != nil {
+			a.bus.Publish(eventbus.EvtSessionStateChanged, eventbus.SessionStateChanged{
+				WorkspaceID: sess.WorkspaceID,
+				IssueNumber: sess.IssueNumber,
+				SessionID:   sess.ID,
+			})
+		}
 	}
 	return nil
 }

@@ -64,9 +64,14 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   }
 
   // Plan-ready state derived from the canonical view's LatestPlan.
+  // Suppress on REVIEW/DONE: by the time work has shipped, an unapproved
+  // newer plan revision is leftover noise (e.g. the user kicked a re-plan
+  // before merging the original PR, then never approved it). Mirrors the
+  // assembler's lastFail suppression for the same columns.
   const planReady = (() => {
     const p = view?.latest_plan;
     if (!p || !p.ready_to_execute || p.approved_at) return null;
+    if (issue.column === "review" || issue.column === "done") return null;
     return { revision: p.revision };
   })();
 

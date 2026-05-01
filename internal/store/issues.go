@@ -81,6 +81,20 @@ func (s *Store) SaveIssue(iss types.Issue) (bool, error) {
 			if prev.CostUSD > 0 {
 				iss.CostUSD = prev.CostUSD
 			}
+			// Preserve WaitingForPool — this is purely conductor-managed
+			// state (set when a spawn was queued because no pool slot was
+			// free; cleared when the orchestrator drains the queue and
+			// successfully spawns). The GitHub poll has no opinion on it,
+			// so any incoming SaveIssue from the poller would otherwise
+			// clobber waiting_for_pool=true back to false on the next 5-min
+			// tick — meaning the card's pink "waiting for available agent
+			// pool" decoration silently disappears even though the
+			// pending_pool_for row is still queued. orchestrator's
+			// clearWaitingForPool is the only call site that should ever
+			// flip this back to false.
+			if prev.WaitingForPool {
+				iss.WaitingForPool = true
+			}
 		}
 	}
 	iss.Column = col

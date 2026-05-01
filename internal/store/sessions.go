@@ -34,12 +34,32 @@ ON CONFLICT(id) DO UPDATE SET
 	return err
 }
 
-// UpdateSessionState updates only the live fields without rewriting the JSON blob.
+// UpdateSessionState atomically updates both the indexed `state` column AND
+// the corresponding `$.state` field inside the JSON blob.
+//
+// Why patch both: ListSessionsForIssue (and every other reader that
+// unmarshals the json blob) reads state from `$.state`, NOT from the
+// indexed column. The historical implementation updated only the indexed
+// column, leaving the JSON's `state` frozen at whatever value SaveSession
+// last serialized — typically "running". Result: every session whose state
+// transitioned via UpdateSessionState (the live-tail terminal path) ended
+// up with indexed state in {completed, failed, blocked, …} but json.state
+// = "running". The IssueView assembler then surfaced these as "active"
+// forever, which is exactly the zombie-glow class of bug.
+//
+// Use json_set so SQLite does the patch atomically inside one statement;
+// no read-modify-write race window where a concurrent UnmarshalJSON could
+// see a half-baked blob.
 func (s *Store) UpdateSessionState(id string, state types.SessionState) error {
 	if s == nil || s.DB == nil {
 		return nil
 	}
-	_, err := s.DB.Exec(`UPDATE sessions SET state = ? WHERE id = ?`, string(state), id)
+	_, err := s.DB.Exec(
+		`UPDATE sessions
+		   SET state = ?,
+		       json  = json_set(json, '$.state', ?)
+		 WHERE id = ?`,
+		string(state), string(state), id)
 	return err
 }
 
