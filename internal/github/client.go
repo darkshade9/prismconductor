@@ -209,11 +209,15 @@ func (c *Client) DeleteLabel(ctx context.Context, ws types.Workspace, name strin
 // PRState is the slice of GitHub PR fields the poller uses to drive
 // REVIEW→DONE on merge and chip-clear on close-without-merge (issue #33).
 // HeadSHA is added for check-run failure detection (#116).
+// MergeableState + Base/HeadRef are added for conflict detection (#124).
 type PRState struct {
-	State    string
-	MergedAt *time.Time
-	ClosedAt *time.Time
-	HeadSHA  string
+	State          string
+	MergedAt       *time.Time
+	ClosedAt       *time.Time
+	HeadSHA        string
+	MergeableState string // "clean", "dirty", "blocked", "unknown", or ""
+	BaseBranch     string
+	HeadRef        string
 }
 
 // FetchPRState fetches the current state of a single PR. Used by the poller
@@ -228,8 +232,11 @@ func (c *Client) FetchPRState(ctx context.Context, ws types.Workspace, prNumber 
 		return nil, err
 	}
 	out := &PRState{
-		State:   pr.GetState(),
-		HeadSHA: pr.GetHead().GetSHA(),
+		State:          pr.GetState(),
+		HeadSHA:        pr.GetHead().GetSHA(),
+		MergeableState: pr.GetMergeableState(),
+		BaseBranch:     pr.GetBase().GetRef(),
+		HeadRef:        pr.GetHead().GetRef(),
 	}
 	if pr.MergedAt != nil {
 		ts := pr.MergedAt.Time
@@ -240,6 +247,30 @@ func (c *Client) FetchPRState(ctx context.Context, ws types.Workspace, prNumber 
 		out.ClosedAt = &ts
 	}
 	return out, nil
+}
+
+// FetchPRFiles returns the filenames of every file changed by a pull request.
+// Used to populate ConflictingFiles when a PR becomes dirty (#124).
+func (c *Client) FetchPRFiles(ctx context.Context, ws types.Workspace, prNumber int) ([]string, error) {
+	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {
+		return nil, fmt.Errorf("workspace %q missing github_owner / github_repo", ws.ID)
+	}
+	opts := &gh.ListOptions{PerPage: 100}
+	var files []string
+	for {
+		page, resp, err := c.api.PullRequests.ListFiles(ctx, ws.GitHubOwner, ws.GitHubRepo, prNumber, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range page {
+			files = append(files, f.GetFilename())
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return files, nil
 }
 
 // SetIssueLabels replaces an issue's labels with the given set.

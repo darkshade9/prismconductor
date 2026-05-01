@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
-import { Replan, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue } from "../../wailsjs/go/main/App";
+import { Replan, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue, ResolveConflicts } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "../stores/sessionStore";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
@@ -44,6 +44,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   const pausedSession: types.Session | null = view?.paused_session ?? null;
   const lastFailure: types.Session | null = view?.last_failure ?? null;
   const testsFailingInfo = view?.tests_failing_info ?? null;
+  const conflictsInfo = view?.conflicts_info ?? null;
   // Activity is live-streaming data not captured in the view — still from sessionStore.
   const activity: SessionActivity | null = useSessionStore((s) =>
     activeSession ? (s.sessions[activeSession.id]?.activity ?? null) : null
@@ -130,6 +131,8 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
           ? "border-red-500 card-glow-blocked"
           : !activeSession && testsFailingInfo
           ? "border-red-500 card-glow-blocked"
+          : !activeSession && conflictsInfo
+          ? "border-red-500 card-glow-blocked"
           : planReady
           ? "border-amber-500 card-glow-ready"
           : "border-slate-700",
@@ -164,7 +167,8 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
               dangerouslySetInnerHTML={{ __html: providerBadge.icon.svgContent }}
             />
           )}
-          {/* PR chip stays visible across columns/session states (rev4 q3). */}
+          {/* PR chip stays visible across columns/session states (rev4 q3).
+              Turns red when the PR has merge conflicts (#124). */}
           {issue.pr_number != null && issue.pr_url && (
             <button
               onClick={(e) => {
@@ -174,10 +178,16 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
               onMouseDown={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
               onContextMenu={(e) => openCardMenu(e, [{ label: "Copy PR URL", text: issue.pr_url! }])}
-              className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-700/40 text-emerald-200 border border-emerald-700 hover:bg-emerald-700/60"
-              title={`Open ${issue.pr_url}`}
+              className={conflictsInfo
+                ? "px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-700/40 text-red-200 border border-red-700 hover:bg-red-700/60"
+                : "px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-700/40 text-emerald-200 border border-emerald-700 hover:bg-emerald-700/60"
+              }
+              title={conflictsInfo
+                ? `PR #${issue.pr_number} — merge conflict with ${conflictsInfo.base}`
+                : `Open ${issue.pr_url}`
+              }
             >
-              ✓ PR #{issue.pr_number}
+              {conflictsInfo ? `⚡ PR #${issue.pr_number}` : `✓ PR #${issue.pr_number}`}
             </button>
           )}
           {issue.priority ? <span className="text-slate-500">P{issue.priority.toFixed(2)}</span> : null}
@@ -204,6 +214,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         column={issue.column}
         prNumber={issue.pr_number ?? null}
         testsFailingInfo={testsFailingInfo}
+        conflictsInfo={conflictsInfo}
         onContinue={() => setContinueOpen(true)}
         onClearFailure={() => ClearIssueFailure(issue.workspace_id, issue.number).catch((err: any) => alert(String(err?.message ?? err)))}
         onCancelSession={activeSession ? () => CancelSession(activeSession.id).catch((err: any) => alert(String(err?.message ?? err))) : null}
@@ -375,6 +386,13 @@ type TestsFailingInfo = {
   max_attempts_reached?: boolean;
 };
 
+type ConflictsInfo = {
+  pr_number: number;
+  base: string;
+  head: string;
+  conflicting_files: string[];
+};
+
 function StatusRow({
   activeSession,
   activity,
@@ -391,6 +409,7 @@ function StatusRow({
   column,
   prNumber,
   testsFailingInfo,
+  conflictsInfo,
   onContinue,
   onClearFailure,
   onCancelSession,
@@ -411,6 +430,7 @@ function StatusRow({
   column: string;
   prNumber: number | null;
   testsFailingInfo: TestsFailingInfo | null;
+  conflictsInfo: ConflictsInfo | null;
   onContinue: () => void;
   onClearFailure: () => void;
   onCancelSession: (() => void) | null;
@@ -517,6 +537,45 @@ function StatusRow({
       </>
     );
   }
+  const showConflicts =
+    conflictsInfo && column === "review" && !activeSession && !pausedSession && !waitingForPool;
+  if (showConflicts && conflictsInfo) {
+    const fileCount = conflictsInfo.conflicting_files?.length ?? 0;
+    return (
+      <>
+        <div className="text-[11px] mt-1.5 space-y-0.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Pulse className="bg-red-400" />
+            <span className="text-red-300 font-medium">MERGE CONFLICT</span>
+            <span className="text-slate-500">— conflicts with {conflictsInfo.base}</span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                ResolveConflicts(workspaceID, issueNumber).catch((err: any) =>
+                  alert(String(err?.message ?? err))
+                );
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="ml-auto px-1.5 py-0.5 rounded text-[10px] border border-red-700 text-red-300 hover:border-red-500 hover:text-red-200"
+              title="Auto-resolve: spawn a Continue-Work session pre-populated with conflict resolution context"
+            >
+              ✦ Resolve Conflicts
+            </button>
+          </div>
+          {fileCount > 0 && (
+            <div className="space-y-0.5 pl-3.5">
+              {(conflictsInfo.conflicting_files ?? []).map((file, i) => (
+                <span key={i} className="block text-red-400 truncate">⚡ {file}</span>
+              ))}
+            </div>
+          )}
+        </div>
+        {menuEl}
+      </>
+    );
+  }
+
   const showTestsFailing =
     testsFailingInfo && column === "review" && !activeSession && !pausedSession && !waitingForPool;
   if (showTestsFailing && testsFailingInfo) {

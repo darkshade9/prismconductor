@@ -262,6 +262,10 @@ export function ResetPoolCounters() {
   return window['go']['main']['App']['ResetPoolCounters']();
 }
 
+export function ResolveConflicts(arg1, arg2) {
+  return window['go']['main']['App']['ResolveConflicts'](arg1, arg2);
+}
+
 export function RunAutoArchiveNow(arg1) {
   return window['go']['main']['App']['RunAutoArchiveNow'](arg1);
 }

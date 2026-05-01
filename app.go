@@ -25,6 +25,7 @@ import (
 	"prismconductor/internal/eventbus"
 	pcgit "prismconductor/internal/git"
 	pcgithub "prismconductor/internal/github"
+	"prismconductor/internal/handlers"
 	"prismconductor/internal/issueview"
 	"prismconductor/internal/logbuffer"
 	"prismconductor/internal/goalfilter"
@@ -272,6 +273,10 @@ func (a *App) startup(ctx context.Context) {
 		// Issue #116: auto-spawn self-heal and toast on CI check failures.
 		a.bus.Subscribe(a.handlePRChecksFailed)
 		a.bus.Subscribe(a.handlePRChecksRecovered)
+
+		// Issue #124: PR merge-conflict detection and resolution worker.
+		a.bus.Subscribe(a.handlePRConflictsDetected)
+		a.bus.Subscribe(a.handlePRConflictsResolved)
 	}
 
 	// Issue #17: answer-file watcher. Polls each enabled workspace's
@@ -2439,6 +2444,68 @@ func (a *App) handlePRChecksRecovered(e eventbus.Event) {
 				"action":       "focus_card",
 			})
 	}
+}
+
+// handlePRConflictsDetected handles EvtPRConflictsDetected (#124): emits a toast
+// so the user sees the red glow immediately even before the next frontend poll.
+func (a *App) handlePRConflictsDetected(e eventbus.Event) {
+	if e.Type != eventbus.EvtPRConflictsDetected {
+		return
+	}
+	p, ok := e.Payload.(eventbus.PRConflictsDetected)
+	if !ok {
+		return
+	}
+	if !a.notificationsSuppressed() {
+		title := toastWorkspaceName(a.wsReg, p.WorkspaceID)
+		a.emitToast("error", title,
+			fmt.Sprintf("#%d MERGE CONFLICT — PR #%d cannot be merged into %s", p.IssueNumber, p.PRNumber, p.Base),
+			map[string]any{
+				"workspace_id": p.WorkspaceID,
+				"issue_number": p.IssueNumber,
+				"action":       "focus_card",
+			})
+	}
+}
+
+// handlePRConflictsResolved handles EvtPRConflictsResolved (#124): emits a
+// success toast when a previously-conflicted PR becomes mergeable again.
+func (a *App) handlePRConflictsResolved(e eventbus.Event) {
+	if e.Type != eventbus.EvtPRConflictsResolved {
+		return
+	}
+	p, ok := e.Payload.(eventbus.PRConflictsResolved)
+	if !ok {
+		return
+	}
+	if !a.notificationsSuppressed() {
+		title := toastWorkspaceName(a.wsReg, p.WorkspaceID)
+		a.emitToast("success", title,
+			fmt.Sprintf("#%d merge conflicts resolved — PR #%d is mergeable", p.IssueNumber, p.PRNumber),
+			map[string]any{
+				"workspace_id": p.WorkspaceID,
+				"issue_number": p.IssueNumber,
+				"action":       "focus_card",
+			})
+	}
+}
+
+// ResolveConflicts spawns a Continue-Work session pre-populated with conflict
+// context from the most recent EvtPRConflictsDetected event (#124).
+func (a *App) ResolveConflicts(workspaceID string, issueNumber int) error {
+	if a.assembler == nil {
+		return fmt.Errorf("assembler unavailable")
+	}
+	view, err := a.assembler.Assemble(workspaceID, issueNumber)
+	if err != nil {
+		return fmt.Errorf("assemble issue view: %w", err)
+	}
+	ci := view.ConflictsInfo
+	if ci == nil {
+		return fmt.Errorf("no merge conflict recorded for issue #%d", issueNumber)
+	}
+	note := handlers.BuildConflictResolveNote(ci)
+	return a.ContinueWork(workspaceID, issueNumber, note)
 }
 
 // buildSelfHealNote constructs the Continue-Work note for the self-heal worker.

@@ -381,6 +381,108 @@ func TestExtractIssueKey_UnknownPayload_ReturnsEmpty(t *testing.T) {
 	}
 }
 
+// --- PRConflictsDetected handling (#124) ---
+
+func TestAssembler_ConflictStoredOnDetected(t *testing.T) {
+	bus := eventbus.New()
+	st := &fakeStore{issues: map[int]types.Issue{10: {Number: 10, WorkspaceID: "ws1", Column: types.ColReview}}}
+	a := New(bus, st)
+
+	bus.Publish(eventbus.EvtPRConflictsDetected, eventbus.PRConflictsDetected{
+		WorkspaceID:      "ws1",
+		IssueNumber:      10,
+		PRNumber:         55,
+		Base:             "main",
+		Head:             "feat/foo",
+		ConflictingFiles: []string{"go.sum", "internal/foo/bar.go"},
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	view, err := a.Assemble("ws1", 10)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if view.ConflictsInfo == nil {
+		t.Fatal("expected ConflictsInfo populated after EvtPRConflictsDetected")
+	}
+	if view.ConflictsInfo.Base != "main" {
+		t.Errorf("want base=main, got %q", view.ConflictsInfo.Base)
+	}
+	if len(view.ConflictsInfo.ConflictingFiles) != 2 {
+		t.Errorf("want 2 conflicting files, got %d", len(view.ConflictsInfo.ConflictingFiles))
+	}
+}
+
+func TestAssembler_ConflictClearedOnResolved(t *testing.T) {
+	bus := eventbus.New()
+	st := &fakeStore{issues: map[int]types.Issue{11: {Number: 11, WorkspaceID: "ws1", Column: types.ColReview}}}
+	a := New(bus, st)
+
+	bus.Publish(eventbus.EvtPRConflictsDetected, eventbus.PRConflictsDetected{
+		WorkspaceID: "ws1", IssueNumber: 11, PRNumber: 56, Base: "main", Head: "feat/bar",
+		ConflictingFiles: []string{"README.md"},
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	bus.Publish(eventbus.EvtPRConflictsResolved, eventbus.PRConflictsResolved{
+		WorkspaceID: "ws1", IssueNumber: 11, PRNumber: 56,
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	view, err := a.Assemble("ws1", 11)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if view.ConflictsInfo != nil {
+		t.Errorf("expected ConflictsInfo cleared after EvtPRConflictsResolved, got %+v", view.ConflictsInfo)
+	}
+}
+
+func TestAssembler_ConflictClearedOnMerge(t *testing.T) {
+	bus := eventbus.New()
+	st := &fakeStore{issues: map[int]types.Issue{12: {Number: 12, WorkspaceID: "ws1", Column: types.ColReview}}}
+	a := New(bus, st)
+
+	bus.Publish(eventbus.EvtPRConflictsDetected, eventbus.PRConflictsDetected{
+		WorkspaceID: "ws1", IssueNumber: 12, PRNumber: 57, Base: "main", Head: "feat/baz",
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	bus.Publish(eventbus.EvtPRMerged, map[string]any{
+		"workspace_id": "ws1",
+		"issue_number": 12,
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	view, err := a.Assemble("ws1", 12)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if view.ConflictsInfo != nil {
+		t.Errorf("expected ConflictsInfo cleared after EvtPRMerged, got %+v", view.ConflictsInfo)
+	}
+}
+
+func TestExtractIssueKey_PRConflictsDetected(t *testing.T) {
+	e := makeEvent(eventbus.EvtPRConflictsDetected, eventbus.PRConflictsDetected{
+		WorkspaceID: "ws5", IssueNumber: 77, PRNumber: 20,
+	})
+	ws, num := extractIssueKey(e)
+	if ws != "ws5" || num != 77 {
+		t.Errorf("got ws=%q num=%d", ws, num)
+	}
+}
+
+func TestExtractIssueKey_PRConflictsResolved(t *testing.T) {
+	e := makeEvent(eventbus.EvtPRConflictsResolved, eventbus.PRConflictsResolved{
+		WorkspaceID: "ws5", IssueNumber: 78, PRNumber: 21,
+	})
+	ws, num := extractIssueKey(e)
+	if ws != "ws5" || num != 78 {
+		t.Errorf("got ws=%q num=%d", ws, num)
+	}
+}
+
 // --- cross-contamination / pointer aliasing ---
 
 // TestSelectSessions_DeepCopyPreventsAliasing verifies that two calls to

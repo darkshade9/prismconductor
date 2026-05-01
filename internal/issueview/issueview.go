@@ -26,6 +26,16 @@ type TestsFailingInfo struct {
 	MaxAttemptsReached  bool     `json:"max_attempts_reached,omitempty"`
 }
 
+// ConflictsInfo is populated when a REVIEW-column PR has merge conflicts with
+// its base branch (mergeable_state == "dirty"). Cleared when conflicts resolve
+// or the PR merges/closes (#124).
+type ConflictsInfo struct {
+	PRNumber         int      `json:"pr_number"`
+	Base             string   `json:"base"`
+	Head             string   `json:"head"`
+	ConflictingFiles []string `json:"conflicting_files"`
+}
+
 // IssueView is the single canonical read model for a board card. Assembled on
 // the backend and emitted as bus.issue_view_updated on every change so the
 // frontend can render without reconciling multiple stores.
@@ -42,4 +52,5 @@ type IssueView struct {
 	PoolBadge        *PoolBadge        `json:"pool_badge,omitempty"`
 	DerivedColumn    types.BoardColumn `json:"derived_column"`
 	TestsFailingInfo *TestsFailingInfo `json:"tests_failing_info,omitempty"`
+	ConflictsInfo    *ConflictsInfo    `json:"conflicts_info,omitempty"`
 }

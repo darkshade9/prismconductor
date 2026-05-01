@@ -39,6 +39,10 @@ const (
 	// Issue #116: PR check-run failure detection and self-heal loop.
 	EvtPRChecksFailed    EventType = "pr_checks_failed"
 	EvtPRChecksRecovered EventType = "pr_checks_recovered"
+
+	// Issue #124: PR merge-conflict detection and resolution worker.
+	EvtPRConflictsDetected EventType = "pr_conflicts_detected"
+	EvtPRConflictsResolved EventType = "pr_conflicts_resolved"
 )
 
 type Event struct {
@@ -91,6 +95,27 @@ type PRChecksRecovered struct {
 	IssueNumber int    `json:"issue_number"`
 	PRNumber    int    `json:"pr_number"`
 	HeadSHA     string `json:"head_sha"`
+}
+
+// PRConflictsDetected is the payload for EvtPRConflictsDetected (#124). Published when
+// the poller detects that a REVIEW-column PR's mergeable_state transitions to "dirty"
+// (i.e. conflicts with the base branch). ConflictingFiles lists the PR's changed files;
+// the actual conflicting subset is resolved by the worker at rebase time.
+type PRConflictsDetected struct {
+	WorkspaceID      string   `json:"workspace_id"`
+	IssueNumber      int      `json:"issue_number"`
+	PRNumber         int      `json:"pr_number"`
+	Base             string   `json:"base"`
+	Head             string   `json:"head"`
+	ConflictingFiles []string `json:"conflicting_files"`
+}
+
+// PRConflictsResolved is the payload for EvtPRConflictsResolved (#124). Published when
+// a PR's mergeable_state transitions away from "dirty" (conflict cleared or PR closed).
+type PRConflictsResolved struct {
+	WorkspaceID string `json:"workspace_id"`
+	IssueNumber int    `json:"issue_number"`
+	PRNumber    int    `json:"pr_number"`
 }
 
 type Handler func(Event)
