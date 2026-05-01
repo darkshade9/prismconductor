@@ -2469,6 +2469,11 @@ func (a *App) ReadTranscript(sessionID string) (string, error) {
 // KillSession terminates a running session.
 func (a *App) KillSession(id string) error { return a.mgr.Kill(id) }
 
+// CancelSession gracefully stops a running session: sends SIGTERM and force-
+// kills after 3 seconds if the process hasn't exited. For harness sessions
+// the context cancel is sufficient (issue #99).
+func (a *App) CancelSession(id string) error { return a.mgr.KillGraceful(id) }
+
 // SendInput writes user input to a PTY session.
 func (a *App) SendInput(id, text string) error { return a.mgr.SendInput(id, text) }
 

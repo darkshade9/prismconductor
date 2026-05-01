@@ -334,6 +334,15 @@ type MidRunAnswer struct {
 	Multi      []string `json:"multi,omitempty"`
 }
 
+// ActivityEntry is one captured tool-call event stored in the per-session
+// ring buffer (issue #99).
+type ActivityEntry struct {
+	ToolName    string    `json:"tool_name"`
+	ArgsSummary string    `json:"args_summary"` // ≤50 chars, newlines escaped
+	ArgsJSON    string    `json:"args_json"`    // capped at 2048 chars for popover
+	At          time.Time `json:"at"`
+}
+
 // SessionActivity is the per-tick liveness payload emitted on the
 // "session.activity" Wails event. Lets the UI show "still alive, doing X"
 // without subscribing to every PTY line.
@@ -344,6 +353,9 @@ type SessionActivity struct {
 	ToolCount    int       `json:"tool_count"`
 	LastAction   string    `json:"last_action"`
 	LastActionAt time.Time `json:"last_action_at"`
+	// Issue #99: activity strip fields.
+	LastToolArgsSummary string          `json:"last_tool_args_summary,omitempty"`
+	Tail                []ActivityEntry `json:"tail,omitempty"`
 }
 
 type SessionMode string

@@ -123,6 +123,7 @@ type runtimeSession struct {
 	lastAction    string
 	lastActionAt  time.Time
 	lastEmittedAt time.Time
+	actRing       activityRing
 
 	// Issue #22: per-execute worktree fields. Empty for plan/raw spawns.
 	// repoPath is captured here so the cleanup hook in tailAndParse doesn't
@@ -947,40 +948,41 @@ func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 	}
 }
 
-// recordActivity ticks the per-session counters when a tool call goes by and
-// emits a throttled activity event. RoleTool ("@tool ") prefix is the canonical
-// signal from streamjson.go.
+// recordActivity ticks the per-session counters when a tool call goes by,
+// pushes an ActivityEntry to the in-memory ring buffer (issue #99), and
+// emits a throttled activity event. RoleTool ("@tool ") prefix is the
+// canonical signal from streamjson.go.
 func (m *Manager) recordActivity(rs *runtimeSession, line string) {
 	if !strings.HasPrefix(line, RoleTool) {
 		return
 	}
-	action := strings.TrimSpace(line[len(RoleTool):])
-	// Trim the JSON args off the action label — keep just the tool name +
-	// optional first arg word for the card display.
-	if i := strings.Index(action, " "); i > 0 {
-		action = action[:i]
-	}
-	now := time.Now()
+	entry := newActivityEntry(line)
+	action := entry.ToolName
+	now := entry.At
 	rs.actMu.Lock()
 	rs.toolCount++
 	rs.lastAction = action
 	rs.lastActionAt = now
+	rs.actRing.push(entry)
 	emit := false
 	if now.Sub(rs.lastEmittedAt) >= 500*time.Millisecond {
 		rs.lastEmittedAt = now
 		emit = true
 	}
 	count := rs.toolCount
+	tail := rs.actRing.tail()
 	rs.actMu.Unlock()
 
 	if emit && m.onActivity != nil {
 		m.onActivity(types.SessionActivity{
-			SessionID:    rs.sess.ID,
-			WorkspaceID:  rs.sess.WorkspaceID,
-			IssueNumber:  rs.sess.IssueNumber,
-			ToolCount:    count,
-			LastAction:   action,
-			LastActionAt: now,
+			SessionID:           rs.sess.ID,
+			WorkspaceID:         rs.sess.WorkspaceID,
+			IssueNumber:         rs.sess.IssueNumber,
+			ToolCount:           count,
+			LastAction:          action,
+			LastActionAt:        now,
+			LastToolArgsSummary: entry.ArgsSummary,
+			Tail:                tail,
 		})
 	}
 }
@@ -1012,6 +1014,35 @@ func (m *Manager) Kill(sessionID string) error {
 			return p.Kill()
 		}
 	}
+	return nil
+}
+
+// KillGraceful sends SIGTERM to a running subprocess session and force-kills
+// it after a 3-second grace period (issue #99, q3=A). For harness sessions
+// (no subprocess) the context cancel is sufficient. Safe to call concurrently.
+func (m *Manager) KillGraceful(sessionID string) error {
+	m.mu.Lock()
+	rs, ok := m.sessions[sessionID]
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("unknown session %s", sessionID)
+	}
+	if rs.cancel != nil {
+		rs.cancel()
+	}
+	sub, ok := rs.cmd.(*subprocCmd)
+	if !ok || sub.cmd == nil || sub.cmd.Process == nil {
+		return nil
+	}
+	proc := sub.cmd.Process
+	if err := proc.Signal(gracefulSignal()); err != nil {
+		// Already dead or permission denied — escalate to SIGKILL immediately.
+		return proc.Kill()
+	}
+	go func() {
+		time.Sleep(3 * time.Second)
+		_ = proc.Kill()
+	}()
 	return nil
 }
 
