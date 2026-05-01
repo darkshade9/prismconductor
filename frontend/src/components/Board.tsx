@@ -17,6 +17,7 @@ import { arrayMove } from "@dnd-kit/sortable";
 import { ArchiveDone, FilterIssuesByActiveGoal } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 import { useIssueStore, Column as ColumnID } from "../stores/issueStore";
+import { useIssueViewStore } from "../stores/useIssueViewStore";
 import { matchesQuery } from "../lib/matchesQuery";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { Card } from "./Card";
@@ -56,6 +57,7 @@ const fromCardID = (id: string) => {
 
 export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => void }) {
   const { issues, refresh, applyLocalMove, applyLocalReorder, moveColumn, reorder, searchQuery } = useIssueStore();
+  const loadIssueViews = useIssueViewStore((s) => s.loadForWorkspace);
   const { workspaces, selectedID } = useWorkspaceStore();
   const [filteredTodoNums, setFilteredTodoNums] = useState<Set<string> | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -68,11 +70,12 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
 
   useEffect(() => {
     refresh(selectedID ?? "");
+    loadIssueViews(selectedID ?? "");
     const off = EventsOn("bus.orchestrator_ran", () => refresh(selectedID ?? ""));
     return () => {
       if (typeof off === "function") off();
     };
-  }, [refresh, selectedID]);
+  }, [refresh, loadIssueViews, selectedID]);
 
   // Apply active goal's IssueQuery to TODO column when one exists.
   useEffect(() => {

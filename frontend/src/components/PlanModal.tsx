@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { ApprovePlan, LatestPlan, PlanCostEstimate, RejectPlan, SetIssueLabels, SubmitAnswers, WriteAnswersOnly } from "../../wailsjs/go/main/App";
 import { main, types } from "../../wailsjs/go/models";
 import { useIssueStore } from "../stores/issueStore";
+import { useIssueViewStore } from "../stores/useIssueViewStore";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
 import { AnswerState, QuestionForm, emptyAnswers, initialAnswers, isComplete } from "./QuestionForm";
 import { LabelsModal } from "./LabelsModal";
@@ -31,6 +32,7 @@ export function PlanModal({
   onPopNext?: () => void;
 }) {
   const refreshIssues = useIssueStore((s) => s.refresh);
+  const loadIssueViews = useIssueViewStore((s) => s.loadForWorkspace);
   const refreshLabels = useLabelsStore((s) => s.refresh);
   const labelsCache = useLabelsStore((s) => (issue ? s.byWorkspace[issue.workspace_id] ?? EMPTY_LABELS : EMPTY_LABELS));
   const [plan, setPlan] = useState<types.Plan | null>(null);
@@ -133,7 +135,7 @@ export function PlanModal({
         );
       }
       await ApprovePlan(issue.workspace_id, issue.number, plan.revision);
-      await refreshIssues();
+      await Promise.all([refreshIssues(), loadIssueViews(issue.workspace_id)]);
       handleClose();
     } catch (e: any) {
       setError(String(e?.message ?? e));
@@ -148,7 +150,7 @@ export function PlanModal({
     setError(null);
     try {
       await RejectPlan(issue.workspace_id, issue.number);
-      await refreshIssues();
+      await Promise.all([refreshIssues(), loadIssueViews(issue.workspace_id)]);
       handleClose();
     } catch (e: any) {
       setError(String(e?.message ?? e));
