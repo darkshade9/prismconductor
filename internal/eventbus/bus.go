@@ -35,6 +35,10 @@ const (
 	// Issue #98: canonical IssueView assembler events.
 	EvtIssueViewUpdated    EventType = "issue_view_updated"
 	EvtSessionStateChanged EventType = "session_state_changed"
+
+	// Issue #116: PR check-run failure detection and self-heal loop.
+	EvtPRChecksFailed    EventType = "pr_checks_failed"
+	EvtPRChecksRecovered EventType = "pr_checks_recovered"
 )
 
 type Event struct {
@@ -65,6 +69,28 @@ type SessionStateChanged struct {
 	WorkspaceID string `json:"workspace_id"`
 	IssueNumber int    `json:"issue_number"`
 	SessionID   string `json:"session_id"`
+}
+
+// PRChecksFailed is the payload for EvtPRChecksFailed (#116). Published when the
+// poller detects a failing-edge transition (passing → any_failed) on a REVIEW-column
+// PR's check runs. Only includes checks owned by this repo's GitHub Actions workflows.
+type PRChecksFailed struct {
+	WorkspaceID         string   `json:"workspace_id"`
+	IssueNumber         int      `json:"issue_number"`
+	PRNumber            int      `json:"pr_number"`
+	HeadSHA             string   `json:"head_sha"`
+	FailingJobs         []string `json:"failing_jobs"`
+	FailingCheckRunURLs []string `json:"failing_check_run_urls"`
+	RunIDs              []int64  `json:"run_ids"`
+}
+
+// PRChecksRecovered is the payload for EvtPRChecksRecovered (#116). Published when
+// all check runs on a PR HEAD SHA pass (after a prior failure).
+type PRChecksRecovered struct {
+	WorkspaceID string `json:"workspace_id"`
+	IssueNumber int    `json:"issue_number"`
+	PRNumber    int    `json:"pr_number"`
+	HeadSHA     string `json:"head_sha"`
 }
 
 type Handler func(Event)

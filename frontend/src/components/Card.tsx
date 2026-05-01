@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
-import { Replan, ClearIssueFailure } from "../../wailsjs/go/main/App";
+import { Replan, ClearIssueFailure, SelfHeal } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "../stores/sessionStore";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
@@ -43,6 +43,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   const activeSession: types.Session | null = view?.active_session ?? null;
   const pausedSession: types.Session | null = view?.paused_session ?? null;
   const lastFailure: types.Session | null = view?.last_failure ?? null;
+  const testsFailingInfo = view?.tests_failing_info ?? null;
   // Activity is live-streaming data not captured in the view — still from sessionStore.
   const activity: SessionActivity | null = useSessionStore((s) =>
     activeSession ? (s.sessions[activeSession.id]?.activity ?? null) : null
@@ -127,6 +128,8 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
           ? "border-pink-500 card-glow-waiting"
           : !activeSession && lastFailure
           ? "border-red-500 card-glow-blocked"
+          : !activeSession && testsFailingInfo
+          ? "border-red-500 card-glow-blocked"
           : planReady
           ? "border-amber-500 card-glow-ready"
           : "border-slate-700",
@@ -200,6 +203,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         waitingForPool={issue.waiting_for_pool ?? false}
         column={issue.column}
         prNumber={issue.pr_number ?? null}
+        testsFailingInfo={testsFailingInfo}
         onContinue={() => setContinueOpen(true)}
         onClearFailure={() => ClearIssueFailure(issue.workspace_id, issue.number).catch((err: any) => alert(String(err?.message ?? err)))}
       />
@@ -333,6 +337,15 @@ function WorkTimerChip({
   );
 }
 
+type TestsFailingInfo = {
+  failing_jobs: string[];
+  failing_check_run_urls: string[];
+  head_sha: string;
+  self_heal_attempts?: number;
+  attempt_cap?: number;
+  max_attempts_reached?: boolean;
+};
+
 function StatusRow({
   activeSession,
   activity,
@@ -348,6 +361,7 @@ function StatusRow({
   waitingForPool,
   column,
   prNumber,
+  testsFailingInfo,
   onContinue,
   onClearFailure,
 }: {
@@ -365,6 +379,7 @@ function StatusRow({
   waitingForPool: boolean;
   column: string;
   prNumber: number | null;
+  testsFailingInfo: TestsFailingInfo | null;
   onContinue: () => void;
   onClearFailure: () => void;
 }) {
@@ -453,6 +468,73 @@ function StatusRow({
         <div className="text-[11px] mt-1.5 flex items-center gap-1.5 flex-wrap" title={tooltip}>
           <Pulse className="bg-pink-400" />
           <span className="text-pink-300">waiting for available agent pool…</span>
+        </div>
+        {menuEl}
+      </>
+    );
+  }
+  const showTestsFailing =
+    testsFailingInfo && column === "review" && !activeSession && !pausedSession && !waitingForPool;
+  if (showTestsFailing && testsFailingInfo) {
+    const jobCount = testsFailingInfo.failing_jobs?.length ?? 0;
+    const maxReached = testsFailingInfo.max_attempts_reached ?? false;
+    return (
+      <>
+        <div className="text-[11px] mt-1.5 space-y-0.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Pulse className="bg-red-400" />
+            <span className="text-red-300 font-medium">TEST FAILURE</span>
+            <span className="text-slate-500">— {jobCount} check{jobCount !== 1 ? "s" : ""} red</span>
+            {maxReached ? (
+              <span className="ml-auto text-[10px] text-amber-400 border border-amber-800 rounded px-1.5 py-0.5">
+                max attempts reached
+              </span>
+            ) : (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  SelfHeal(workspaceID, issueNumber).catch((err: any) =>
+                    alert(String(err?.message ?? err))
+                  );
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="ml-auto px-1.5 py-0.5 rounded text-[10px] border border-red-700 text-red-300 hover:border-red-500 hover:text-red-200"
+                title="Auto-fix: spawn a Continue-Work session pre-populated with failing job details"
+              >
+                ✦ Self-heal
+              </button>
+            )}
+          </div>
+          {(testsFailingInfo.failing_jobs ?? []).length > 0 && (
+            <div className="space-y-0.5 pl-3.5">
+              {(testsFailingInfo.failing_jobs ?? []).map((job, i) => {
+                const url = testsFailingInfo.failing_check_run_urls?.[i];
+                return url ? (
+                  <button
+                    key={i}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      BrowserOpenURL(url);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="block text-red-400 hover:text-red-200 truncate max-w-full text-left"
+                    title={url}
+                  >
+                    ✗ {job}
+                  </button>
+                ) : (
+                  <span key={i} className="block text-red-400 truncate">✗ {job}</span>
+                );
+              })}
+            </div>
+          )}
+          {!maxReached && (testsFailingInfo.self_heal_attempts ?? 0) > 0 && (
+            <div className="text-slate-500 pl-3.5">
+              attempt {testsFailingInfo.self_heal_attempts}/{testsFailingInfo.attempt_cap ?? 3}
+            </div>
+          )}
         </div>
         {menuEl}
       </>

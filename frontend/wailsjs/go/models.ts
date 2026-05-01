@@ -808,6 +808,28 @@ export namespace githubauth {
 
 export namespace issueview {
 	
+	export class TestsFailingInfo {
+	    failing_jobs: string[];
+	    failing_check_run_urls: string[];
+	    head_sha: string;
+	    self_heal_attempts?: number;
+	    attempt_cap?: number;
+	    max_attempts_reached?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new TestsFailingInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.failing_jobs = source["failing_jobs"];
+	        this.failing_check_run_urls = source["failing_check_run_urls"];
+	        this.head_sha = source["head_sha"];
+	        this.self_heal_attempts = source["self_heal_attempts"];
+	        this.attempt_cap = source["attempt_cap"];
+	        this.max_attempts_reached = source["max_attempts_reached"];
+	    }
+	}
 	export class PoolBadge {
 	    pool_id: string;
 	    name: string;
@@ -832,6 +854,7 @@ export namespace issueview {
 	    last_failure?: types.Session;
 	    pool_badge?: PoolBadge;
 	    derived_column: string;
+	    tests_failing_info?: TestsFailingInfo;
 	
 	    static createFrom(source: any = {}) {
 	        return new IssueView(source);
@@ -846,6 +869,7 @@ export namespace issueview {
 	        this.last_failure = this.convertValues(source["last_failure"], types.Session);
 	        this.pool_badge = this.convertValues(source["pool_badge"], PoolBadge);
 	        this.derived_column = source["derived_column"];
+	        this.tests_failing_info = this.convertValues(source["tests_failing_info"], TestsFailingInfo);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -866,6 +890,7 @@ export namespace issueview {
 		    return a;
 		}
 	}
+	
 
 }
 
@@ -1543,6 +1568,8 @@ export namespace types {
 	    preferred_work_pool_id?: string;
 	    per_stage?: Record<string, SkillRef>;
 	    skills_migrated?: boolean;
+	    auto_self_heal?: boolean;
+	    self_heal_attempt_cap?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new SkillProfile(source);
@@ -1563,6 +1590,8 @@ export namespace types {
 	        this.preferred_work_pool_id = source["preferred_work_pool_id"];
 	        this.per_stage = this.convertValues(source["per_stage"], SkillRef, true);
 	        this.skills_migrated = source["skills_migrated"];
+	        this.auto_self_heal = source["auto_self_heal"];
+	        this.self_heal_attempt_cap = source["self_heal_attempt_cap"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -24,6 +25,13 @@ type Store interface {
 // WorkspaceSource lets the poller pick up newly-added workspaces between ticks.
 type WorkspaceSource interface {
 	List() []types.Workspace
+}
+
+// checkStateCacheEntry is stored per (wsID, prNumber) to detect failing-edge
+// transitions across poller ticks (issue #116).
+type checkStateCacheEntry struct {
+	headSHA   string
+	anyFailed bool
 }
 
 // Poller fans out per-workspace fetches every Interval. Each tick:
@@ -47,6 +55,11 @@ type Poller struct {
 	mu      sync.Mutex
 	running bool
 	pokeCh  chan struct{}
+
+	// checkStateCache tracks the previous aggregate check-run state per PR so
+	// the poller can detect failing-edge transitions (issue #116).
+	// Key: "wsID#prNumber". Value: checkStateCacheEntry.
+	checkStateCache sync.Map
 }
 
 // NewPoller constructs a Poller with sensible defaults.
@@ -217,12 +230,21 @@ func (p *Poller) pollOne(ctx context.Context, ws types.Workspace) error {
 				continue
 			}
 			p.publishPR(eventbus.EvtPRMerged, ws, iss)
+			// Clear check-run cache on merge — no longer relevant.
+			p.checkStateCache.Delete(ws.ID + "#" + strconv.Itoa(*iss.PRNumber))
+			continue
 		case pr.ClosedAt != nil:
 			if err := p.Store.MarkPRClosedUnmerged(ws.ID, iss.Number); err != nil {
 				log.Printf("mark pr closed-unmerged %s#%d: %v", ws.ID, iss.Number, err)
 				continue
 			}
 			p.publishPR(eventbus.EvtPRClosedUnmerged, ws, iss)
+			p.checkStateCache.Delete(ws.ID + "#" + strconv.Itoa(*iss.PRNumber))
+			continue
+		}
+		// PR is still open — probe check runs for CI failure detection (#116).
+		if pr.HeadSHA != "" {
+			p.probeCheckRuns(ctx, ws, iss, *iss.PRNumber, pr.HeadSHA)
 		}
 	}
 
@@ -266,6 +288,64 @@ func (p *Poller) publishPR(t eventbus.EventType, ws types.Workspace, iss types.I
 		payload["pr_number"] = *iss.PRNumber
 	}
 	p.Bus.Publish(t, payload)
+}
+
+// probeCheckRuns fetches GitHub Actions check runs for the PR's HEAD SHA,
+// computes an aggregate, and emits EvtPRChecksFailed on a failing-edge
+// transition (passing→failing or new-SHA-with-failures). Emits
+// EvtPRChecksRecovered when a previously-failing PR passes. Issue #116.
+func (p *Poller) probeCheckRuns(ctx context.Context, ws types.Workspace, iss types.Issue, prNumber int, headSHA string) {
+	if p.Bus == nil || p.Client == nil {
+		return
+	}
+	agg, err := p.Client.FetchChecksAggregate(ctx, ws, headSHA)
+	if err != nil {
+		log.Printf("check runs %s#%d (pr %d): %v", ws.ID, iss.Number, prNumber, err)
+		return
+	}
+
+	cacheKey := ws.ID + "#" + strconv.Itoa(prNumber)
+	prev, hasPrev := p.checkStateCache.Load(cacheKey)
+
+	// Compute whether this is a new-SHA (force-push) or a state transition.
+	isNewSHA := !hasPrev || prev.(checkStateCacheEntry).headSHA != headSHA
+	wasFailing := hasPrev && prev.(checkStateCacheEntry).anyFailed
+
+	// Update cache.
+	p.checkStateCache.Store(cacheKey, checkStateCacheEntry{
+		headSHA:   headSHA,
+		anyFailed: agg.AnyFailed,
+	})
+
+	switch {
+	case agg.AnyFailed && (isNewSHA || !wasFailing):
+		// Failing edge: emit the failure event.
+		jobs := make([]string, len(agg.FailingJobs))
+		urls := make([]string, len(agg.FailingJobs))
+		runIDs := make([]int64, len(agg.FailingJobs))
+		for i, j := range agg.FailingJobs {
+			jobs[i] = j.Name
+			urls[i] = j.URL
+			runIDs[i] = j.RunID
+		}
+		p.Bus.Publish(eventbus.EvtPRChecksFailed, eventbus.PRChecksFailed{
+			WorkspaceID:         ws.ID,
+			IssueNumber:         iss.Number,
+			PRNumber:            prNumber,
+			HeadSHA:             headSHA,
+			FailingJobs:         jobs,
+			FailingCheckRunURLs: urls,
+			RunIDs:              runIDs,
+		})
+	case !agg.AnyFailed && wasFailing && !isNewSHA:
+		// Recovery edge: all checks now pass on the same SHA.
+		p.Bus.Publish(eventbus.EvtPRChecksRecovered, eventbus.PRChecksRecovered{
+			WorkspaceID: ws.ID,
+			IssueNumber: iss.Number,
+			PRNumber:    prNumber,
+			HeadSHA:     headSHA,
+		})
+	}
 }
 
 func sameLabels(a, b []string) bool {

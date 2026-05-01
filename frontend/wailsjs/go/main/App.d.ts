@@ -137,6 +137,8 @@ export function SaveGoal(arg1:types.Goal):Promise<void>;
 
 export function SavePool(arg1:types.Pool):Promise<void>;
 
+export function SelfHeal(arg1:string,arg2:number):Promise<void>;
+
 export function SendInput(arg1:string,arg2:string):Promise<void>;
 
 export function SetAutoPullPaused(arg1:boolean):Promise<void>;

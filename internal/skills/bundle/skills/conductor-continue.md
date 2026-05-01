@@ -22,6 +22,18 @@ Bundled by PrismConductor.
 The user's note describing what to fix is at `.prismconductor/notes/<issue>.txt`
 in the worktree root. Read it first — it is your primary directive.
 
+**CI self-heal mode:** If the note begins with `CI self-heal:`, the session was
+auto-spawned by the self-heal loop (issue #116). In this case:
+- Run the failing checks listed in the note locally to reproduce them.
+- Fetch the failing step logs via `gh run view <run-id> --log-failed` if run IDs
+  are available in the note, or use the check run URLs to identify the workflow.
+- Review the diff of the HEAD commit (`git diff HEAD~1`) for context.
+- Fix the root cause and push a fixup commit.
+- Comment on the PR: "Self-heal: tests were failing because X; fixed by Y."
+- If you cannot reproduce the failure locally or it is environment-only,
+  print `BLOCKED: self-heal cannot fix environment-only CI failure — <reason>`.
+  Do NOT push a commit that doesn't address the actual root cause.
+
 ## Behavior
 
 These steps are mandatory and must run in this order.
