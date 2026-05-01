@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -23,6 +24,29 @@ import (
 	"prismconductor/internal/skills/bundle"
 	"prismconductor/internal/types"
 )
+
+// loadSkillMarkdown reads the skill markdown for the given stage from the
+// workspace's PerStage configuration. Returns empty string (not an error) when
+// no per-stage skill is configured — the harness falls through to its legacy
+// mode logic.
+func loadSkillMarkdown(ws types.Workspace, stage types.ConductorStage) string {
+	ref, ok := ws.SkillProfile.SkillForStage(stage)
+	if !ok {
+		return ""
+	}
+	switch ref.Source {
+	case "bundled":
+		name := strings.TrimPrefix(ref.Path, "bundled:")
+		if b, err := fs.ReadFile(bundle.FS, "skills/"+name+".md"); err == nil {
+			return string(b)
+		}
+	case "repo":
+		if b, err := os.ReadFile(ref.Path); err == nil {
+			return string(b)
+		}
+	}
+	return ""
+}
 
 // LineHandler receives each PTY output line as it arrives.
 type LineHandler func(sessionID string, line string)
@@ -223,7 +247,8 @@ func (m *Manager) SpawnPlan(ws types.Workspace, issue types.Issue, pool types.Po
 	if err != nil {
 		return nil, err
 	}
-	return m.spawn(ws, issue, types.ModePlan, args, prompt, pool)
+	skillMarkdown := loadSkillMarkdown(ws, types.StagePlan)
+	return m.spawn(ws, issue, types.ModePlan, args, prompt, pool, skillMarkdown)
 }
 
 // SpawnExecute launches an execute-mode worker per §10.2.
@@ -276,7 +301,8 @@ func (m *Manager) SpawnExecute(ws types.Workspace, issue types.Issue, plan types
 		_ = pcgit.Remove(ws.RepoPath, worktreeDir)
 		return nil, err
 	}
-	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool)
+	skillMarkdown := loadSkillMarkdown(ws, types.StageExecute)
+	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool, skillMarkdown)
 	if err != nil {
 		_ = pcgit.Remove(ws.RepoPath, worktreeDir)
 		return nil, err
@@ -301,7 +327,8 @@ func (m *Manager) SpawnExecuteResume(ws types.Workspace, issue types.Issue, plan
 	if err != nil {
 		return nil, err
 	}
-	return m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool)
+	skillMarkdown := loadSkillMarkdown(ws, types.StageContinue)
+	return m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool, skillMarkdown)
 }
 
 // SpawnExecuteContinue re-enters an execute worker on the existing feature
@@ -333,7 +360,8 @@ func (m *Manager) SpawnExecuteContinue(ws types.Workspace, issue types.Issue, pl
 	if err != nil {
 		return nil, err
 	}
-	return m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool)
+	skillMarkdown := loadSkillMarkdown(ws, types.StageContinue)
+	return m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool, skillMarkdown)
 }
 
 // mirrorContinueNote copies .prismconductor/notes/<num>.txt from the main
@@ -360,6 +388,13 @@ func (m *Manager) buildExecuteContinueCommand(ws types.Workspace, issue types.Is
 }
 
 func executeContinuePrompt(ws types.Workspace, issue types.Issue, plan types.Plan) string {
+	if ref, ok := ws.SkillProfile.SkillForStage(types.StageContinue); ok {
+		if ref.Source == "bundled" {
+			return fmt.Sprintf("/%s --issue %d --repo %s --revision %d", ref.Name, issue.Number, ws.RepoPath, plan.Revision)
+		}
+		return fmt.Sprintf("Continue work on issue #%d (revision %d) in repo %s", issue.Number, plan.Revision, ws.RepoPath)
+	}
+	// Legacy fallback.
 	switch ws.SkillProfile.Mode {
 	case types.SkillModeNative:
 		return fmt.Sprintf("%s %d --continue-revision %d", ws.SkillProfile.NativeExecuteCommand, issue.Number, plan.Revision)
@@ -446,11 +481,11 @@ func mirrorPlanArtifacts(repoPath, worktreeDir string, num, rev int) error {
 func (m *Manager) SpawnRaw(ws types.Workspace, name string, args []string) (*types.Session, error) {
 	demoIssue := types.Issue{Number: 0, WorkspaceID: ws.ID}
 	full := append([]string{name}, args...)
-	return m.spawn(ws, demoIssue, types.ModePlan, full, "", types.Pool{})
+	return m.spawn(ws, demoIssue, types.ModePlan, full, "", types.Pool{}, "")
 }
 
-func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, prompt string, pool types.Pool) (*types.Session, error) {
-	return m.spawnWithDir(ws, issue, mode, argv, prompt, "", "", pool)
+func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, prompt string, pool types.Pool, skillMarkdown string) (*types.Session, error) {
+	return m.spawnWithDir(ws, issue, mode, argv, prompt, "", "", pool, skillMarkdown)
 }
 
 // spawnWithDir is the canonical spawn path. When worktreeDir is non-empty the
@@ -470,7 +505,7 @@ func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.Sessio
 // goroutine drives the agent loop and writes synthesized stream-json into
 // the transcript file. tailAndParse + StreamParser see identical input
 // shape regardless of strategy.
-func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, prompt, worktreeDir, branch string, pool types.Pool) (*types.Session, error) {
+func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, prompt, worktreeDir, branch string, pool types.Pool, skillMarkdown string) (*types.Session, error) {
 	if len(argv) == 0 && prompt == "" {
 		return nil, fmt.Errorf("empty command")
 	}
@@ -557,18 +592,19 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 		go func() {
 			defer close(done)
 			rs.harnessErr = harness.Execute(ctx, harness.Run{
-				SessionID:   sessID,
-				RepoPath:    ws.RepoPath,
-				WorktreeDir: worktreeDir,
-				Mode:        mode,
-				SkillMode:   ws.SkillProfile.Mode,
-				Pool:        pool,
-				Provider:    prov,
-				UserPrompt:  prompt,
-				Skills:      bundle.FS,
-				EnvVars:     envSpecToSlice(ws.AgentEnv),
-				Budget:      harness.DefaultBudget(),
-				Out:         tf,
+				SessionID:     sessID,
+				RepoPath:      ws.RepoPath,
+				WorktreeDir:   worktreeDir,
+				Mode:          mode,
+				SkillMode:     ws.SkillProfile.Mode,
+				SkillMarkdown: skillMarkdown,
+				Pool:          pool,
+				Provider:      prov,
+				UserPrompt:    prompt,
+				Skills:        bundle.FS,
+				EnvVars:       envSpecToSlice(ws.AgentEnv),
+				Budget:        harness.DefaultBudget(),
+				Out:           tf,
 			})
 		}()
 	}
@@ -1021,6 +1057,14 @@ func (m *Manager) providerArgs(pool types.Pool, prompt string) ([]string, string
 }
 
 func planPrompt(ws types.Workspace, issue types.Issue) string {
+	if ref, ok := ws.SkillProfile.SkillForStage(types.StagePlan); ok {
+		if ref.Source == "bundled" {
+			return fmt.Sprintf("/%s --issue %d --repo %s", ref.Name, issue.Number, ws.RepoPath)
+		}
+		// Repo skill: metadata only; system prompt carries the skill markdown.
+		return fmt.Sprintf("Plan issue #%d in repo %s", issue.Number, ws.RepoPath)
+	}
+	// Legacy fallback.
 	switch ws.SkillProfile.Mode {
 	case types.SkillModeNative:
 		return fmt.Sprintf("%s %d --emit-plan-json", ws.SkillProfile.NativePlanCommand, issue.Number)
@@ -1032,6 +1076,13 @@ func planPrompt(ws types.Workspace, issue types.Issue) string {
 }
 
 func executePrompt(ws types.Workspace, issue types.Issue, plan types.Plan) string {
+	if ref, ok := ws.SkillProfile.SkillForStage(types.StageExecute); ok {
+		if ref.Source == "bundled" {
+			return fmt.Sprintf("/%s --issue %d --repo %s --revision %d", ref.Name, issue.Number, ws.RepoPath, plan.Revision)
+		}
+		return fmt.Sprintf("Execute plan for issue #%d (revision %d) in repo %s", issue.Number, plan.Revision, ws.RepoPath)
+	}
+	// Legacy fallback.
 	switch ws.SkillProfile.Mode {
 	case types.SkillModeNative:
 		return fmt.Sprintf("%s %d --resume-from-approved-plan %d", ws.SkillProfile.NativeExecuteCommand, issue.Number, plan.Revision)
