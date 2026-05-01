@@ -82,6 +82,10 @@ export function GetIssueView(arg1, arg2) {
   return window['go']['main']['App']['GetIssueView'](arg1, arg2);
 }
 
+export function GetLabelFilter(arg1) {
+  return window['go']['main']['App']['GetLabelFilter'](arg1);
+}
+
 export function GetMidRunQuestion(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetMidRunQuestion'](arg1, arg2, arg3);
 }
@@ -268,6 +272,10 @@ export function SetGoalStatus(arg1, arg2) {
 
 export function SetIssueLabels(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetIssueLabels'](arg1, arg2, arg3);
+}
+
+export function SetLabelFilter(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetLabelFilter'](arg1, arg2, arg3);
 }
 
 export function SetNotifyPrefs(arg1) {

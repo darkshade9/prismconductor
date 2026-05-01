@@ -21,7 +21,7 @@ import { SessionDrawer } from "./components/SessionDrawer";
 import { Settings } from "./components/Settings";
 import { PlanModal } from "./components/PlanModal";
 import { ArchivedDrawer } from "./components/ArchivedDrawer";
-import { AddIssueQuick } from "./components/AddIssueQuick";
+import { LabelFilterStrip } from "./components/LabelFilterStrip";
 import { useArchivedStore, useIssueStore } from "./stores/issueStore";
 import { useGoalStore } from "./stores/goalStore";
 import { usePlanReadyStore } from "./stores/planReadyStore";
@@ -372,10 +372,7 @@ function App() {
         onOpenArchived={() => setArchivedOpen(true)}
       />
       <GoalPane />
-      <div className="px-4 py-1 border-b border-slate-800 flex items-center gap-3">
-        <span className="text-xs text-slate-500">+ test issue:</span>
-        <AddIssueQuick />
-      </div>
+      <LabelFilterStrip />
       <main className="flex-1 overflow-hidden pt-3">
         <Board
           onCardClick={(iss) =>

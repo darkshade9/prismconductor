@@ -967,6 +967,20 @@ export namespace main {
 	        this.model = source["model"];
 	    }
 	}
+	export class LabelFilterState {
+	    labels: string[];
+	    mode: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LabelFilterState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.labels = source["labels"];
+	        this.mode = source["mode"];
+	    }
+	}
 	export class NotifyPrefs {
 	    muted: boolean;
 	    quiet_start: string;

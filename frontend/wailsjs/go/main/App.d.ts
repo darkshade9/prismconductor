@@ -51,6 +51,8 @@ export function GetAutoPullPaused():Promise<boolean>;
 
 export function GetIssueView(arg1:string,arg2:number):Promise<issueview.IssueView>;
 
+export function GetLabelFilter(arg1:string):Promise<main.LabelFilterState>;
+
 export function GetMidRunQuestion(arg1:string,arg2:number,arg3:string):Promise<types.Question>;
 
 export function GetNotifyPrefs():Promise<main.NotifyPrefs>;
@@ -144,6 +146,8 @@ export function SetAutoPullPaused(arg1:boolean):Promise<void>;
 export function SetGoalStatus(arg1:string,arg2:string):Promise<void>;
 
 export function SetIssueLabels(arg1:string,arg2:number,arg3:Array<string>):Promise<void>;
+
+export function SetLabelFilter(arg1:string,arg2:Array<string>,arg3:string):Promise<void>;
 
 export function SetNotifyPrefs(arg1:main.NotifyPrefs):Promise<void>;
 
