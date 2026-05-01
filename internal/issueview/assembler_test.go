@@ -1,12 +1,44 @@
 package issueview
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	"prismconductor/internal/eventbus"
 	"prismconductor/internal/types"
 )
+
+// fakeStore is a minimal issueStore for Assembler integration tests.
+type fakeStore struct {
+	issues   map[int]types.Issue
+	sessions map[int][]types.Session
+}
+
+func (f *fakeStore) LoadIssue(_ string, number int) (types.Issue, error) {
+	if iss, ok := f.issues[number]; ok {
+		return iss, nil
+	}
+	return types.Issue{Number: number}, nil
+}
+
+func (f *fakeStore) ListIssues(_ string) ([]types.Issue, error) {
+	out := make([]types.Issue, 0, len(f.issues))
+	for _, iss := range f.issues {
+		out = append(out, iss)
+	}
+	return out, nil
+}
+
+func (f *fakeStore) LatestPlan(_ string, _ int) (*types.Plan, error) { return nil, nil }
+
+func (f *fakeStore) ListSessionsForIssue(_ string, issueNumber int) ([]types.Session, error) {
+	return f.sessions[issueNumber], nil
+}
+
+func (f *fakeStore) GetPool(id string) (types.Pool, error) {
+	return types.Pool{}, fmt.Errorf("pool not found")
+}
 
 // --- helpers ---
 
@@ -236,5 +268,74 @@ func TestExtractIssueKey_UnknownPayload_ReturnsEmpty(t *testing.T) {
 	ws, num := extractIssueKey(e)
 	if ws != "" || num != 0 {
 		t.Errorf("expected empty, got ws=%q num=%d", ws, num)
+	}
+}
+
+// --- cross-contamination / pointer aliasing ---
+
+// TestSelectSessions_DeepCopyPreventsAliasing verifies that two calls to
+// selectSessions on the same slice return independent pointers. Before the
+// deep-copy fix, both calls returned &sessions[i] which pointed into the
+// same backing array, so mutating one would silently corrupt the other.
+func TestSelectSessions_DeepCopyPreventsAliasing(t *testing.T) {
+	sessions := []types.Session{makeSession(types.StateRunning, t1, "", false)}
+	iss := types.Issue{Column: types.ColInProgress}
+
+	active1, _, _ := selectSessions(iss, sessions)
+	active2, _, _ := selectSessions(iss, sessions)
+	if active1 == nil || active2 == nil {
+		t.Fatal("both calls must return a non-nil active session")
+	}
+	active1.BlockedReason = "mutated"
+	if active2.BlockedReason == "mutated" {
+		t.Error("selectSessions returned aliased pointers — each returned struct must be independent")
+	}
+}
+
+// TestAssemble_NoCrossIssueContamination seeds two issues with distinct
+// sessions and verifies that each IssueView's ActiveSession is owned by
+// the correct issue and that mutating one view's pointer doesn't bleed into
+// the other view.
+func TestAssemble_NoCrossIssueContamination(t *testing.T) {
+	sessA := makeSession(types.StateRunning, t1, "", false)
+	sessA.IssueNumber = 1
+	sessA.ID = "sess-a"
+
+	sessB := makeSession(types.StateRunning, t2, "", false)
+	sessB.IssueNumber = 2
+	sessB.ID = "sess-b"
+
+	st := &fakeStore{
+		issues: map[int]types.Issue{
+			1: {Number: 1, WorkspaceID: "ws"},
+			2: {Number: 2, WorkspaceID: "ws"},
+		},
+		sessions: map[int][]types.Session{
+			1: {sessA},
+			2: {sessB},
+		},
+	}
+	a := New(eventbus.New(), st)
+
+	viewA, err := a.Assemble("ws", 1)
+	if err != nil {
+		t.Fatalf("Assemble issue 1: %v", err)
+	}
+	viewB, err := a.Assemble("ws", 2)
+	if err != nil {
+		t.Fatalf("Assemble issue 2: %v", err)
+	}
+
+	if viewA.ActiveSession == nil || viewA.ActiveSession.ID != "sess-a" {
+		t.Errorf("issue 1 active = %v, want sess-a", viewA.ActiveSession)
+	}
+	if viewB.ActiveSession == nil || viewB.ActiveSession.ID != "sess-b" {
+		t.Errorf("issue 2 active = %v, want sess-b", viewB.ActiveSession)
+	}
+
+	// Mutate via viewA; viewB must be unaffected.
+	viewA.ActiveSession.BlockedReason = "should-not-leak"
+	if viewB.ActiveSession.BlockedReason == "should-not-leak" {
+		t.Error("mutation via viewA.ActiveSession leaked into viewB — pointer aliasing detected")
 	}
 }

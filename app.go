@@ -290,6 +290,10 @@ func (a *App) startup(ctx context.Context) {
 	// Re-attach to sessions that were live at last shutdown (§15.3).
 	// Issue #54: Reattach now needs the workspace list so the live-tail
 	// goroutine can rebuild repoPath / worktreeDir for post-mortem cleanup.
+	// Issue #105: wire the pool rehydrator so live-session slots are counted.
+	if a.poolReg != nil {
+		a.mgr.SetPoolRehydrator(a.poolReg)
+	}
 	if a.store != nil {
 		if running, _, err := a.store.LoadRunningSessions(); err == nil {
 			var workspaces []types.Workspace
