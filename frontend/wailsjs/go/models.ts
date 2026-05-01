@@ -1253,6 +1253,10 @@ export namespace types {
 	    created_at: any;
 	    priority: number;
 	    temperature?: number;
+	    max_turns?: number;
+	    max_input_tokens?: number;
+	    bash_timeout?: number;
+	    output_cap?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Pool(source);
@@ -1272,6 +1276,10 @@ export namespace types {
 	        this.created_at = this.convertValues(source["created_at"], null);
 	        this.priority = source["priority"];
 	        this.temperature = source["temperature"];
+	        this.max_turns = source["max_turns"];
+	        this.max_input_tokens = source["max_input_tokens"];
+	        this.bash_timeout = source["bash_timeout"];
+	        this.output_cap = source["output_cap"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1354,11 +1362,12 @@ export namespace types {
 	    blocked_reason?: string;
 	    pending_question_id?: string;
 	    pool_id?: string;
-	
+	    acknowledged_at?: number;
+
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1373,6 +1382,7 @@ export namespace types {
 	        this.blocked_reason = source["blocked_reason"];
 	        this.pending_question_id = source["pending_question_id"];
 	        this.pool_id = source["pool_id"];
+	        this.acknowledged_at = source["acknowledged_at"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

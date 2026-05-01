@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
-import { Replan } from "../../wailsjs/go/main/App";
+import { Replan, ClearIssueFailure } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "../stores/sessionStore";
 import { usePlanReadyStore } from "../stores/planReadyStore";
@@ -59,13 +59,13 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         if (!paused || String(m.started_at ?? "") > String(paused.started_at ?? "")) {
           paused = m;
         }
-      } else if (m.state === "running" || m.state === "waiting_for_input" || m.state === "blocked") {
+      } else if ((m.state === "running" || m.state === "waiting_for_input" || (m.state === "blocked" && !m.acknowledged_at))) {
         if (!active) {
           active = m;
           activeAct = view.activity ?? null;
         }
-      } else if ((m.state === "failed" || m.state === "blocked") && m.blocked_reason) {
-        // Newest failed-with-reason session, regardless of column.
+      } else if ((m.state === "failed" || m.state === "blocked") && m.blocked_reason && !m.acknowledged_at) {
+        // Newest failed-with-reason unacknowledged session, regardless of column.
         if (!lastFail || String(m.started_at ?? "") > String(lastFail.started_at ?? "")) {
           lastFail = m;
         }
@@ -224,6 +224,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         column={issue.column}
         prNumber={issue.pr_number ?? null}
         onContinue={() => setContinueOpen(true)}
+        onClearFailure={() => ClearIssueFailure(issue.workspace_id, issue.number).catch((err: any) => alert(String(err?.message ?? err)))}
       />
       <div className="flex justify-end mt-0.5">
         <WorkTimerChip
@@ -344,6 +345,7 @@ function StatusRow({
   column,
   prNumber,
   onContinue,
+  onClearFailure,
 }: {
   activeSession: types.Session | null;
   activity: SessionActivity | null;
@@ -361,6 +363,7 @@ function StatusRow({
   column: string;
   prNumber: number | null;
   onContinue: () => void;
+  onClearFailure: () => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number; actions: CopyAction[] } | null>(null);
 
@@ -459,6 +462,7 @@ function StatusRow({
   }
   if (lastFailure) {
     const reason = lastFailure.blocked_reason || "session ended without success";
+    const showClear = column === "todo" || column === "plan" || column === "in_progress";
     return (
       <>
         <div
@@ -472,6 +476,20 @@ function StatusRow({
             <Pulse className="bg-red-400" />
             <span className="text-red-300">blocked</span>
             <span className="text-slate-500">· {lastFailure.mode}</span>
+            {showClear && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClearFailure();
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="ml-auto px-1.5 py-0.5 rounded text-[10px] border border-red-800 text-red-400 hover:border-red-600 hover:text-red-300"
+                title="Clear failure — marks the most recent blocked session as acknowledged and clears the card's blocked overlay."
+              >
+                ✕ Clear failure
+              </button>
+            )}
           </div>
           <div className="text-slate-400 break-words" title={reason}>⚠ {reason}</div>
         </div>

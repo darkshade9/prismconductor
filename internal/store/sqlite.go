@@ -201,6 +201,27 @@ CREATE TABLE IF NOT EXISTS pools (
 			return err
 		}
 	}
+	// Issue #89: per-pool harness budget overrides. NULL = use DefaultBudget() value.
+	for _, col := range []string{
+		`ALTER TABLE pools ADD COLUMN max_turns INTEGER`,
+		`ALTER TABLE pools ADD COLUMN max_input_tokens INTEGER`,
+		`ALTER TABLE pools ADD COLUMN bash_timeout_ms INTEGER`,
+		`ALTER TABLE pools ADD COLUMN output_cap INTEGER`,
+	} {
+		if _, err := s.DB.Exec(col); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return err
+			}
+		}
+	}
+	// Issue #88: acknowledged_at records when the user cleared a blocked/failed
+	// session. NULL = not yet acknowledged; non-null = Unix epoch of the clear.
+	// The session row is preserved for audit; the UI ignores acknowledged rows.
+	if _, err := s.DB.Exec(`ALTER TABLE sessions ADD COLUMN acknowledged_at INTEGER`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
 	return nil
 }
 

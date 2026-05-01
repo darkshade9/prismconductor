@@ -104,6 +104,11 @@ type Pool struct {
 	// request. When nil the field is omitted and the provider uses its default.
 	// This unblocks models that reject an explicit temperature (e.g. gpt-5-codex).
 	Temperature *float64 `json:"temperature,omitempty"`
+	// Per-pool harness budget overrides (issue #89). Nil = use harness.DefaultBudget() value.
+	MaxTurns       *int           `json:"max_turns,omitempty"`
+	MaxInputTokens *int           `json:"max_input_tokens,omitempty"`
+	BashTimeout    *time.Duration `json:"bash_timeout,omitempty"`
+	OutputCap      *int           `json:"output_cap,omitempty"`
 }
 
 // PendingPoolRequest is a persisted "waiting for pool" request. Created when
@@ -302,6 +307,12 @@ type Session struct {
 	// every restart and eventually saturates at capacity. Empty for legacy
 	// rows spawned before the field was introduced.
 	PoolID string `json:"pool_id,omitempty"`
+
+	// AcknowledgedAt is set (Unix epoch) when the user explicitly clears a
+	// blocked/failed session via ClearIssueFailure or by dragging the card to
+	// TODO/PLAN. The session row is preserved for audit; the UI ignores
+	// acknowledged sessions when computing lastFailure/activeSession overlays.
+	AcknowledgedAt *int64 `json:"acknowledged_at,omitempty"`
 
 	// TranscriptOffset is the byte offset into the transcript file of the
 	// last fully-processed line (issue #54). Lives on the sessions column,

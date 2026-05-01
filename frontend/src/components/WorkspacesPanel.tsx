@@ -3,6 +3,7 @@ import { GCWorktrees, RemoveWorkspace } from "../../wailsjs/go/main/App";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { AddWorkspaceForm } from "./AddWorkspaceForm";
 import { SkillProfileEditor } from "./SkillProfileEditor";
+import { LabelsPanel } from "./LabelsPanel";
 
 export function WorkspacesPanel() {
   const { workspaces, refresh, loading } = useWorkspaceStore();
@@ -80,7 +81,7 @@ export function WorkspacesPanel() {
                     onClick={() => setExpanded(isExpanded ? null : ws.id)}
                     className="text-xs text-slate-400 hover:text-slate-200"
                   >
-                    {isExpanded ? "Collapse" : "Skills…"}
+                    {isExpanded ? "Collapse" : "Settings…"}
                   </button>
                   <button
                     onClick={() => gc(ws.id)}
@@ -112,8 +113,12 @@ export function WorkspacesPanel() {
                   )}
                 </div>
                 {isExpanded && (
-                  <div className="mt-2">
+                  <div className="mt-2 space-y-4">
                     <SkillProfileEditor workspace={ws} />
+                    <div>
+                      <div className="text-xs text-slate-400 mb-2">Labels</div>
+                      <LabelsPanel workspaceID={ws.id} />
+                    </div>
                   </div>
                 )}
               </li>

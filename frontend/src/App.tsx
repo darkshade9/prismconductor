@@ -49,7 +49,7 @@ function App() {
   const [autoPaused, setAutoPaused] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsInitialTab, setSettingsInitialTab] = useState<"workspaces" | "pools" | "skills" | "labels" | "notify" | "logs">("workspaces");
+  const [settingsInitialTab, setSettingsInitialTab] = useState<"workspaces" | "pools" | "skills" | "notify" | "logs">("workspaces");
   const [planTarget, setPlanTarget] = useState<PlanTarget>(null);
   const [planQueue, setPlanQueue] = useState<PlanRef[]>([]);
   const planIssue = useMemo(() => {

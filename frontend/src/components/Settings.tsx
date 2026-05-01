@@ -4,9 +4,8 @@ import { BundledSkillsViewer } from "./BundledSkillsViewer";
 import { PoolsPanel } from "./PoolsPanel";
 import { NotifyPanel } from "./NotifyPanel";
 import { LogsPanel } from "./LogsPanel";
-import { LabelsPanel } from "./LabelsPanel";
 
-type Tab = "workspaces" | "pools" | "skills" | "labels" | "notify" | "logs";
+type Tab = "workspaces" | "pools" | "skills" | "notify" | "logs";
 
 export function Settings({
   open,
@@ -33,7 +32,6 @@ export function Settings({
                 ["workspaces", "Workspaces"],
                 ["pools", "Pools"],
                 ["skills", "Bundled skills"],
-                ["labels", "Labels"],
                 ["notify", "Notifications"],
                 ["logs", "Logs"],
               ] as [Tab, string][]
@@ -54,7 +52,6 @@ export function Settings({
             {tab === "workspaces" && <WorkspacesPanel />}
             {tab === "pools" && <PoolsPanel />}
             {tab === "skills" && <BundledSkillsViewer />}
-            {tab === "labels" && <LabelsPanel />}
             {tab === "notify" && <NotifyPanel />}
             {tab === "logs" && <LogsPanel />}
           </div>
