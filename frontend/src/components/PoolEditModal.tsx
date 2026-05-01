@@ -60,6 +60,21 @@ export function PoolEditModal({
   const [temperatureStr, setTemperatureStr] = useState<string>(
     initial?.temperature != null ? String(initial.temperature) : "",
   );
+  const [budgetOpen, setBudgetOpen] = useState(false);
+  const [maxTurnsStr, setMaxTurnsStr] = useState<string>(
+    initial?.max_turns != null ? String(initial.max_turns) : "",
+  );
+  const [maxInputTokensStr, setMaxInputTokensStr] = useState<string>(
+    initial?.max_input_tokens != null ? String(initial.max_input_tokens) : "",
+  );
+  // bash_timeout is nanoseconds in JSON (time.Duration); UI shows seconds.
+  const [bashTimeoutStr, setBashTimeoutStr] = useState<string>(
+    initial?.bash_timeout != null ? String(Math.round((initial.bash_timeout as number) / 1e9)) : "",
+  );
+  // output_cap is bytes in JSON; UI shows KB.
+  const [outputCapKBStr, setOutputCapKBStr] = useState<string>(
+    initial?.output_cap != null ? String(Math.round((initial.output_cap as number) / 1024)) : "",
+  );
   const [models, setModels] = useState<string[]>([]);
   const [probing, setProbing] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -149,6 +164,10 @@ export function PoolEditModal({
       // Orchestrator runs are per-call HTTP, capacity is irrelevant. Persist 1.
       const finalCapacity = role === "orchestrator" ? 1 : capacity;
       const parsedTemp = temperatureStr.trim() === "" ? undefined : parseFloat(temperatureStr);
+      const parsedMaxTurns = maxTurnsStr.trim() === "" ? undefined : parseInt(maxTurnsStr, 10);
+      const parsedMaxInputTokens = maxInputTokensStr.trim() === "" ? undefined : parseInt(maxInputTokensStr, 10);
+      const parsedBashTimeoutSec = bashTimeoutStr.trim() === "" ? undefined : parseInt(bashTimeoutStr, 10);
+      const parsedOutputCapKB = outputCapKBStr.trim() === "" ? undefined : parseInt(outputCapKBStr, 10);
       const pool = types.Pool.createFrom({
         id: initial?.id ?? "",
         name: finalName,
@@ -161,6 +180,10 @@ export function PoolEditModal({
         role,
         created_at: initial?.created_at ?? new Date().toISOString(),
         temperature: (parsedTemp != null && !isNaN(parsedTemp)) ? parsedTemp : undefined,
+        max_turns: (parsedMaxTurns != null && !isNaN(parsedMaxTurns)) ? parsedMaxTurns : undefined,
+        max_input_tokens: (parsedMaxInputTokens != null && !isNaN(parsedMaxInputTokens)) ? parsedMaxInputTokens : undefined,
+        bash_timeout: (parsedBashTimeoutSec != null && !isNaN(parsedBashTimeoutSec)) ? parsedBashTimeoutSec * 1e9 : undefined,
+        output_cap: (parsedOutputCapKB != null && !isNaN(parsedOutputCapKB)) ? parsedOutputCapKB * 1024 : undefined,
       });
       await SavePool(pool);
       onSaved();
@@ -334,6 +357,77 @@ export function PoolEditModal({
             <div className="text-[11px] text-slate-500 mt-1">
               Leave empty for models that reject explicit temperature (e.g. gpt-5-codex). Set 0.0 for deterministic output.
             </div>
+          </div>
+
+          <div>
+            <button
+              type="button"
+              onClick={() => setBudgetOpen((o) => !o)}
+              className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200"
+            >
+              <span>{budgetOpen ? "▾" : "▸"}</span>
+              <span>Budget overrides</span>
+              {(maxTurnsStr || maxInputTokensStr || bashTimeoutStr || outputCapKBStr) && (
+                <span className="ml-1 text-[10px] text-amber-400">●</span>
+              )}
+            </button>
+            {budgetOpen && (
+              <div className="mt-2 space-y-2 pl-3 border-l border-slate-700">
+                <div className="text-[11px] text-slate-500">
+                  Leave any field empty to use the global default (120 turns / 1M tokens / 300s / 50KB).
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <div className="text-xs text-slate-500 mb-1">Max turns</div>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={maxTurnsStr}
+                      onChange={(e) => setMaxTurnsStr(e.target.value)}
+                      placeholder="120"
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono text-xs"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500 mb-1">Max input tokens</div>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={maxInputTokensStr}
+                      onChange={(e) => setMaxInputTokensStr(e.target.value)}
+                      placeholder="1000000"
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono text-xs"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500 mb-1">Bash timeout (seconds)</div>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={bashTimeoutStr}
+                      onChange={(e) => setBashTimeoutStr(e.target.value)}
+                      placeholder="300"
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono text-xs"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500 mb-1">Output cap (KB)</div>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={outputCapKBStr}
+                      onChange={(e) => setOutputCapKBStr(e.target.value)}
+                      placeholder="50"
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <label className="flex items-center gap-2 text-xs text-slate-300">
