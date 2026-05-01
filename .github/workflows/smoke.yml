@@ -1,7 +1,8 @@
 name: smoke
 on:
   push:
-    branches: ["feat/issue-*", "main"]
+    # main is covered by build.yml (full matrix + security); smoke runs on feature branches only
+    branches: ["feat/issue-*"]
   pull_request:
     branches: ["main"]
 
@@ -38,6 +39,9 @@ jobs:
       - name: install frontend deps
         working-directory: frontend
         run: npm ci
+      # Note: npm audit lives in build.yml's security job (audit-level=high)
+      # so it gates main but doesn't block PRs on transitive moderate dev-only
+      # vulns from vite/esbuild that never ship to users.
       - name: install test deps + chromium
         working-directory: tests
         run: |

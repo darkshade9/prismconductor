@@ -1,0 +1,197 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (semver, e.g. v1.2.3)"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark as pre-release"
+        required: true
+        type: boolean
+        default: false
+      release_notes:
+        description: "Release notes (Markdown, optional)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  gate:
+    name: build gate
+    uses: ./.github/workflows/build.yml
+
+  approve:
+    name: release approval
+    needs: gate
+    runs-on: ubuntu-22.04
+    environment: release
+    steps:
+      - run: echo "Release ${{ inputs.version }} approved — proceeding to artifact build"
+
+  build-artifacts:
+    name: build release artifact (${{ matrix.name }})
+    needs: approve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: linux
+            archive: prismconductor-linux-amd64.tar.gz
+          - os: macos-latest
+            name: macos
+            archive: prismconductor-macos-amd64.tar.gz
+          - os: windows-latest
+            name: windows
+            archive: prismconductor-windows-amd64.zip
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: install system deps (linux)
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.0-dev \
+            build-essential \
+            pkg-config
+
+      - name: install system deps (macos)
+        if: matrix.name == 'macos'
+        run: brew install pkg-config
+
+      - name: install system deps (windows)
+        if: matrix.name == 'windows'
+        run: choco install mingw --no-progress -y
+        shell: powershell
+
+      - name: install wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: wails build
+        run: wails build
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+
+      # Ad-hoc codesign the macOS bundle. Without ANY signature, macOS 15+
+      # quarantine refuses to launch the app entirely (no right-click-Open
+      # escape hatch). An ad-hoc signature (`--sign -`) makes the bundle
+      # self-consistent and Gatekeeper falls back to the standard
+      # "downloaded from internet" prompt where the user CAN right-click →
+      # Open. This is NOT a Developer ID signature; it does not bypass
+      # Gatekeeper warnings, but it's the difference between "won't open at
+      # all" and "needs one extra click on first launch". When the project
+      # acquires an Apple Developer Program membership, replace this step
+      # with `codesign --sign "Developer ID Application: ..."` plus an
+      # `xcrun notarytool submit ... --wait` + `xcrun stapler staple` pair.
+      - name: ad-hoc codesign (macos)
+        if: matrix.name == 'macos'
+        run: |
+          codesign --force --deep --sign - build/bin/prismconductor.app
+          codesign --verify --deep --strict --verbose=2 build/bin/prismconductor.app
+
+      - name: package artifact (linux)
+        if: matrix.name == 'linux'
+        run: tar -czf ${{ matrix.archive }} -C build/bin prismconductor
+
+      - name: package artifact (macos)
+        if: matrix.name == 'macos'
+        run: tar -czf ${{ matrix.archive }} -C build/bin prismconductor.app
+
+      - name: package artifact (windows)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: Compress-Archive -Path build/bin/prismconductor.exe -DestinationPath ${{ matrix.archive }}
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifact-${{ matrix.name }}
+          path: ${{ matrix.archive }}
+          retention-days: 1
+
+  publish:
+    name: publish release
+    needs: build-artifacts
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-artifact-*
+          merge-multiple: true
+
+      - name: compute SHA256SUMS
+        run: |
+          sha256sum \
+            prismconductor-linux-amd64.tar.gz \
+            prismconductor-macos-amd64.tar.gz \
+            prismconductor-windows-amd64.zip \
+            > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: sign checksums (keyless OIDC)
+        run: cosign sign-blob --yes --bundle SHA256SUMS.txt.bundle SHA256SUMS.txt
+
+      - name: install cyclonedx-gomod
+        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+
+      - name: generate SBOM (Go)
+        run: cyclonedx-gomod app -output sbom-go.cdx.json -json -main .
+
+      - name: create GitHub release
+        run: |
+          NOTES="${{ inputs.release_notes }}"
+          PRERELEASE_FLAG=""
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          gh release create "${{ inputs.version }}" \
+            --title "PrismConductor ${{ inputs.version }}" \
+            --notes "${NOTES:-No release notes provided.}" \
+            $PRERELEASE_FLAG \
+            prismconductor-linux-amd64.tar.gz \
+            prismconductor-macos-amd64.tar.gz \
+            prismconductor-windows-amd64.zip \
+            SHA256SUMS.txt \
+            SHA256SUMS.txt.bundle \
+            sbom-go.cdx.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
