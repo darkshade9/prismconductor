@@ -1,0 +1,182 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_call: {}
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: linux
+          - os: macos-latest
+            name: macos
+          - os: windows-latest
+            name: windows
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: install system deps (linux)
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.0-dev \
+            build-essential \
+            pkg-config \
+            xvfb
+
+      - name: install system deps (macos)
+        if: matrix.name == 'macos'
+        run: brew install pkg-config
+
+      - name: install system deps (windows)
+        if: matrix.name == 'windows'
+        run: choco install mingw --no-progress -y
+        shell: powershell
+
+      - name: install wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: typecheck frontend
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: wails build
+        run: wails build
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+
+      - name: install test deps + chromium (linux)
+        if: matrix.name == 'linux'
+        working-directory: tests
+        run: |
+          npm ci
+          npx playwright install chromium --with-deps
+
+      - name: smoke test (linux)
+        if: matrix.name == 'linux'
+        run: |
+          set -m
+          xvfb-run --auto-servernum --server-args='-screen 0 1280x800x24' \
+            wails dev -loglevel error > /tmp/wails-dev.log 2>&1 &
+          WAILS_PID=$!
+          for i in $(seq 1 240); do
+            if curl -fsS -o /dev/null http://localhost:34115; then
+              echo "wails dev ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          cd tests && npx playwright test e2e/startup.spec.ts
+          kill "$WAILS_PID" || true
+          pkill -9 -f 'wails dev' || true
+          pkill -9 Xvfb || true
+        env:
+          CI: "true"
+
+      - name: upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.name }}
+          path: build/bin/
+          retention-days: 7
+
+  security:
+    name: security scan
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: gosec
+        run: gosec -fmt sarif -out gosec-results.sarif ./... || true
+
+      - name: upload gosec results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gosec-results.sarif
+          category: gosec
+
+      - name: install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: govulncheck
+        run: govulncheck ./...
+
+      - name: npm audit
+        working-directory: frontend
+        run: npm audit --audit-level=high
+
+      - name: trivy scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
