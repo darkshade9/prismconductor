@@ -94,6 +94,9 @@ jobs:
 
       - name: smoke test (linux)
         if: matrix.name == 'linux'
+        # Capture playwright's exit code BEFORE the cleanup `pkill ... || true`
+        # commands, otherwise the step's exit code is the last command (cleanup,
+        # always 0) and a real test failure silently passes CI.
         run: |
           set -m
           xvfb-run --auto-servernum --server-args='-screen 0 1280x800x24' \
@@ -106,10 +109,14 @@ jobs:
             fi
             sleep 1
           done
-          cd tests && npx playwright test e2e/startup.spec.ts
+          set +e
+          (cd tests && npx playwright test e2e/startup.spec.ts)
+          PW_EXIT=$?
+          set -e
           kill "$WAILS_PID" || true
           pkill -9 -f 'wails dev' || true
           pkill -9 Xvfb || true
+          exit "$PW_EXIT"
         env:
           CI: "true"
 
@@ -149,14 +156,24 @@ jobs:
       - name: install gosec
         run: go install github.com/securego/gosec/v2/cmd/gosec@latest
 
-      - name: gosec
-        run: gosec -fmt sarif -out gosec-results.sarif ./... || true
+      # gosec runs in two passes:
+      #  1. Generate SARIF for the GitHub code-scanning UI (must keep going on
+      #     findings so the SARIF upload still happens). This is advisory.
+      #  2. Re-run with -severity high to FAIL the job on high-severity
+      #     findings only. Anything below high is informational and surfaces
+      #     in the Security tab without blocking merges.
+      - name: gosec (sarif, advisory)
+        run: gosec -no-fail -fmt sarif -out gosec-results.sarif ./...
 
       - name: upload gosec results
         uses: github/codeql-action/upload-sarif@v3
+        if: always()
         with:
           sarif_file: gosec-results.sarif
           category: gosec
+
+      - name: gosec (gating, high severity only)
+        run: gosec -severity high ./...
 
       - name: install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest

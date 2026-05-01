@@ -23,6 +23,27 @@ This document covers how maintainers create a release, and how users can verify 
 | `SHA256SUMS.txt.bundle` | cosign bundle (signature + certificate) for `SHA256SUMS.txt` |
 | `sbom-go.cdx.json` | CycloneDX SBOM for the Go module graph |
 
+## First-launch instructions per platform
+
+### macOS
+
+The `.app` bundle is **ad-hoc codesigned only** — it does NOT carry an Apple Developer ID signature and is not notarized (the project does not yet have a paid Apple Developer Program membership). On first launch macOS will refuse to open it normally. To bypass the Gatekeeper prompt:
+
+1. Open Finder, navigate to the extracted `prismconductor.app`.
+2. **Right-click → Open** (or Control-click → Open).
+3. macOS shows a warning dialog with an **Open** button — click it.
+4. After the first successful launch the app opens normally on every subsequent run.
+
+If the app silently refuses to open with no dialog, run `xattr -dr com.apple.quarantine prismconductor.app` once and try again.
+
+### Windows
+
+The `.exe` is unsigned. SmartScreen will show "Windows protected your PC". Click **More info → Run anyway**.
+
+### Linux
+
+No additional steps. The binary is a static cgo build linked against system GTK3 + WebKit2GTK 4.0 shared libs; install those via your distro's package manager if not already present.
+
 ## Verifying artifact integrity
 
 ### 1. Verify the checksum

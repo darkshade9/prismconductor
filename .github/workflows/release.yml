@@ -98,6 +98,23 @@ jobs:
         env:
           CGO_ENABLED: "1"
 
+      # Ad-hoc codesign the macOS bundle. Without ANY signature, macOS 15+
+      # quarantine refuses to launch the app entirely (no right-click-Open
+      # escape hatch). An ad-hoc signature (`--sign -`) makes the bundle
+      # self-consistent and Gatekeeper falls back to the standard
+      # "downloaded from internet" prompt where the user CAN right-click →
+      # Open. This is NOT a Developer ID signature; it does not bypass
+      # Gatekeeper warnings, but it's the difference between "won't open at
+      # all" and "needs one extra click on first launch". When the project
+      # acquires an Apple Developer Program membership, replace this step
+      # with `codesign --sign "Developer ID Application: ..."` plus an
+      # `xcrun notarytool submit ... --wait` + `xcrun stapler staple` pair.
+      - name: ad-hoc codesign (macos)
+        if: matrix.name == 'macos'
+        run: |
+          codesign --force --deep --sign - build/bin/prismconductor.app
+          codesign --verify --deep --strict --verbose=2 build/bin/prismconductor.app
+
       - name: package artifact (linux)
         if: matrix.name == 'linux'
         run: tar -czf ${{ matrix.archive }} -C build/bin prismconductor

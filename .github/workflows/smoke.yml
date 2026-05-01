@@ -39,9 +39,9 @@ jobs:
       - name: install frontend deps
         working-directory: frontend
         run: npm ci
-      - name: npm audit (frontend)
-        working-directory: frontend
-        run: npm audit --audit-level=moderate
+      # Note: npm audit lives in build.yml's security job (audit-level=high)
+      # so it gates main but doesn't block PRs on transitive moderate dev-only
+      # vulns from vite/esbuild that never ship to users.
       - name: install test deps + chromium
         working-directory: tests
         run: |
