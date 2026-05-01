@@ -46,6 +46,10 @@ type Run struct {
 	EnvVars       []string // ws.AgentEnv flattened for the Bash tool.
 	Budget        Budget
 	Out           io.Writer // synthetic stream-json sink (the session pipe writer).
+	// OnTurnUsage is called after each provider ToolChat round with the
+	// cumulative (input, output) token counts so far. Used by the session
+	// manager to persist per-session usage for harness sessions (issue #101).
+	OnTurnUsage func(inputTokens, outputTokens int)
 }
 
 // Execute drives the agent loop until: (1) the model emits a sentinel that
@@ -120,6 +124,9 @@ func Execute(ctx context.Context, r Run) error {
 			return nil
 		}
 		state.addUsage(resp.Usage.InputTokens, resp.Usage.OutputTokens)
+		if r.OnTurnUsage != nil {
+			r.OnTurnUsage(state.InputTokens(), state.OutputTokens())
+		}
 
 		callEvents := make([]toolCallEvent, len(resp.ToolCalls))
 		for i, c := range resp.ToolCalls {

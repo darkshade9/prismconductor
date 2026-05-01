@@ -30,11 +30,15 @@ type TestsFailingInfo struct {
 // the backend and emitted as bus.issue_view_updated on every change so the
 // frontend can render without reconciling multiple stores.
 type IssueView struct {
-	Issue            types.Issue       `json:"issue"`
-	LatestPlan       *types.Plan       `json:"latest_plan,omitempty"`
-	ActiveSession    *types.Session    `json:"active_session,omitempty"`
-	PausedSession    *types.Session    `json:"paused_session,omitempty"`
-	LastFailure      *types.Session    `json:"last_failure,omitempty"`
+	Issue         types.Issue   `json:"issue"`
+	LatestPlan    *types.Plan   `json:"latest_plan,omitempty"`
+	ActiveSession *types.Session `json:"active_session,omitempty"`
+	PausedSession *types.Session `json:"paused_session,omitempty"`
+	LastFailure   *types.Session `json:"last_failure,omitempty"`
+	// LastSession is the most recent terminal session regardless of outcome.
+	// Used by the CostChip hover tooltip to show per-session token breakdown
+	// (issue #101). Nil when no terminal session exists.
+	LastSession      *types.Session    `json:"last_session,omitempty"`
 	PoolBadge        *PoolBadge        `json:"pool_badge,omitempty"`
 	DerivedColumn    types.BoardColumn `json:"derived_column"`
 	TestsFailingInfo *TestsFailingInfo `json:"tests_failing_info,omitempty"`

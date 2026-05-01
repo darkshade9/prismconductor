@@ -140,7 +140,7 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 	plan, _ := a.store.LatestPlan(workspaceID, issueNumber)
 	sessions, _ := a.store.ListSessionsForIssue(workspaceID, issueNumber)
 
-	active, paused, lastFail := selectSessions(iss, sessions)
+	active, paused, lastFail, lastSession := selectSessions(iss, sessions)
 
 	var poolBadge *PoolBadge
 	// Resolve pool badge from most-recent session that has a pool_id.
@@ -183,6 +183,7 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		ActiveSession:    active,
 		PausedSession:    paused,
 		LastFailure:      lastFail,
+		LastSession:      lastSession,
 		PoolBadge:        poolBadge,
 		DerivedColumn:    derivedColumn(iss, plan, active),
 		TestsFailingInfo: testsFailingInfo,
@@ -226,9 +227,11 @@ func (a *Assembler) ListForWorkspace(workspaceID string) ([]IssueView, error) {
 }
 
 // selectSessions walks the session list (newest-first) and returns the
-// canonical (active, paused, lastFailure) tuple. Mirrors the selection logic
-// from Card.tsx so backend and frontend derive identical state.
-func selectSessions(iss types.Issue, sessions []types.Session) (active, paused, lastFail *types.Session) {
+// canonical (active, paused, lastFailure, lastSession) tuple. Mirrors the
+// selection logic from Card.tsx so backend and frontend derive identical state.
+// lastSession is the most recent terminal session (any outcome) for use by the
+// CostChip token-breakdown tooltip (issue #101).
+func selectSessions(iss types.Issue, sessions []types.Session) (active, paused, lastFail, lastSession *types.Session) {
 	var mostRecentCompleted *types.Session
 
 	for i := range sessions {
@@ -264,18 +267,28 @@ func selectSessions(iss types.Issue, sessions []types.Session) (active, paused, 
 			if lastFail == nil || m.StartedAt.After(lastFail.StartedAt) {
 				lastFail = m
 			}
-			continue
 		}
 
 		// Blocked-without-reason: still terminal, just no captured reason.
 		// Don't surface as active (would falsely glow); skip silently.
 		if m.State == types.StateBlocked {
+			if lastSession == nil || m.StartedAt.After(lastSession.StartedAt) {
+				lastSession = m
+			}
 			continue
 		}
 
 		if m.State == types.StateCompleted {
 			if mostRecentCompleted == nil || m.StartedAt.After(mostRecentCompleted.StartedAt) {
 				mostRecentCompleted = m
+			}
+		}
+
+		// Track the most recent terminal session (completed, failed, blocked)
+		// for the cost-chip token breakdown tooltip.
+		if m.State == types.StateCompleted || m.State == types.StateFailed {
+			if lastSession == nil || m.StartedAt.After(lastSession.StartedAt) {
+				lastSession = m
 			}
 		}
 	}
@@ -290,7 +303,7 @@ func selectSessions(iss types.Issue, sessions []types.Session) (active, paused, 
 		lastFail = nil
 	}
 
-	return active, paused, lastFail
+	return active, paused, lastFail, lastSession
 }
 
 // derivedColumn computes the canonical column from issue state and session state.

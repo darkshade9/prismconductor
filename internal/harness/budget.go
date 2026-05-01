@@ -27,11 +27,13 @@ func DefaultBudget() Budget {
 }
 
 type budgetState struct {
-	turns       int
-	inputTokens int
+	turns        int
+	inputTokens  int
+	outputTokens int
 }
 
-func (b *budgetState) tickTurn()           { b.turns++ }
-func (b *budgetState) addUsage(in, _ int)  { b.inputTokens += in }
-func (b budgetState) Turns() int           { return b.turns }
-func (b budgetState) InputTokens() int     { return b.inputTokens }
+func (b *budgetState) tickTurn()                 { b.turns++ }
+func (b *budgetState) addUsage(in, out int)      { b.inputTokens += in; b.outputTokens += out }
+func (b budgetState) Turns() int                 { return b.turns }
+func (b budgetState) InputTokens() int           { return b.inputTokens }
+func (b budgetState) OutputTokens() int          { return b.outputTokens }

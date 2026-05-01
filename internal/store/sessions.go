@@ -326,6 +326,90 @@ func (s *Store) MostRecentEndedAtForWorktree(workspaceID, worktreePath string) (
 	return *sess.EndedAt, true, nil
 }
 
+// UpdateSessionUsage persists per-session token counts and estimated cost to
+// the dedicated columns added in issue #101. Also updates the JSON blob so
+// ListSessionsForIssue returns the token data for IssueView assembly and
+// the GC end-timestamp path.
+func (s *Store) UpdateSessionUsage(sess *types.Session, transcriptPath string) error {
+	if s == nil || s.DB == nil {
+		return nil
+	}
+	b, err := json.Marshal(sess)
+	if err != nil {
+		return err
+	}
+	_, err = s.DB.Exec(
+		`UPDATE sessions SET
+			input_tokens = ?,
+			output_tokens = ?,
+			estimated_cost_cents = ?,
+			state = ?,
+			json = ?
+		 WHERE id = ?`,
+		sess.InputTokens, sess.OutputTokens, sess.EstimatedCostCents,
+		string(sess.State), string(b), sess.ID)
+	return err
+}
+
+// PoolSpendCents returns the sum of estimated_cost_cents for all terminal
+// sessions on the given pool since the supplied time. Used for per-pool
+// spend aggregates in Settings → Pools (issue #101).
+func (s *Store) PoolSpendCents(poolID string, since time.Time) (float64, error) {
+	if s == nil || s.DB == nil {
+		return 0, nil
+	}
+	var total float64
+	err := s.DB.QueryRow(
+		`SELECT COALESCE(SUM(estimated_cost_cents), 0)
+		 FROM sessions
+		 WHERE json_extract(json, '$.pool_id') = ?
+		   AND json_extract(json, '$.started_at') >= ?
+		   AND state IN ('completed','failed','blocked')`,
+		poolID, since.UTC().Format(time.RFC3339)).Scan(&total)
+	return total, err
+}
+
+// GoalSpendCents returns the (totalCents, runCount) for all terminal sessions
+// belonging to issues assigned to the given goal since the supplied time
+// (issue #101).
+func (s *Store) GoalSpendCents(goalID string, since time.Time) (float64, int, error) {
+	if s == nil || s.DB == nil {
+		return 0, 0, nil
+	}
+	row := s.DB.QueryRow(
+		`SELECT COALESCE(SUM(s.estimated_cost_cents), 0), COUNT(*)
+		 FROM sessions s
+		 JOIN issues i
+		   ON s.workspace_id = i.workspace_id AND s.issue_number = i.number
+		 WHERE json_extract(i.json, '$.goal_id') = ?
+		   AND json_extract(s.json, '$.started_at') >= ?
+		   AND s.state IN ('completed','failed','blocked')`,
+		goalID, since.UTC().Format(time.RFC3339))
+	var totalCents float64
+	var count int
+	if err := row.Scan(&totalCents, &count); err != nil {
+		return 0, 0, err
+	}
+	return totalCents, count, nil
+}
+
+// WorkspaceSpendCents returns the sum of estimated_cost_cents for all terminal
+// sessions in the given workspace since the supplied time (issue #101).
+func (s *Store) WorkspaceSpendCents(workspaceID string, since time.Time) (float64, error) {
+	if s == nil || s.DB == nil {
+		return 0, nil
+	}
+	var total float64
+	err := s.DB.QueryRow(
+		`SELECT COALESCE(SUM(estimated_cost_cents), 0)
+		 FROM sessions
+		 WHERE workspace_id = ?
+		   AND json_extract(json, '$.started_at') >= ?
+		   AND state IN ('completed','failed','blocked')`,
+		workspaceID, since.UTC().Format(time.RFC3339)).Scan(&total)
+	return total, err
+}
+
 // SessionTranscriptPath returns the spool path for a session id.
 func (s *Store) SessionTranscriptPath(id string) (string, error) {
 	if s == nil || s.DB == nil {
