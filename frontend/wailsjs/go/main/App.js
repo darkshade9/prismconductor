@@ -254,6 +254,10 @@ export function SavePool(arg1) {
   return window['go']['main']['App']['SavePool'](arg1);
 }
 
+export function SelfHeal(arg1, arg2) {
+  return window['go']['main']['App']['SelfHeal'](arg1, arg2);
+}
+
 export function SendInput(arg1, arg2) {
   return window['go']['main']['App']['SendInput'](arg1, arg2);
 }

@@ -49,6 +49,15 @@ type SkillProfile struct {
 	// SkillsMigrated is set true after PerStage has been synthesized from
 	// the legacy Mode/UseConductor* fields on first launch.
 	SkillsMigrated bool `json:"skills_migrated,omitempty"`
+
+	// AutoSelfHeal controls whether the system auto-spawns a Continue-Work
+	// session when PR check runs fail (issue #116). Nil/absent means enabled
+	// (default true) — the Self-heal button is always shown regardless.
+	AutoSelfHeal *bool `json:"auto_self_heal,omitempty"`
+
+	// SelfHealAttemptCap is the maximum number of consecutive auto-spawned
+	// self-heal sessions per PR HEAD SHA. 0 means use the default (3).
+	SelfHealAttemptCap int `json:"self_heal_attempt_cap,omitempty"`
 }
 
 // SkillForStage returns the SkillRef configured for the given stage, if any.

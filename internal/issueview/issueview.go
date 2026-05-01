@@ -15,15 +15,27 @@ type PoolBadge struct {
 	Provider string `json:"provider"`
 }
 
+// TestsFailingInfo is populated when a REVIEW-column PR's GitHub Actions checks
+// are failing. Cleared automatically when checks recover or the PR merges (#116).
+type TestsFailingInfo struct {
+	FailingJobs         []string `json:"failing_jobs"`
+	FailingCheckRunURLs []string `json:"failing_check_run_urls"`
+	HeadSHA             string   `json:"head_sha"`
+	SelfHealAttempts    int      `json:"self_heal_attempts,omitempty"`
+	AttemptCap          int      `json:"attempt_cap,omitempty"`
+	MaxAttemptsReached  bool     `json:"max_attempts_reached,omitempty"`
+}
+
 // IssueView is the single canonical read model for a board card. Assembled on
 // the backend and emitted as bus.issue_view_updated on every change so the
 // frontend can render without reconciling multiple stores.
 type IssueView struct {
-	Issue         types.Issue       `json:"issue"`
-	LatestPlan    *types.Plan       `json:"latest_plan,omitempty"`
-	ActiveSession *types.Session    `json:"active_session,omitempty"`
-	PausedSession *types.Session    `json:"paused_session,omitempty"`
-	LastFailure   *types.Session    `json:"last_failure,omitempty"`
-	PoolBadge     *PoolBadge        `json:"pool_badge,omitempty"`
-	DerivedColumn types.BoardColumn `json:"derived_column"`
+	Issue            types.Issue       `json:"issue"`
+	LatestPlan       *types.Plan       `json:"latest_plan,omitempty"`
+	ActiveSession    *types.Session    `json:"active_session,omitempty"`
+	PausedSession    *types.Session    `json:"paused_session,omitempty"`
+	LastFailure      *types.Session    `json:"last_failure,omitempty"`
+	PoolBadge        *PoolBadge        `json:"pool_badge,omitempty"`
+	DerivedColumn    types.BoardColumn `json:"derived_column"`
+	TestsFailingInfo *TestsFailingInfo `json:"tests_failing_info,omitempty"`
 }
