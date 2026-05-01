@@ -78,11 +78,13 @@ func nullableString(s string) any {
 // LoadRunningSessions returns sessions that were running at last shutdown.
 // Used for re-attach on startup (§15.3). Includes paused_for_question rows so
 // the answer-file watcher can pick them up post-restart (#17).
+// Acknowledged blocked/failed sessions (issue #88) are excluded — they were
+// cleared by the user and should not resurrect the red overlay on restart.
 func (s *Store) LoadRunningSessions() ([]types.Session, string, error) {
 	if s == nil || s.DB == nil {
 		return nil, "", nil
 	}
-	rows, err := s.DB.Query(`SELECT json, transcript_path, pending_question_id, transcript_offset FROM sessions WHERE state IN ('running','waiting_for_input','blocked','paused_for_question')`)
+	rows, err := s.DB.Query(`SELECT json, transcript_path, pending_question_id, transcript_offset FROM sessions WHERE state IN ('running','waiting_for_input','blocked','paused_for_question') AND (acknowledged_at IS NULL OR acknowledged_at = 0)`)
 	if err != nil {
 		return nil, "", err
 	}
@@ -174,6 +176,7 @@ func (s *Store) HasRecentFailedPlanSession(workspaceID string, issueNumber int, 
 		FROM sessions
 		WHERE workspace_id = ? AND issue_number = ?
 		  AND json_extract(json, '$.mode') = 'plan'
+		  AND (acknowledged_at IS NULL OR acknowledged_at = 0)
 		ORDER BY json_extract(json, '$.started_at') DESC
 		LIMIT 1`, workspaceID, issueNumber)
 	var endedAt sql.NullString
@@ -256,4 +259,44 @@ func (s *Store) SessionTranscriptPath(id string) (string, error) {
 	var path string
 	err := s.DB.QueryRow(`SELECT transcript_path FROM sessions WHERE id = ?`, id).Scan(&path)
 	return path, err
+}
+
+// AcknowledgeLatestFailure marks the most recent unacknowledged blocked/failed
+// session for the given issue as acknowledged (issue #88). The session row is
+// preserved for audit; only acknowledged_at is set so the UI stops showing the
+// blocked overlay. Returns nil session (no error) when no matching row exists.
+func (s *Store) AcknowledgeLatestFailure(workspaceID string, issueNumber int) (*types.Session, error) {
+	if s == nil || s.DB == nil {
+		return nil, errors.New("store unavailable")
+	}
+	now := time.Now().Unix()
+	var id, raw string
+	err := s.DB.QueryRow(`
+		SELECT id, json FROM sessions
+		WHERE workspace_id = ? AND issue_number = ?
+		  AND state IN ('blocked','failed')
+		  AND (acknowledged_at IS NULL OR acknowledged_at = 0)
+		ORDER BY json_extract(json, '$.started_at') DESC
+		LIMIT 1`, workspaceID, issueNumber).Scan(&id, &raw)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var sess types.Session
+	if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+		return nil, err
+	}
+	sess.AcknowledgedAt = &now
+	updated, err := json.Marshal(&sess)
+	if err != nil {
+		return nil, err
+	}
+	_, err = s.DB.Exec(`UPDATE sessions SET acknowledged_at = ?, json = ? WHERE id = ?`,
+		now, string(updated), id)
+	if err != nil {
+		return nil, err
+	}
+	return &sess, nil
 }

@@ -214,6 +214,14 @@ CREATE TABLE IF NOT EXISTS pools (
 			}
 		}
 	}
+	// Issue #88: acknowledged_at records when the user cleared a blocked/failed
+	// session. NULL = not yet acknowledged; non-null = Unix epoch of the clear.
+	// The session row is preserved for audit; the UI ignores acknowledged rows.
+	if _, err := s.DB.Exec(`ALTER TABLE sessions ADD COLUMN acknowledged_at INTEGER`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
 	return nil
 }
 

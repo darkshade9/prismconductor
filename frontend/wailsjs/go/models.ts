@@ -1362,11 +1362,12 @@ export namespace types {
 	    blocked_reason?: string;
 	    pending_question_id?: string;
 	    pool_id?: string;
-	
+	    acknowledged_at?: number;
+
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1381,6 +1382,7 @@ export namespace types {
 	        this.blocked_reason = source["blocked_reason"];
 	        this.pending_question_id = source["pending_question_id"];
 	        this.pool_id = source["pool_id"];
+	        this.acknowledged_at = source["acknowledged_at"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

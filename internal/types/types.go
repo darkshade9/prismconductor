@@ -308,6 +308,12 @@ type Session struct {
 	// rows spawned before the field was introduced.
 	PoolID string `json:"pool_id,omitempty"`
 
+	// AcknowledgedAt is set (Unix epoch) when the user explicitly clears a
+	// blocked/failed session via ClearIssueFailure or by dragging the card to
+	// TODO/PLAN. The session row is preserved for audit; the UI ignores
+	// acknowledged sessions when computing lastFailure/activeSession overlays.
+	AcknowledgedAt *int64 `json:"acknowledged_at,omitempty"`
+
 	// TranscriptOffset is the byte offset into the transcript file of the
 	// last fully-processed line (issue #54). Lives on the sessions column,
 	// excluded from the JSON blob to keep external snapshots schema-stable.
