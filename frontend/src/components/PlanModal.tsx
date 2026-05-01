@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ApprovePlan, LatestPlan, RejectPlan, SetIssueLabels, SubmitAnswers, WriteAnswersOnly } from "../../wailsjs/go/main/App";
+import { ApprovePlan, LatestPlan, PlanCostEstimate, RejectPlan, SetIssueLabels, SubmitAnswers, WriteAnswersOnly } from "../../wailsjs/go/main/App";
 import { main, types } from "../../wailsjs/go/models";
 import { useIssueStore } from "../stores/issueStore";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
@@ -34,6 +34,7 @@ export function PlanModal({
   const refreshLabels = useLabelsStore((s) => s.refresh);
   const labelsCache = useLabelsStore((s) => (issue ? s.byWorkspace[issue.workspace_id] ?? EMPTY_LABELS : EMPTY_LABELS));
   const [plan, setPlan] = useState<types.Plan | null>(null);
+  const [costEstimate, setCostEstimate] = useState<main.CostEstimate | null>(null);
   const [answers, setAnswers] = useState<AnswerState>(emptyAnswers());
   const [refineText, setRefineText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -55,6 +56,7 @@ export function PlanModal({
     setError(null);
     setAnswers(emptyAnswers());
     setRefineText("");
+    setCostEstimate(null);
     LatestPlan(issue.workspace_id, issue.number)
       .then((p) => {
         setPlan(p ?? null);
@@ -64,6 +66,9 @@ export function PlanModal({
       })
       .catch((e) => setError(String(e?.message ?? e)))
       .finally(() => setLoading(false));
+    PlanCostEstimate(issue.workspace_id, issue.number)
+      .then((est) => setCostEstimate(est ?? null))
+      .catch(() => { /* non-fatal — cost estimate is best-effort */ });
     refreshLabels(issue.workspace_id);
   }, [open, issue?.workspace_id, issue?.number, refreshLabels]);
 
@@ -181,6 +186,20 @@ export function PlanModal({
               <span>Complexity: {plan.estimated_complexity || "—"}</span>
               <span>{ageMin !== null ? `Generated ${ageMin}m ago` : ""}</span>
             </>
+          )}
+          {costEstimate && (
+            <span
+              className="ml-auto text-slate-400"
+              title={
+                costEstimate.has_rate
+                  ? `Estimated execute cost (~${costEstimate.tokens.toLocaleString()} tokens × ${costEstimate.model || "unknown model"} rates). Actual cost recorded after the session ends.`
+                  : `No rate configured for model "${costEstimate.model || "(unknown)"}". Add rates in Settings to see cost estimates.`
+              }
+            >
+              {costEstimate.has_rate
+                ? `~$${costEstimate.cost_usd.toFixed(4)} est.`
+                : "cost: —"}
+            </span>
           )}
         </div>
 

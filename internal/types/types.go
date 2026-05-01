@@ -223,6 +223,11 @@ type Issue struct {
 	WorkSeconds        int64 `json:"work_seconds,omitempty"`
 	WorkSecondsPlan    int64 `json:"work_seconds_plan,omitempty"`
 	WorkSecondsExecute int64 `json:"work_seconds_execute,omitempty"`
+
+	// CostUSD is the cumulative LLM spend across all sessions for this issue
+	// (issue #47). Accumulated from Claude stream-json result events; preserved
+	// across GitHub poll re-saves like WorkSeconds.
+	CostUSD float64 `json:"cost_usd,omitempty"`
 }
 
 type BoardColumn string

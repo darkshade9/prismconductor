@@ -226,7 +226,10 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         onContinue={() => setContinueOpen(true)}
         onClearFailure={() => ClearIssueFailure(issue.workspace_id, issue.number).catch((err: any) => alert(String(err?.message ?? err)))}
       />
-      <div className="flex justify-end mt-0.5">
+      <div className="flex justify-end items-center gap-2 mt-0.5">
+        {(issue.cost_usd ?? 0) > 0 && (
+          <CostChip costUSD={issue.cost_usd!} />
+        )}
         <WorkTimerChip
           baseSecs={issue.work_seconds ?? 0}
           planBaseSecs={issue.work_seconds_plan ?? 0}
@@ -289,6 +292,17 @@ function formatWorkDuration(s: number): string {
   const d = Math.floor(s / 86400);
   const h = Math.floor((s % 86400) / 3600);
   return `${d}d${h.toString().padStart(2, "0")}h`;
+}
+
+function CostChip({ costUSD }: { costUSD: number }) {
+  return (
+    <span
+      className="text-[10px] text-slate-500 font-mono tabular-nums"
+      title={`Cumulative LLM cost: $${costUSD.toFixed(4)}`}
+    >
+      ${costUSD < 0.01 ? costUSD.toFixed(4) : costUSD.toFixed(2)}
+    </span>
+  );
 }
 
 function WorkTimerChip({

@@ -77,6 +77,10 @@ func (s *Store) SaveIssue(iss types.Issue) (bool, error) {
 				iss.WorkSecondsPlan = prev.WorkSecondsPlan
 				iss.WorkSecondsExecute = prev.WorkSecondsExecute
 			}
+			// Preserve accumulated LLM cost (issue #47).
+			if prev.CostUSD > 0 {
+				iss.CostUSD = prev.CostUSD
+			}
 		}
 	}
 	iss.Column = col
@@ -347,6 +351,41 @@ func (s *Store) AccumulateIssueWork(workspaceID string, number int, mode types.S
 	case types.ModeExecute:
 		iss.WorkSecondsExecute += seconds
 	}
+	b, err := json.Marshal(iss)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE issues SET json = ? WHERE workspace_id = ? AND number = ?`, string(b), workspaceID, number); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// AccumulateIssueCost adds LLM token counts and dollar cost to the issue's
+// cost_usd field (issue #47). Called when a session ends and its result event
+// carried total_cost_usd data. Zero costUSD is a no-op.
+func (s *Store) AccumulateIssueCost(workspaceID string, number int, costUSD float64) error {
+	if s == nil || s.DB == nil {
+		return errors.New("store unavailable")
+	}
+	if costUSD <= 0 {
+		return nil
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var raw string
+	if err := tx.QueryRow(`SELECT json FROM issues WHERE workspace_id = ? AND number = ?`, workspaceID, number).Scan(&raw); err != nil {
+		return err
+	}
+	var iss types.Issue
+	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+		return err
+	}
+	iss.CostUSD += costUSD
 	b, err := json.Marshal(iss)
 	if err != nil {
 		return err
