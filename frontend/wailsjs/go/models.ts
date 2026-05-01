@@ -1253,11 +1253,11 @@ export namespace types {
 	    created_at: any;
 	    priority: number;
 	    temperature?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Pool(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
