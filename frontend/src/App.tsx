@@ -117,6 +117,20 @@ function App() {
     });
     const offGoalUpd = EventsOn("bus.goal_updated", () => refreshGoals());
     const offIssue = EventsOn("bus.issue_added", () => refreshIssues(selectedWorkspace ?? ""));
+    // pending_pool_* events flip Issue.WaitingForPool on the server side.
+    // Without re-fetching here, the card stays in the pink "waiting for
+    // available agent pool" state visually even after the orchestrator has
+    // drained the queue, spawned the worker, and moved the card to
+    // IN_PROGRESS — the pool counter will (correctly) show the slot taken
+    // while the card display is stale.
+    const offPendingEnq = EventsOn(
+      "bus.pending_pool_enqueued",
+      () => refreshIssues(selectedWorkspace ?? ""),
+    );
+    const offPendingDeq = EventsOn(
+      "bus.pending_pool_dequeued",
+      () => refreshIssues(selectedWorkspace ?? ""),
+    );
     // Don't hijack an open PlanModal when a different card's plan arrives.
     // Card glow + toast carry the signal; queue the arrival and drain on close.
     // Any future auto-open path (bus.plan_revised, etc.) must use the same
@@ -211,6 +225,8 @@ function App() {
       if (typeof offGoal === "function") offGoal();
       if (typeof offGoalUpd === "function") offGoalUpd();
       if (typeof offIssue === "function") offIssue();
+      if (typeof offPendingEnq === "function") offPendingEnq();
+      if (typeof offPendingDeq === "function") offPendingDeq();
       if (typeof offPlanReady === "function") offPlanReady();
       if (typeof offPROpened === "function") offPROpened();
       if (typeof offPRMerged === "function") offPRMerged();
