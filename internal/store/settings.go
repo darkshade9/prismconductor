@@ -1,6 +1,9 @@
 package store
 
-import "errors"
+import (
+	"encoding/json"
+	"errors"
+)
 
 // GetSetting returns the value for a key, or "" if missing.
 func (s *Store) GetSetting(key string) (string, error) {
@@ -33,6 +36,43 @@ func (s *Store) DeleteSetting(key string) error {
 	}
 	_, err := s.DB.Exec(`DELETE FROM settings WHERE key = ?`, key)
 	return err
+}
+
+// GetLabelFilter returns the persisted label filter selection for a workspace.
+// Returns empty labels slice and "or" mode when the key is absent.
+func (s *Store) GetLabelFilter(workspaceID string) (labels []string, mode string, err error) {
+	labelsStr, err := s.GetSetting("label_filter:" + workspaceID + ":labels")
+	if err != nil {
+		return []string{}, "or", err
+	}
+	mode, _ = s.GetSetting("label_filter:" + workspaceID + ":mode")
+	if labelsStr != "" {
+		if jerr := json.Unmarshal([]byte(labelsStr), &labels); jerr != nil {
+			labels = []string{}
+		}
+	}
+	if labels == nil {
+		labels = []string{}
+	}
+	if mode == "" {
+		mode = "or"
+	}
+	return labels, mode, nil
+}
+
+// SetLabelFilter persists the label filter selection for a workspace.
+func (s *Store) SetLabelFilter(workspaceID string, labels []string, mode string) error {
+	if labels == nil {
+		labels = []string{}
+	}
+	b, err := json.Marshal(labels)
+	if err != nil {
+		return err
+	}
+	if err := s.SetSetting("label_filter:"+workspaceID+":labels", string(b)); err != nil {
+		return err
+	}
+	return s.SetSetting("label_filter:"+workspaceID+":mode", mode)
 }
 
 // AllSettings returns the full kv table as a map.

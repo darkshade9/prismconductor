@@ -1116,6 +1116,34 @@ func (a *App) GetPollInterval() int {
 	return n
 }
 
+// --- Label filter (#110) ---
+
+// LabelFilterState is the shape returned by GetLabelFilter and consumed by the frontend store.
+type LabelFilterState struct {
+	Labels []string `json:"labels"`
+	Mode   string   `json:"mode"`
+}
+
+// GetLabelFilter returns the persisted label filter selection for a workspace.
+func (a *App) GetLabelFilter(workspaceID string) (LabelFilterState, error) {
+	if a.store == nil {
+		return LabelFilterState{Labels: []string{}, Mode: "or"}, nil
+	}
+	labels, mode, err := a.store.GetLabelFilter(workspaceID)
+	if err != nil {
+		return LabelFilterState{Labels: []string{}, Mode: "or"}, err
+	}
+	return LabelFilterState{Labels: labels, Mode: mode}, nil
+}
+
+// SetLabelFilter persists the label filter selection for a workspace.
+func (a *App) SetLabelFilter(workspaceID string, labels []string, mode string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	return a.store.SetLabelFilter(workspaceID, labels, mode)
+}
+
 // --- Labels (#14) ---
 
 // ListLabels returns the cached label set for a workspace. The poller fans

@@ -20,6 +20,7 @@ import { useIssueStore, Column as ColumnID } from "../stores/issueStore";
 import { useIssueViewStore } from "../stores/useIssueViewStore";
 import { matchesQuery } from "../lib/matchesQuery";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { useLabelFilterStore } from "../stores/useLabelFilterStore";
 import { Card } from "./Card";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { Column } from "./Column";
@@ -60,6 +61,7 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
   const { issues, refresh, applyLocalMove, applyLocalReorder, moveColumn, reorder, searchQuery } = useIssueStore();
   const loadIssueViews = useIssueViewStore((s) => s.loadForWorkspace);
   const { workspaces, selectedID } = useWorkspaceStore();
+  const { selected: labelSelected, mode: labelMode } = useLabelFilterStore();
   const [filteredTodoNums, setFilteredTodoNums] = useState<Set<string> | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   // Capture the source column at drag-start. onDragOver does an optimistic
@@ -113,17 +115,26 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
       review: [],
       done: [],
     };
+    const labelSet = labelSelected.length > 0 ? new Set(labelSelected) : null;
     for (const i of issues) {
       const col = (i.column || "todo") as ColumnID;
       if (col === "todo" && filteredTodoNums && !filteredTodoNums.has(cardID(i))) continue;
       if (!matchesQuery(i.title, searchQuery)) continue;
+      if (labelSet) {
+        const cardLabels = i.labels ?? [];
+        const pass =
+          labelMode === "and"
+            ? [...labelSet].every((l) => cardLabels.includes(l))
+            : cardLabels.some((l) => labelSet.has(l));
+        if (!pass) continue;
+      }
       if (out[col]) out[col].push(i);
     }
     // ListIssues already returns by (column, manual_order, number). For TODO, if
     // every item shares manual_order=0 (no human reorder yet), use priority.
     out.todo = sortTodoByPriority(out.todo);
     return out;
-  }, [issues, filteredTodoNums, searchQuery]);
+  }, [issues, filteredTodoNums, searchQuery, labelSelected, labelMode]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
