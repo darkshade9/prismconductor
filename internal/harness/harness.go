@@ -161,17 +161,25 @@ func Execute(ctx context.Context, r Run) error {
 		}
 
 		if r.Budget.MaxInputTokens > 0 && state.InputTokens() >= r.Budget.MaxInputTokens {
+			tokenCapSource := "global DefaultBudget"
+			if r.Pool.MaxInputTokens != nil {
+				tokenCapSource = fmt.Sprintf("per-pool override on %q", r.Pool.Name)
+			}
 			em.assistantMessage(fmt.Sprintf(
-				"BLOCKED: harness input-token cap reached (%d of %d cumulative). This is PrismConductor's local safety budget, NOT a provider rate-limit or account balance issue. Raise harness.DefaultBudget().MaxInputTokens or per-pool budget if the model genuinely needs more context.",
-				state.InputTokens(), r.Budget.MaxInputTokens), nil)
+				"BLOCKED: harness input-token cap reached (%d of %d cumulative; source: %s). This is PrismConductor's local safety budget, NOT a provider rate-limit or account balance issue. Raise the cap via the pool's Budget settings or harness.DefaultBudget().MaxInputTokens.",
+				state.InputTokens(), r.Budget.MaxInputTokens, tokenCapSource), nil)
 			em.done()
 			return nil
 		}
 	}
 
+	turnCapSource := "global DefaultBudget"
+	if r.Pool.MaxTurns != nil {
+		turnCapSource = fmt.Sprintf("per-pool override on %q", r.Pool.Name)
+	}
 	em.assistantMessage(fmt.Sprintf(
-		"BLOCKED: harness turn cap reached (%d turns). This is PrismConductor's local safety budget, NOT a provider issue. Raise harness.DefaultBudget().MaxTurns if the model needs more iterations.",
-		r.Budget.MaxTurns), nil)
+		"BLOCKED: harness turn cap reached (%d turns; source: %s). This is PrismConductor's local safety budget, NOT a provider issue. Raise the cap via the pool's Budget settings or harness.DefaultBudget().MaxTurns.",
+		r.Budget.MaxTurns, turnCapSource), nil)
 	em.done()
 	return nil
 }

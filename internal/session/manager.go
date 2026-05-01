@@ -1109,3 +1109,24 @@ func envSpecToSlice(env types.EnvSpec) []string {
 	}
 	return out
 }
+
+// poolBudget builds the effective harness.Budget for a pool by overlaying
+// any per-pool overrides on top of DefaultBudget() (issue #89). Nil fields
+// fall back to the global default — existing pools with no overrides are
+// unaffected.
+func poolBudget(p types.Pool) harness.Budget {
+	b := harness.DefaultBudget()
+	if p.MaxTurns != nil {
+		b.MaxTurns = *p.MaxTurns
+	}
+	if p.MaxInputTokens != nil {
+		b.MaxInputTokens = *p.MaxInputTokens
+	}
+	if p.BashTimeout != nil {
+		b.BashTimeout = *p.BashTimeout
+	}
+	if p.OutputCap != nil {
+		b.OutputCap = *p.OutputCap
+	}
+	return b
+}

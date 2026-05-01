@@ -1253,6 +1253,10 @@ export namespace types {
 	    created_at: any;
 	    priority: number;
 	    temperature?: number;
+	    max_turns?: number;
+	    max_input_tokens?: number;
+	    bash_timeout?: number;
+	    output_cap?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Pool(source);
@@ -1272,6 +1276,10 @@ export namespace types {
 	        this.created_at = this.convertValues(source["created_at"], null);
 	        this.priority = source["priority"];
 	        this.temperature = source["temperature"];
+	        this.max_turns = source["max_turns"];
+	        this.max_input_tokens = source["max_input_tokens"];
+	        this.bash_timeout = source["bash_timeout"];
+	        this.output_cap = source["output_cap"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

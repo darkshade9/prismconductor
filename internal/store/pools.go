@@ -23,7 +23,7 @@ func (s *Store) ListPools() ([]types.Pool, error) {
 		return nil, errors.New("store unavailable")
 	}
 	rows, err := s.DB.Query(`
-SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature
+SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap
 FROM pools
 ORDER BY priority ASC, created_at ASC, id ASC`)
 	if err != nil {
@@ -47,7 +47,7 @@ func (s *Store) ListPoolsByRole(role types.Role) ([]types.Pool, error) {
 		return nil, errors.New("store unavailable")
 	}
 	rows, err := s.DB.Query(`
-SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature
+SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap
 FROM pools
 WHERE role = ?
 ORDER BY priority ASC, created_at ASC, id ASC`, string(role))
@@ -72,7 +72,7 @@ func (s *Store) GetPool(id string) (types.Pool, error) {
 		return types.Pool{}, errors.New("store unavailable")
 	}
 	row := s.DB.QueryRow(`
-SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature
+SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap
 FROM pools WHERE id = ?`, id)
 	return scanPool(row)
 }
@@ -116,9 +116,14 @@ func (s *Store) SavePool(p types.Pool) error {
 	if p.Enabled {
 		enabled = 1
 	}
+	var bashTimeoutMs *int64
+	if p.BashTimeout != nil {
+		ms := p.BashTimeout.Milliseconds()
+		bashTimeoutMs = &ms
+	}
 	_, err := s.DB.Exec(`
-INSERT INTO pools (id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pools (id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     name = excluded.name,
     provider = excluded.provider,
@@ -129,9 +134,14 @@ ON CONFLICT(id) DO UPDATE SET
     api_key = excluded.api_key,
     role = excluded.role,
     priority = excluded.priority,
-    temperature = excluded.temperature`,
+    temperature = excluded.temperature,
+    max_turns = excluded.max_turns,
+    max_input_tokens = excluded.max_input_tokens,
+    bash_timeout_ms = excluded.bash_timeout_ms,
+    output_cap = excluded.output_cap`,
 		p.ID, p.Name, string(p.Provider), p.Endpoint, p.Model,
-		p.Capacity, enabled, p.APIKey, string(p.Role), p.CreatedAt.Unix(), p.Priority, p.Temperature)
+		p.Capacity, enabled, p.APIKey, string(p.Role), p.CreatedAt.Unix(), p.Priority, p.Temperature,
+		p.MaxTurns, p.MaxInputTokens, bashTimeoutMs, p.OutputCap)
 	return err
 }
 
@@ -169,8 +179,10 @@ func scanPool(r rowScanner) (types.Pool, error) {
 	var enabled int
 	var createdAt int64
 	var temperature sql.NullFloat64
+	var maxTurns, maxInputTokens, bashTimeoutMs, outputCap sql.NullInt64
 	if err := r.Scan(&p.ID, &p.Name, &provider, &p.Endpoint, &p.Model,
-		&p.Capacity, &enabled, &p.APIKey, &role, &createdAt, &p.Priority, &temperature); err != nil {
+		&p.Capacity, &enabled, &p.APIKey, &role, &createdAt, &p.Priority, &temperature,
+		&maxTurns, &maxInputTokens, &bashTimeoutMs, &outputCap); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return types.Pool{}, fmt.Errorf("pool not found")
 		}
@@ -185,6 +197,22 @@ func scanPool(r rowScanner) (types.Pool, error) {
 	p.CreatedAt = time.Unix(createdAt, 0)
 	if temperature.Valid {
 		p.Temperature = &temperature.Float64
+	}
+	if maxTurns.Valid {
+		v := int(maxTurns.Int64)
+		p.MaxTurns = &v
+	}
+	if maxInputTokens.Valid {
+		v := int(maxInputTokens.Int64)
+		p.MaxInputTokens = &v
+	}
+	if bashTimeoutMs.Valid {
+		d := time.Duration(bashTimeoutMs.Int64) * time.Millisecond
+		p.BashTimeout = &d
+	}
+	if outputCap.Valid {
+		v := int(outputCap.Int64)
+		p.OutputCap = &v
 	}
 	return p, nil
 }

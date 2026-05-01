@@ -201,6 +201,19 @@ CREATE TABLE IF NOT EXISTS pools (
 			return err
 		}
 	}
+	// Issue #89: per-pool harness budget overrides. NULL = use DefaultBudget() value.
+	for _, col := range []string{
+		`ALTER TABLE pools ADD COLUMN max_turns INTEGER`,
+		`ALTER TABLE pools ADD COLUMN max_input_tokens INTEGER`,
+		`ALTER TABLE pools ADD COLUMN bash_timeout_ms INTEGER`,
+		`ALTER TABLE pools ADD COLUMN output_cap INTEGER`,
+	} {
+		if _, err := s.DB.Exec(col); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
