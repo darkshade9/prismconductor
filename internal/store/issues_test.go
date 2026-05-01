@@ -604,3 +604,187 @@ func TestAccumulateIssueWorkTimestampPreserved(t *testing.T) {
 		t.Errorf("title changed after AccumulateIssueWork, got %q", issues[0].Title)
 	}
 }
+
+func TestMarkIssueClosedSkipsArchived(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      1,
+		State:       "open",
+		Column:      types.ColDone,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Archive the card first.
+	if _, err := s.ArchiveDone("ws1"); err != nil {
+		t.Fatal(err)
+	}
+	// MarkIssueClosed must be a no-op for archived cards.
+	if err := s.MarkIssueClosed("ws1", 1); err != nil {
+		t.Fatalf("MarkIssueClosed: %v", err)
+	}
+	// The card should still be archived.
+	archived, err := s.ListArchivedIssues("ws1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archived) != 1 {
+		t.Errorf("expected archived card to remain, got %d archived rows", len(archived))
+	}
+}
+
+func TestReconcileClosedIssuesSkipsArchived(t *testing.T) {
+	s := newTestStore(t)
+	// Closed issue stuck in TODO — should be reconciled.
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      2,
+		State:       "closed",
+		Column:      types.ColTodo,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Archived closed card — must be ignored by reconcile.
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      3,
+		State:       "closed",
+		Column:      types.ColDone,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ArchiveDone("ws1"); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.ReconcileClosedIssues()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only issue #2 should be reconciled; #3 is archived and must be skipped.
+	if n != 1 {
+		t.Errorf("expected 1 reconciled, got %d", n)
+	}
+	archived, _ := s.ListArchivedIssues("ws1")
+	if len(archived) != 1 || archived[0].Number != 3 {
+		t.Errorf("archived card should still be #3, got %v", archived)
+	}
+}
+
+func TestArchiveClosedByAgeBasic(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      10,
+		State:       "closed",
+		Column:      types.ColDone,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Manually set closed_at to 8 days ago.
+	past := time.Now().UTC().Add(-8 * 24 * time.Hour).Unix()
+	if _, err := s.DB.Exec(`UPDATE issues SET closed_at = ? WHERE workspace_id = 'ws1' AND number = 10`, past); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.ArchiveClosedByAge("ws1", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 archived, got %d", n)
+	}
+}
+
+func TestArchiveClosedByAgeSkipsRecent(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      11,
+		State:       "closed",
+		Column:      types.ColDone,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// closed_at only 2 days ago — should NOT be archived with a 7-day threshold.
+	recent := time.Now().UTC().Add(-2 * 24 * time.Hour).Unix()
+	if _, err := s.DB.Exec(`UPDATE issues SET closed_at = ? WHERE workspace_id = 'ws1' AND number = 11`, recent); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.ArchiveClosedByAge("ws1", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 archived (too recent), got %d", n)
+	}
+}
+
+func TestArchiveClosedByAgeSkipsNullClosedAt(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      12,
+		State:       "closed",
+		Column:      types.ColDone,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// closed_at is NULL — must not be archived.
+	n, err := s.ArchiveClosedByAge("ws1", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 archived (null closed_at), got %d", n)
+	}
+}
+
+func TestArchiveClosedByAgeSkipsNonDone(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      13,
+		State:       "closed",
+		Column:      types.ColInProgress,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().UTC().Add(-10 * 24 * time.Hour).Unix()
+	if _, err := s.DB.Exec(`UPDATE issues SET closed_at = ? WHERE workspace_id = 'ws1' AND number = 13`, past); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.ArchiveClosedByAge("ws1", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 archived (non-done column), got %d", n)
+	}
+}
+
+func TestMarkIssueClosedSetsClosedAt(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      20,
+		State:       "open",
+		Column:      types.ColTodo,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now().UTC().Add(-time.Second)
+	if err := s.MarkIssueClosed("ws1", 20); err != nil {
+		t.Fatal(err)
+	}
+	var closedAt *int64
+	var raw int64
+	err := s.DB.QueryRow(`SELECT closed_at FROM issues WHERE workspace_id = 'ws1' AND number = 20`).Scan(&raw)
+	if err == nil {
+		closedAt = &raw
+	}
+	if closedAt == nil {
+		t.Fatal("expected closed_at to be set, got NULL")
+	}
+	if *closedAt < before.Unix() {
+		t.Errorf("closed_at %d is before test start %d", *closedAt, before.Unix())
+	}
+}

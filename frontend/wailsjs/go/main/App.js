@@ -82,6 +82,10 @@ export function GetIssueView(arg1, arg2) {
   return window['go']['main']['App']['GetIssueView'](arg1, arg2);
 }
 
+export function GetLabelFilter(arg1) {
+  return window['go']['main']['App']['GetLabelFilter'](arg1);
+}
+
 export function GetMidRunQuestion(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetMidRunQuestion'](arg1, arg2, arg3);
 }
@@ -242,6 +246,10 @@ export function ResetPoolCounters() {
   return window['go']['main']['App']['ResetPoolCounters']();
 }
 
+export function RunAutoArchiveNow(arg1) {
+  return window['go']['main']['App']['RunAutoArchiveNow'](arg1);
+}
+
 export function RunOrchestrator() {
   return window['go']['main']['App']['RunOrchestrator']();
 }
@@ -252,6 +260,10 @@ export function SaveGoal(arg1) {
 
 export function SavePool(arg1) {
   return window['go']['main']['App']['SavePool'](arg1);
+}
+
+export function SelfHeal(arg1, arg2) {
+  return window['go']['main']['App']['SelfHeal'](arg1, arg2);
 }
 
 export function SendInput(arg1, arg2) {
@@ -268,6 +280,10 @@ export function SetGoalStatus(arg1, arg2) {
 
 export function SetIssueLabels(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetIssueLabels'](arg1, arg2, arg3);
+}
+
+export function SetLabelFilter(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetLabelFilter'](arg1, arg2, arg3);
 }
 
 export function SetNotifyPrefs(arg1) {

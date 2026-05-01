@@ -10,6 +10,18 @@ import (
 	"prismconductor/internal/types"
 )
 
+// checkFailEntry is the in-memory state the Assembler keeps per issue for
+// CI check-run failures. Updated by handleEvent (bus) and SetSelfHealAttempts
+// (called from app.go after spawning a self-heal worker).
+type checkFailEntry struct {
+	info eventbus.PRChecksFailed
+	// attempts and cap are set by SetSelfHealAttempts; zero values mean
+	// no attempt has been recorded yet.
+	attempts   int
+	cap        int
+	maxReached bool
+}
+
 // issueStore is the subset of *store.Store that the Assembler needs.
 type issueStore interface {
 	LoadIssue(workspaceID string, number int) (types.Issue, error)
@@ -25,16 +37,18 @@ type Assembler struct {
 	store issueStore
 	bus   *eventbus.Bus
 
-	mu    sync.Mutex
-	cache map[string]string // "wsID#num" → last-emitted JSON
+	mu           sync.Mutex
+	cache        map[string]string          // "wsID#num" → last-emitted JSON
+	checkFails   map[string]*checkFailEntry // "wsID#num" → latest check failure
 }
 
 // New wires the Assembler to the bus. Call once at startup after the store is ready.
 func New(bus *eventbus.Bus, st issueStore) *Assembler {
 	a := &Assembler{
-		store: st,
-		bus:   bus,
-		cache: make(map[string]string),
+		store:      st,
+		bus:        bus,
+		cache:      make(map[string]string),
+		checkFails: make(map[string]*checkFailEntry),
 	}
 	bus.Subscribe(a.handleEvent)
 	return a
@@ -56,6 +70,8 @@ var issueRelevantEvents = map[eventbus.EventType]bool{
 	eventbus.EvtIssueLabelChanged:   true,
 	eventbus.EvtPendingPoolEnqueued: true,
 	eventbus.EvtPendingPoolDequeued: true,
+	eventbus.EvtPRChecksFailed:      true,
+	eventbus.EvtPRChecksRecovered:   true,
 }
 
 func (a *Assembler) handleEvent(e eventbus.Event) {
@@ -65,6 +81,30 @@ func (a *Assembler) handleEvent(e eventbus.Event) {
 	wsID, issueNum := extractIssueKey(e)
 	if wsID == "" || issueNum == 0 {
 		return
+	}
+	// Update in-memory check-failure state before reassembling so Assemble()
+	// reads the latest value.
+	switch e.Type {
+	case eventbus.EvtPRChecksFailed:
+		if p, ok := e.Payload.(eventbus.PRChecksFailed); ok {
+			key := p.WorkspaceID + "#" + strconv.Itoa(p.IssueNumber)
+			a.mu.Lock()
+			existing := a.checkFails[key]
+			if existing == nil || existing.info.HeadSHA != p.HeadSHA {
+				// New SHA or first failure — reset attempt counter.
+				a.checkFails[key] = &checkFailEntry{info: p}
+			} else {
+				existing.info = p
+			}
+			a.mu.Unlock()
+		}
+	case eventbus.EvtPRChecksRecovered, eventbus.EvtPRMerged, eventbus.EvtPRClosedUnmerged:
+		if wsID != "" && issueNum != 0 {
+			key := wsID + "#" + strconv.Itoa(issueNum)
+			a.mu.Lock()
+			delete(a.checkFails, key)
+			a.mu.Unlock()
+		}
 	}
 	a.reassembleAndEmit(wsID, issueNum)
 }
@@ -120,15 +160,51 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		break
 	}
 
+	key := workspaceID + "#" + strconv.Itoa(issueNumber)
+	a.mu.Lock()
+	cfEntry := a.checkFails[key]
+	a.mu.Unlock()
+
+	var testsFailingInfo *TestsFailingInfo
+	if cfEntry != nil {
+		testsFailingInfo = &TestsFailingInfo{
+			FailingJobs:         cfEntry.info.FailingJobs,
+			FailingCheckRunURLs: cfEntry.info.FailingCheckRunURLs,
+			HeadSHA:             cfEntry.info.HeadSHA,
+			SelfHealAttempts:    cfEntry.attempts,
+			AttemptCap:          cfEntry.cap,
+			MaxAttemptsReached:  cfEntry.maxReached,
+		}
+	}
+
 	return IssueView{
-		Issue:         iss,
-		LatestPlan:    plan,
-		ActiveSession: active,
-		PausedSession: paused,
-		LastFailure:   lastFail,
-		PoolBadge:     poolBadge,
-		DerivedColumn: derivedColumn(iss, plan, active),
+		Issue:            iss,
+		LatestPlan:       plan,
+		ActiveSession:    active,
+		PausedSession:    paused,
+		LastFailure:      lastFail,
+		PoolBadge:        poolBadge,
+		DerivedColumn:    derivedColumn(iss, plan, active),
+		TestsFailingInfo: testsFailingInfo,
 	}, nil
+}
+
+// SetSelfHealAttempts updates the in-memory self-heal attempt counter for the
+// given issue and triggers a re-emit of its IssueView. Called from app.go
+// after spawning or attempting a self-heal worker (#116).
+func (a *Assembler) SetSelfHealAttempts(workspaceID string, issueNumber, attempts, cap int, maxReached bool) {
+	key := workspaceID + "#" + strconv.Itoa(issueNumber)
+	a.mu.Lock()
+	entry := a.checkFails[key]
+	if entry != nil {
+		entry.attempts = attempts
+		entry.cap = cap
+		entry.maxReached = maxReached
+	}
+	a.mu.Unlock()
+	if entry != nil {
+		a.reassembleAndEmit(workspaceID, issueNumber)
+	}
 }
 
 // ListForWorkspace assembles an IssueView for every non-archived issue in the workspace.
@@ -244,15 +320,20 @@ func derivedColumn(iss types.Issue, plan *types.Plan, active *types.Session) typ
 }
 
 // extractIssueKey extracts (workspaceID, issueNumber) from the event payload.
-// Handles the three payload shapes used across the codebase:
-//   - eventbus.SessionStateChanged (new, issue #98)
+// Handles payload shapes used across the codebase:
+//   - eventbus.SessionStateChanged (#98)
 //   - eventbus.PendingPoolChange (#40)
+//   - eventbus.PRChecksFailed / eventbus.PRChecksRecovered (#116)
 //   - map[string]any with "workspace_id" + "issue_number" or "number" key
 func extractIssueKey(e eventbus.Event) (wsID string, issueNum int) {
 	switch p := e.Payload.(type) {
 	case eventbus.SessionStateChanged:
 		return p.WorkspaceID, p.IssueNumber
 	case eventbus.PendingPoolChange:
+		return p.WorkspaceID, p.IssueNumber
+	case eventbus.PRChecksFailed:
+		return p.WorkspaceID, p.IssueNumber
+	case eventbus.PRChecksRecovered:
 		return p.WorkspaceID, p.IssueNumber
 	case map[string]any:
 		wsID, _ = p["workspace_id"].(string)

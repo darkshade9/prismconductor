@@ -222,6 +222,14 @@ CREATE TABLE IF NOT EXISTS pools (
 			return err
 		}
 	}
+	// Issue #107: closed_at records when the GitHub issue was closed (Unix
+	// seconds; NULL = open or pre-feature). Used by ArchiveClosedByAge to prune
+	// DONE cards after N days.
+	if _, err := s.DB.Exec(`ALTER TABLE issues ADD COLUMN closed_at INTEGER`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
 	// One-time backfill: sync `$.state` inside the JSON blob to the indexed
 	// `state` column for any drifted rows. Pre-fix (UpdateSessionState only
 	// touched the indexed column), every terminal transition left

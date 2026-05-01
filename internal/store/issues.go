@@ -57,8 +57,9 @@ func (s *Store) SaveIssue(iss types.Issue) (bool, error) {
 	var existingOrder sql.NullInt64
 	var existingJSON sql.NullString
 	var existingArchivedAt sql.NullInt64
-	row := s.DB.QueryRow(`SELECT column_name, manual_order, json, archived_at FROM issues WHERE workspace_id = ? AND number = ?`, iss.WorkspaceID, iss.Number)
-	_ = row.Scan(&existingCol, &existingOrder, &existingJSON, &existingArchivedAt)
+	var existingClosedAt sql.NullInt64
+	row := s.DB.QueryRow(`SELECT column_name, manual_order, json, archived_at, closed_at FROM issues WHERE workspace_id = ? AND number = ?`, iss.WorkspaceID, iss.Number)
+	_ = row.Scan(&existingCol, &existingOrder, &existingJSON, &existingArchivedAt, &existingClosedAt)
 	if existingCol.Valid {
 		col = types.BoardColumn(existingCol.String)
 	}
@@ -121,6 +122,17 @@ func (s *Store) SaveIssue(iss types.Issue) (bool, error) {
 		iss.ArchivedAt = nil
 	}
 
+	// closed_at is also STICKY: a GitHub poll doesn't carry this; only
+	// MarkIssueClosed / MarkPRMerged set it. Preserve whatever's in the DB.
+	var newClosedAt any
+	if existingClosedAt.Valid {
+		newClosedAt = existingClosedAt.Int64
+		t := time.Unix(existingClosedAt.Int64, 0).UTC()
+		iss.ClosedAt = &t
+	} else {
+		iss.ClosedAt = nil
+	}
+
 	b, err := json.Marshal(iss)
 	if err != nil {
 		return false, err
@@ -130,14 +142,15 @@ func (s *Store) SaveIssue(iss types.Issue) (bool, error) {
 		manualOrder = existingOrder.Int64
 	}
 	if _, err := s.DB.Exec(`
-INSERT INTO issues (workspace_id, number, column_name, manual_order, json, archived_at)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO issues (workspace_id, number, column_name, manual_order, json, archived_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(workspace_id, number) DO UPDATE SET
     column_name = excluded.column_name,
     manual_order = excluded.manual_order,
     json = excluded.json,
-    archived_at = excluded.archived_at`,
-		iss.WorkspaceID, iss.Number, string(col), manualOrder, string(b), newArchivedAt); err != nil {
+    archived_at = excluded.archived_at,
+    closed_at = excluded.closed_at`,
+		iss.WorkspaceID, iss.Number, string(col), manualOrder, string(b), newArchivedAt, newClosedAt); err != nil {
 		return false, err
 	}
 	return unarchived, nil
@@ -427,7 +440,7 @@ func (s *Store) ReconcileClosedIssues() (int, error) {
 	if s == nil || s.DB == nil {
 		return 0, errors.New("store unavailable")
 	}
-	rows, err := s.DB.Query(`SELECT workspace_id, number, json FROM issues WHERE column_name != 'done'`)
+	rows, err := s.DB.Query(`SELECT workspace_id, number, json FROM issues WHERE column_name != 'done' AND archived_at IS NULL`)
 	if err != nil {
 		return 0, err
 	}
@@ -520,8 +533,9 @@ func (s *Store) MarkPRMerged(workspaceID string, number int) error {
 	defer tx.Rollback()
 
 	var raw string
-	if err := tx.QueryRow(`SELECT json FROM issues WHERE workspace_id = ? AND number = ?`,
-		workspaceID, number).Scan(&raw); err != nil {
+	var existingClosedAt sql.NullInt64
+	if err := tx.QueryRow(`SELECT json, closed_at FROM issues WHERE workspace_id = ? AND number = ?`,
+		workspaceID, number).Scan(&raw, &existingClosedAt); err != nil {
 		return err
 	}
 	var iss types.Issue
@@ -531,6 +545,18 @@ func (s *Store) MarkPRMerged(workspaceID string, number int) error {
 	iss.State = "closed"
 	iss.Column = types.ColDone
 	iss.LastError = ""
+
+	var newClosedAt any
+	if existingClosedAt.Valid {
+		newClosedAt = existingClosedAt.Int64
+		t := time.Unix(existingClosedAt.Int64, 0).UTC()
+		iss.ClosedAt = &t
+	} else {
+		now := time.Now().UTC()
+		newClosedAt = now.Unix()
+		iss.ClosedAt = &now
+	}
+
 	b, _ := json.Marshal(iss)
 
 	var maxOrder sql.NullInt64
@@ -541,8 +567,8 @@ func (s *Store) MarkPRMerged(workspaceID string, number int) error {
 		return err
 	}
 	if _, err := tx.Exec(
-		`UPDATE issues SET column_name = ?, manual_order = ?, json = ? WHERE workspace_id = ? AND number = ?`,
-		string(types.ColDone), maxOrder.Int64+1, string(b), workspaceID, number,
+		`UPDATE issues SET column_name = ?, manual_order = ?, json = ?, closed_at = ? WHERE workspace_id = ? AND number = ?`,
+		string(types.ColDone), maxOrder.Int64+1, string(b), newClosedAt, workspaceID, number,
 	); err != nil {
 		return err
 	}
@@ -589,6 +615,7 @@ func (s *Store) MarkPRClosedUnmerged(workspaceID string, number int) error {
 // bypassing SaveIssue's column-preservation logic (which would otherwise keep
 // the closed issue stuck in whatever column the user last placed it in).
 // Called by the GitHub poller when an issue is no longer in the open list.
+// Skips archived cards so archive state is never disturbed by polling.
 func (s *Store) MarkIssueClosed(workspaceID string, number int) error {
 	if s == nil || s.DB == nil {
 		return errors.New("store unavailable")
@@ -600,9 +627,15 @@ func (s *Store) MarkIssueClosed(workspaceID string, number int) error {
 	defer tx.Rollback()
 
 	var raw string
-	if err := tx.QueryRow(`SELECT json FROM issues WHERE workspace_id = ? AND number = ?`,
-		workspaceID, number).Scan(&raw); err != nil {
+	var existingArchivedAt sql.NullInt64
+	var existingClosedAt sql.NullInt64
+	if err := tx.QueryRow(`SELECT json, archived_at, closed_at FROM issues WHERE workspace_id = ? AND number = ?`,
+		workspaceID, number).Scan(&raw, &existingArchivedAt, &existingClosedAt); err != nil {
 		return err
+	}
+	// Don't touch archived cards — the next poll cycle must not resurrect them.
+	if existingArchivedAt.Valid {
+		return nil
 	}
 	var iss types.Issue
 	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
@@ -610,12 +643,56 @@ func (s *Store) MarkIssueClosed(workspaceID string, number int) error {
 	}
 	iss.State = "closed"
 	iss.Column = types.ColDone
+
+	// Record first-close time for ArchiveClosedByAge.
+	var newClosedAt any
+	if existingClosedAt.Valid {
+		newClosedAt = existingClosedAt.Int64
+		t := time.Unix(existingClosedAt.Int64, 0).UTC()
+		iss.ClosedAt = &t
+	} else {
+		now := time.Now().UTC()
+		newClosedAt = now.Unix()
+		iss.ClosedAt = &now
+	}
+
 	b, _ := json.Marshal(iss)
 	if _, err := tx.Exec(
-		`UPDATE issues SET column_name = ?, json = ? WHERE workspace_id = ? AND number = ?`,
-		string(types.ColDone), string(b), workspaceID, number,
+		`UPDATE issues SET column_name = ?, json = ?, closed_at = ? WHERE workspace_id = ? AND number = ?`,
+		string(types.ColDone), string(b), newClosedAt, workspaceID, number,
 	); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// ArchiveClosedByAge archives DONE cards in the given workspace whose
+// closed_at timestamp is at least daysClosed days ago. Empty workspaceID
+// applies across all workspaces. Returns the number of rows archived.
+// Called by the auto-archive engine (issue #107).
+func (s *Store) ArchiveClosedByAge(workspaceID string, daysClosed int) (int, error) {
+	if s == nil || s.DB == nil {
+		return 0, errors.New("store unavailable")
+	}
+	if daysClosed < 1 {
+		daysClosed = 1
+	}
+	cutoff := time.Now().UTC().Add(-time.Duration(daysClosed) * 24 * time.Hour).Unix()
+	res, err := s.DB.Exec(`
+UPDATE issues
+SET archived_at = strftime('%s','now')
+WHERE column_name = 'done'
+  AND archived_at IS NULL
+  AND closed_at IS NOT NULL
+  AND closed_at <= ?
+  AND (? = '' OR workspace_id = ?)`,
+		cutoff, workspaceID, workspaceID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
 }

@@ -208,10 +208,12 @@ func (c *Client) DeleteLabel(ctx context.Context, ws types.Workspace, name strin
 
 // PRState is the slice of GitHub PR fields the poller uses to drive
 // REVIEW→DONE on merge and chip-clear on close-without-merge (issue #33).
+// HeadSHA is added for check-run failure detection (#116).
 type PRState struct {
 	State    string
 	MergedAt *time.Time
 	ClosedAt *time.Time
+	HeadSHA  string
 }
 
 // FetchPRState fetches the current state of a single PR. Used by the poller
@@ -225,7 +227,10 @@ func (c *Client) FetchPRState(ctx context.Context, ws types.Workspace, prNumber 
 	if err != nil {
 		return nil, err
 	}
-	out := &PRState{State: pr.GetState()}
+	out := &PRState{
+		State:   pr.GetState(),
+		HeadSHA: pr.GetHead().GetSHA(),
+	}
 	if pr.MergedAt != nil {
 		ts := pr.MergedAt.Time
 		out.MergedAt = &ts

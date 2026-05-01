@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	gh "github.com/google/go-github/v62/github"
 
+	"prismconductor/internal/archiver"
 	"prismconductor/internal/diagnose"
 	"prismconductor/internal/eventbus"
 	pcgit "prismconductor/internal/git"
@@ -67,6 +68,10 @@ type App struct {
 	lastNotifyAt  int64
 
 	issueDetailCache sync.Map // key: "wsID#number" → issueDetailEntry
+
+	// Issue #116: per-PR self-heal attempt counters.
+	// Key: "wsID#issueNum#headSHA", value: int.
+	healAttempts sync.Map
 }
 
 type issueDetailEntry struct {
@@ -263,6 +268,10 @@ func (a *App) startup(ctx context.Context) {
 		// Issue #98: canonical IssueView assembler — emits bus.issue_view_updated
 		// whenever any contributing source changes.
 		a.assembler = issueview.New(a.bus, a.store)
+
+		// Issue #116: auto-spawn self-heal and toast on CI check failures.
+		a.bus.Subscribe(a.handlePRChecksFailed)
+		a.bus.Subscribe(a.handlePRChecksRecovered)
 	}
 
 	// Issue #17: answer-file watcher. Polls each enabled workspace's
@@ -310,6 +319,22 @@ func (a *App) startup(ctx context.Context) {
 		} else if n > 0 {
 			log.Printf("reconciled %d closed issues to DONE\n", n)
 		}
+
+		// Issue #107: auto-archive DONE cards per workspace config. Run once at
+		// startup and then on a 24-hour tick so long-running sessions stay clean.
+		go func() {
+			a.runAutoArchiveAll()
+			t := time.NewTicker(24 * time.Hour)
+			defer t.Stop()
+			for {
+				select {
+				case <-a.ctx.Done():
+					return
+				case <-t.C:
+					a.runAutoArchiveAll()
+				}
+			}
+		}()
 	}
 
 	// GitHub poller (#2). Uses the existing `gh` CLI auth — no OAuth App
@@ -788,6 +813,56 @@ func (a *App) ArchiveDone(workspaceID string) (int, error) {
 	return n, nil
 }
 
+// runAutoArchiveAll runs auto-archive for every workspace that has it enabled.
+// Publishes EvtIssuesArchived when any card is archived.
+func (a *App) runAutoArchiveAll() {
+	if a.store == nil || a.wsReg == nil {
+		return
+	}
+	total := 0
+	for _, ws := range a.wsReg.List() {
+		n, err := archiver.RunAutoArchive(a.ctx, a.store, ws)
+		if err != nil {
+			log.Printf("auto-archive workspace %q: %v", ws.ID, err)
+			continue
+		}
+		total += n
+	}
+	if total > 0 && a.bus != nil {
+		a.bus.Publish(eventbus.EvtIssuesArchived, map[string]any{
+			"workspace_id": "",
+			"count":        total,
+		})
+	}
+}
+
+// RunAutoArchiveNow immediately runs auto-archive for the given workspace and
+// returns the count of newly archived cards. Exposed to the frontend so the
+// Settings panel can trigger a manual run.
+func (a *App) RunAutoArchiveNow(workspaceID string) (int, error) {
+	if a.store == nil {
+		return 0, fmt.Errorf("store unavailable")
+	}
+	if a.wsReg == nil {
+		return 0, fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return 0, fmt.Errorf("workspace %q not found", workspaceID)
+	}
+	n, err := archiver.RunAutoArchive(a.ctx, a.store, ws)
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 && a.bus != nil {
+		a.bus.Publish(eventbus.EvtIssuesArchived, map[string]any{
+			"workspace_id": workspaceID,
+			"count":        n,
+		})
+	}
+	return n, nil
+}
+
 // UnarchiveIssue clears archived_at for a single row (#34) and publishes
 // EvtIssuesArchived so the live list and drawer both refresh.
 func (a *App) UnarchiveIssue(workspaceID string, number int) error {
@@ -1106,6 +1181,34 @@ func (a *App) GetPollInterval() int {
 		return 300
 	}
 	return n
+}
+
+// --- Label filter (#110) ---
+
+// LabelFilterState is the shape returned by GetLabelFilter and consumed by the frontend store.
+type LabelFilterState struct {
+	Labels []string `json:"labels"`
+	Mode   string   `json:"mode"`
+}
+
+// GetLabelFilter returns the persisted label filter selection for a workspace.
+func (a *App) GetLabelFilter(workspaceID string) (LabelFilterState, error) {
+	if a.store == nil {
+		return LabelFilterState{Labels: []string{}, Mode: "or"}, nil
+	}
+	labels, mode, err := a.store.GetLabelFilter(workspaceID)
+	if err != nil {
+		return LabelFilterState{Labels: []string{}, Mode: "or"}, err
+	}
+	return LabelFilterState{Labels: labels, Mode: mode}, nil
+}
+
+// SetLabelFilter persists the label filter selection for a workspace.
+func (a *App) SetLabelFilter(workspaceID string, labels []string, mode string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	return a.store.SetLabelFilter(workspaceID, labels, mode)
 }
 
 // --- Labels (#14) ---
@@ -2202,6 +2305,143 @@ func (a *App) ContinueWork(workspaceID string, issueNumber int, note string) err
 		"revision":     plan.Revision,
 	})
 	return nil
+}
+
+// SelfHeal spawns a Continue-Work session pre-populated with CI failure context
+// from the most recent EvtPRChecksFailed event. Returns an error if the attempt
+// cap is reached or no check-failure state is recorded (#116).
+func (a *App) SelfHeal(workspaceID string, issueNumber int) error {
+	if a.assembler == nil {
+		return fmt.Errorf("assembler unavailable")
+	}
+	view, err := a.assembler.Assemble(workspaceID, issueNumber)
+	if err != nil {
+		return fmt.Errorf("assemble issue view: %w", err)
+	}
+	tfi := view.TestsFailingInfo
+	if tfi == nil {
+		return fmt.Errorf("no CI failure recorded for issue #%d", issueNumber)
+	}
+	if tfi.MaxAttemptsReached {
+		return fmt.Errorf("max self-heal attempts (%d) reached for issue #%d — review manually", tfi.AttemptCap, issueNumber)
+	}
+	// Build the CI failure note for the continue worker.
+	note := a.buildSelfHealNote(tfi)
+	if err := a.ContinueWork(workspaceID, issueNumber, note); err != nil {
+		return err
+	}
+	// Increment attempt counter and update the assembler.
+	ws, _ := a.wsReg.Get(workspaceID)
+	cap := selfHealCap(ws)
+	healKey := workspaceID + "#" + strconv.Itoa(issueNumber) + "#" + tfi.HeadSHA
+	newAttempts := 1
+	if v, loaded := a.healAttempts.LoadOrStore(healKey, 1); loaded {
+		newAttempts = v.(int) + 1
+		a.healAttempts.Store(healKey, newAttempts)
+	}
+	a.assembler.SetSelfHealAttempts(workspaceID, issueNumber, newAttempts, cap, newAttempts >= cap)
+	return nil
+}
+
+// handlePRChecksFailed handles EvtPRChecksFailed: emits a toast and, if the
+// workspace has auto_self_heal enabled and the cap is not reached, auto-spawns
+// a Continue-Work session.
+func (a *App) handlePRChecksFailed(e eventbus.Event) {
+	if e.Type != eventbus.EvtPRChecksFailed {
+		return
+	}
+	p, ok := e.Payload.(eventbus.PRChecksFailed)
+	if !ok {
+		return
+	}
+	title := toastWorkspaceName(a.wsReg, p.WorkspaceID)
+	if !a.notificationsSuppressed() {
+		a.emitToast("error", title,
+			fmt.Sprintf("#%d TEST FAILURE — %d check(s) red on PR #%d", p.IssueNumber, len(p.FailingJobs), p.PRNumber),
+			map[string]any{
+				"workspace_id": p.WorkspaceID,
+				"issue_number": p.IssueNumber,
+				"action":       "focus_card",
+			})
+	}
+	// Auto-spawn if workspace enables it and cap not reached.
+	ws, ok := a.wsReg.Get(p.WorkspaceID)
+	if !ok {
+		return
+	}
+	if !autoSelfHealEnabled(ws) {
+		return
+	}
+	cap := selfHealCap(ws)
+	healKey := p.WorkspaceID + "#" + strconv.Itoa(p.IssueNumber) + "#" + p.HeadSHA
+	curRaw, _ := a.healAttempts.Load(healKey)
+	cur := 0
+	if curRaw != nil {
+		cur = curRaw.(int)
+	}
+	if cur >= cap {
+		a.assembler.SetSelfHealAttempts(p.WorkspaceID, p.IssueNumber, cur, cap, true)
+		return
+	}
+	// Spawn asynchronously — don't block the bus handler.
+	go func() {
+		if err := a.SelfHeal(p.WorkspaceID, p.IssueNumber); err != nil {
+			log.Printf("auto self-heal #%d: %v", p.IssueNumber, err)
+		}
+	}()
+}
+
+// handlePRChecksRecovered handles EvtPRChecksRecovered: emits a toast when
+// a previously-failing PR's checks go green.
+func (a *App) handlePRChecksRecovered(e eventbus.Event) {
+	if e.Type != eventbus.EvtPRChecksRecovered {
+		return
+	}
+	p, ok := e.Payload.(eventbus.PRChecksRecovered)
+	if !ok {
+		return
+	}
+	// Clear attempt counter for this PR SHA now that it's green.
+	healKey := p.WorkspaceID + "#" + strconv.Itoa(p.IssueNumber) + "#" + p.HeadSHA
+	a.healAttempts.Delete(healKey)
+	if !a.notificationsSuppressed() {
+		title := toastWorkspaceName(a.wsReg, p.WorkspaceID)
+		a.emitToast("success", title,
+			fmt.Sprintf("#%d checks recovered on PR #%d — CI green", p.IssueNumber, p.PRNumber),
+			map[string]any{
+				"workspace_id": p.WorkspaceID,
+				"issue_number": p.IssueNumber,
+				"action":       "focus_card",
+			})
+	}
+}
+
+// buildSelfHealNote constructs the Continue-Work note for the self-heal worker.
+func (a *App) buildSelfHealNote(tfi *issueview.TestsFailingInfo) string {
+	note := "CI self-heal: the following GitHub Actions checks are failing on the PR:\n\n"
+	for i, job := range tfi.FailingJobs {
+		note += fmt.Sprintf("- %s", job)
+		if i < len(tfi.FailingCheckRunURLs) && tfi.FailingCheckRunURLs[i] != "" {
+			note += fmt.Sprintf(" (%s)", tfi.FailingCheckRunURLs[i])
+		}
+		note += "\n"
+	}
+	note += "\nPlease investigate the failures, fix the root cause, and push a fixup commit."
+	return note
+}
+
+// autoSelfHealEnabled reports whether the workspace has auto-self-heal on.
+// Default is true (nil pointer → enabled).
+func autoSelfHealEnabled(ws types.Workspace) bool {
+	return ws.SkillProfile.AutoSelfHeal == nil || *ws.SkillProfile.AutoSelfHeal
+}
+
+// selfHealCap returns the configured attempt cap for the workspace (default 3).
+func selfHealCap(ws types.Workspace) int {
+	if ws.SkillProfile.SelfHealAttemptCap > 0 {
+		return ws.SkillProfile.SelfHealAttemptCap
+	}
+	return 3
 }
 
 // hasActiveExecuteSession returns true if an execute-mode worker is currently

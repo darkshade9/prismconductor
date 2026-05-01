@@ -51,6 +51,8 @@ export function GetAutoPullPaused():Promise<boolean>;
 
 export function GetIssueView(arg1:string,arg2:number):Promise<issueview.IssueView>;
 
+export function GetLabelFilter(arg1:string):Promise<main.LabelFilterState>;
+
 export function GetMidRunQuestion(arg1:string,arg2:number,arg3:string):Promise<types.Question>;
 
 export function GetNotifyPrefs():Promise<main.NotifyPrefs>;
@@ -131,11 +133,15 @@ export function Replan(arg1:string,arg2:number):Promise<void>;
 
 export function ResetPoolCounters():Promise<number>;
 
+export function RunAutoArchiveNow(arg1:string):Promise<number>;
+
 export function RunOrchestrator():Promise<void>;
 
 export function SaveGoal(arg1:types.Goal):Promise<void>;
 
 export function SavePool(arg1:types.Pool):Promise<void>;
+
+export function SelfHeal(arg1:string,arg2:number):Promise<void>;
 
 export function SendInput(arg1:string,arg2:string):Promise<void>;
 
@@ -144,6 +150,8 @@ export function SetAutoPullPaused(arg1:boolean):Promise<void>;
 export function SetGoalStatus(arg1:string,arg2:string):Promise<void>;
 
 export function SetIssueLabels(arg1:string,arg2:number,arg3:Array<string>):Promise<void>;
+
+export function SetLabelFilter(arg1:string,arg2:Array<string>,arg3:string):Promise<void>;
 
 export function SetNotifyPrefs(arg1:main.NotifyPrefs):Promise<void>;
 

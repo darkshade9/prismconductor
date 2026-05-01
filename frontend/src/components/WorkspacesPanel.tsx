@@ -1,9 +1,80 @@
 import { useEffect, useState } from "react";
-import { GCWorktrees, RemoveWorkspace } from "../../wailsjs/go/main/App";
+import { GCWorktrees, RemoveWorkspace, RunAutoArchiveNow, UpdateWorkspace } from "../../wailsjs/go/main/App";
+import { types } from "../../wailsjs/go/models";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { AddWorkspaceForm } from "./AddWorkspaceForm";
 import { SkillProfileEditor } from "./SkillProfileEditor";
 import { LabelsPanel } from "./LabelsPanel";
+
+function AutoArchiveEditor({ workspace, onSave }: { workspace: types.Workspace; onSave: () => void }) {
+  const cfg = workspace.auto_archive ?? { enabled: false, days_closed: 7 };
+  const [enabled, setEnabled] = useState(cfg.enabled);
+  const [days, setDays] = useState(cfg.days_closed || 7);
+  const [busy, setBusy] = useState(false);
+
+  async function save(nextEnabled: boolean, nextDays: number) {
+    const updated = types.Workspace.createFrom({
+      ...workspace,
+      auto_archive: { enabled: nextEnabled, days_closed: nextDays },
+    });
+    await UpdateWorkspace(updated);
+    onSave();
+  }
+
+  async function runNow() {
+    setBusy(true);
+    try {
+      const n = await RunAutoArchiveNow(workspace.id);
+      alert(`Auto-archive complete: ${n} card(s) archived.`);
+      onSave();
+    } catch (err) {
+      alert(`Auto-archive failed: ${err}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="text-xs text-slate-400 mb-2">Auto-archive</div>
+      <div className="flex flex-col gap-2">
+        <label className="flex items-center gap-2 text-xs text-slate-300">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={async (e) => {
+              setEnabled(e.target.checked);
+              await save(e.target.checked, days);
+            }}
+          />
+          Archive DONE cards automatically
+        </label>
+        {enabled && (
+          <label className="flex items-center gap-2 text-xs text-slate-400">
+            After
+            <input
+              type="number"
+              min={1}
+              max={365}
+              value={days}
+              onChange={(e) => setDays(Number(e.target.value))}
+              onBlur={async () => await save(enabled, days)}
+              className="w-14 bg-slate-800 border border-slate-600 rounded px-1 py-0.5 text-slate-200"
+            />
+            days closed
+          </label>
+        )}
+        <button
+          onClick={runNow}
+          disabled={busy || !enabled}
+          className="text-xs text-slate-400 hover:text-amber-300 disabled:opacity-40 self-start"
+        >
+          {busy ? "Running…" : "Run auto-archive now"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function WorkspacesPanel() {
   const { workspaces, refresh, loading } = useWorkspaceStore();
@@ -115,6 +186,7 @@ export function WorkspacesPanel() {
                 {isExpanded && (
                   <div className="mt-2 space-y-4">
                     <SkillProfileEditor workspace={ws} />
+                    <AutoArchiveEditor workspace={ws} onSave={refresh} />
                     <div>
                       <div className="text-xs text-slate-400 mb-2">Labels</div>
                       <LabelsPanel workspaceID={ws.id} />

@@ -215,6 +215,116 @@ func TestDerivedColumn_Fallback_StoredColumn(t *testing.T) {
 	}
 }
 
+// --- PRChecksFailed handling ---
+
+func TestAssembler_CheckFailureStored(t *testing.T) {
+	bus := eventbus.New()
+	st := &fakeStore{issues: map[int]types.Issue{7: {Number: 7, WorkspaceID: "ws1", Column: types.ColReview}}}
+	a := New(bus, st)
+
+	bus.Publish(eventbus.EvtPRChecksFailed, eventbus.PRChecksFailed{
+		WorkspaceID:         "ws1",
+		IssueNumber:         7,
+		PRNumber:            42,
+		HeadSHA:             "abc123",
+		FailingJobs:         []string{"build", "test"},
+		FailingCheckRunURLs: []string{"https://gh/1", "https://gh/2"},
+	})
+	// Bus handlers run in goroutines; give them time to settle.
+	time.Sleep(20 * time.Millisecond)
+
+	view, err := a.Assemble("ws1", 7)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if view.TestsFailingInfo == nil {
+		t.Fatal("expected TestsFailingInfo to be populated after EvtPRChecksFailed")
+	}
+	if len(view.TestsFailingInfo.FailingJobs) != 2 {
+		t.Errorf("want 2 failing jobs, got %d", len(view.TestsFailingInfo.FailingJobs))
+	}
+	if view.TestsFailingInfo.HeadSHA != "abc123" {
+		t.Errorf("want head_sha abc123, got %q", view.TestsFailingInfo.HeadSHA)
+	}
+}
+
+func TestAssembler_CheckFailureClearedOnRecovery(t *testing.T) {
+	bus := eventbus.New()
+	st := &fakeStore{issues: map[int]types.Issue{8: {Number: 8, WorkspaceID: "ws1", Column: types.ColReview}}}
+	a := New(bus, st)
+
+	bus.Publish(eventbus.EvtPRChecksFailed, eventbus.PRChecksFailed{
+		WorkspaceID: "ws1", IssueNumber: 8, PRNumber: 1, HeadSHA: "sha1",
+		FailingJobs: []string{"lint"},
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	bus.Publish(eventbus.EvtPRChecksRecovered, eventbus.PRChecksRecovered{
+		WorkspaceID: "ws1", IssueNumber: 8, PRNumber: 1, HeadSHA: "sha1",
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	view, err := a.Assemble("ws1", 8)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if view.TestsFailingInfo != nil {
+		t.Errorf("expected TestsFailingInfo cleared after recovery, got %+v", view.TestsFailingInfo)
+	}
+}
+
+func TestAssembler_SetSelfHealAttempts(t *testing.T) {
+	bus := eventbus.New()
+	st := &fakeStore{issues: map[int]types.Issue{9: {Number: 9, WorkspaceID: "ws2", Column: types.ColReview}}}
+	a := New(bus, st)
+
+	bus.Publish(eventbus.EvtPRChecksFailed, eventbus.PRChecksFailed{
+		WorkspaceID: "ws2", IssueNumber: 9, PRNumber: 3, HeadSHA: "sha2",
+		FailingJobs: []string{"unit-tests"},
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	a.SetSelfHealAttempts("ws2", 9, 2, 3, false)
+
+	view, err := a.Assemble("ws2", 9)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if view.TestsFailingInfo == nil {
+		t.Fatal("expected TestsFailingInfo present")
+	}
+	if view.TestsFailingInfo.SelfHealAttempts != 2 {
+		t.Errorf("want 2 attempts, got %d", view.TestsFailingInfo.SelfHealAttempts)
+	}
+	if view.TestsFailingInfo.MaxAttemptsReached {
+		t.Error("should not be max-reached at 2/3")
+	}
+}
+
+func TestExtractIssueKey_PRChecksFailed(t *testing.T) {
+	e := makeEvent(eventbus.EvtPRChecksFailed, eventbus.PRChecksFailed{
+		WorkspaceID: "ws3",
+		IssueNumber: 55,
+		PRNumber:    10,
+	})
+	ws, num := extractIssueKey(e)
+	if ws != "ws3" || num != 55 {
+		t.Errorf("got ws=%q num=%d", ws, num)
+	}
+}
+
+func TestExtractIssueKey_PRChecksRecovered(t *testing.T) {
+	e := makeEvent(eventbus.EvtPRChecksRecovered, eventbus.PRChecksRecovered{
+		WorkspaceID: "ws3",
+		IssueNumber: 56,
+		PRNumber:    10,
+	})
+	ws, num := extractIssueKey(e)
+	if ws != "ws3" || num != 56 {
+		t.Errorf("got ws=%q num=%d", ws, num)
+	}
+}
+
 // --- extractIssueKey ---
 
 func TestExtractIssueKey_SessionStateChanged(t *testing.T) {

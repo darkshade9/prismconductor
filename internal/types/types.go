@@ -17,6 +17,14 @@ type Workspace struct {
 	SkillProfile  SkillProfile    `json:"skill_profile"`
 	Conventions   ConventionHints `json:"conventions"`
 	Enabled       bool            `json:"enabled"`
+	AutoArchive   AutoArchive     `json:"auto_archive,omitempty"`
+}
+
+// AutoArchive configures per-workspace automatic archiving of DONE cards whose
+// GitHub issue has been closed for longer than DaysClosed days (issue #107).
+type AutoArchive struct {
+	Enabled    bool `json:"enabled"`
+	DaysClosed int  `json:"days_closed"` // default 7; minimum 1; maximum 365
 }
 
 type EnvSpec struct {
@@ -49,6 +57,15 @@ type SkillProfile struct {
 	// SkillsMigrated is set true after PerStage has been synthesized from
 	// the legacy Mode/UseConductor* fields on first launch.
 	SkillsMigrated bool `json:"skills_migrated,omitempty"`
+
+	// AutoSelfHeal controls whether the system auto-spawns a Continue-Work
+	// session when PR check runs fail (issue #116). Nil/absent means enabled
+	// (default true) — the Self-heal button is always shown regardless.
+	AutoSelfHeal *bool `json:"auto_self_heal,omitempty"`
+
+	// SelfHealAttemptCap is the maximum number of consecutive auto-spawned
+	// self-heal sessions per PR HEAD SHA. 0 means use the default (3).
+	SelfHealAttemptCap int `json:"self_heal_attempt_cap,omitempty"`
 }
 
 // SkillForStage returns the SkillRef configured for the given stage, if any.
@@ -213,6 +230,7 @@ type Issue struct {
 	PRNumber     *int        `json:"pr_number,omitempty"`
 	PRURL        string      `json:"pr_url,omitempty"`
 	ArchivedAt   *time.Time  `json:"archived_at,omitempty"`
+	ClosedAt     *time.Time  `json:"closed_at,omitempty"`
 	// WaitingForPool is set true when a spawn attempt was queued because no
 	// pool had free capacity (issue #40). Cleared on successful drain.
 	WaitingForPool bool `json:"waiting_for_pool,omitempty"`
