@@ -30,6 +30,7 @@ import (
 	"prismconductor/internal/llm"
 	"prismconductor/internal/orchestrator"
 	"prismconductor/internal/session"
+	"prismconductor/internal/skills"
 	"prismconductor/internal/skills/bundle"
 	"prismconductor/internal/store"
 	"prismconductor/internal/types"
@@ -155,6 +156,8 @@ func (a *App) startup(ctx context.Context) {
 		log.Printf("workspace registry: %v\n", err)
 	} else {
 		a.wsReg = r
+		// Issue #92: one-time migration of legacy Mode/UseConductor* → PerStage.
+		a.migrateWorkspaceSkillProfiles()
 	}
 
 	// Issue #22: prune any orphan worktrees from prior conductor sessions, then
@@ -1496,6 +1499,36 @@ func (a *App) SetAutoPullPaused(paused bool) error {
 		a.orch.KickAutoPull("resumed")
 	}
 	return nil
+}
+
+// --- Skills (§15.7, issue #92) ---
+
+// migrateWorkspaceSkillProfiles runs the one-time migration that synthesizes
+// PerStage from legacy Mode/UseConductor* fields for every workspace.
+func (a *App) migrateWorkspaceSkillProfiles() {
+	if a.wsReg == nil {
+		return
+	}
+	for _, ws := range a.wsReg.List() {
+		if skills.MigrateSkillProfile(&ws.SkillProfile) {
+			if err := a.wsReg.Update(ws); err != nil {
+				log.Printf("skill profile migration for workspace %s: %v", ws.ID, err)
+			}
+		}
+	}
+}
+
+// DiscoverWorkspaceSkills returns all available skills for the given workspace:
+// bundled defaults plus any markdown files discovered in the repo.
+func (a *App) DiscoverWorkspaceSkills(workspaceID string) ([]types.SkillRef, error) {
+	if a.wsReg == nil {
+		return nil, fmt.Errorf("workspace registry not ready")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return nil, fmt.Errorf("workspace %q not found", workspaceID)
+	}
+	return skills.Discover(ws.RepoPath, bundle.FS)
 }
 
 // --- Bundled skills (§15.7) ---

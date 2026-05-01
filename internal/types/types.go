@@ -26,6 +26,7 @@ type EnvSpec struct {
 }
 
 type SkillProfile struct {
+	// Legacy fields kept for one-version migration window (issue #92).
 	Mode                 SkillMode `json:"mode"`
 	UseConductorPlan     bool      `json:"use_conductor_plan"`
 	UseConductorExecute  bool      `json:"use_conductor_execute"`
@@ -41,6 +42,22 @@ type SkillProfile struct {
 	// registry's default round-robin among role pools".
 	PreferredPlanPoolID string `json:"preferred_plan_pool_id,omitempty"`
 	PreferredWorkPoolID string `json:"preferred_work_pool_id,omitempty"`
+
+	// PerStage holds per-stage skill overrides (issue #92). A missing key
+	// falls through to the legacy Mode-based selection.
+	PerStage map[string]SkillRef `json:"per_stage,omitempty"`
+	// SkillsMigrated is set true after PerStage has been synthesized from
+	// the legacy Mode/UseConductor* fields on first launch.
+	SkillsMigrated bool `json:"skills_migrated,omitempty"`
+}
+
+// SkillForStage returns the SkillRef configured for the given stage, if any.
+func (sp SkillProfile) SkillForStage(stage ConductorStage) (SkillRef, bool) {
+	if sp.PerStage == nil {
+		return SkillRef{}, false
+	}
+	ref, ok := sp.PerStage[string(stage)]
+	return ref, ok
 }
 
 // AutoApplyLabelsEnabled returns true when the workspace opts in to auto-apply

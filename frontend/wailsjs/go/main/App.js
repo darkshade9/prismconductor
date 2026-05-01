@@ -42,6 +42,10 @@ export function DeletePool(arg1) {
   return window['go']['main']['App']['DeletePool'](arg1);
 }
 
+export function DiscoverWorkspaceSkills(arg1) {
+  return window['go']['main']['App']['DiscoverWorkspaceSkills'](arg1);
+}
+
 export function FetchIssueDetail(arg1, arg2) {
   return window['go']['main']['App']['FetchIssueDetail'](arg1, arg2);
 }

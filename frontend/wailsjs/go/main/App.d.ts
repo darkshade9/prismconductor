@@ -29,6 +29,8 @@ export function DeleteLabel(arg1:string,arg2:string):Promise<void>;
 
 export function DeletePool(arg1:string):Promise<void>;
 
+export function DiscoverWorkspaceSkills(arg1:string):Promise<Array<types.SkillRef>>;
+
 export function FetchIssueDetail(arg1:string,arg2:number):Promise<types.Issue>;
 
 export function FetchPRChecks(arg1:string,arg2:number):Promise<string>;
