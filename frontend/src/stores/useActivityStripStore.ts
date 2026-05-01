@@ -29,6 +29,13 @@ type ActivityPayload = {
 
 const RING_CAP = 5;
 
+// Stable empty-array reference. `getTail` falling back to a fresh `[]` on
+// every call would defeat zustand's Object.is selector comparison and
+// cascade into an infinite render loop (React error #185) — every render
+// reads getTail, returns a new [], triggers re-render, repeat. Reuse this
+// singleton so absent-tail reads are referentially stable.
+const EMPTY_TAIL: ActivityEntry[] = [];
+
 export const useActivityStripStore = create<StripState>((set, get) => ({
   tails: {},
   subscribedId: null,
@@ -59,7 +66,7 @@ export const useActivityStripStore = create<StripState>((set, get) => ({
     set({ subscribedId: sessionId, unsubscribe: cancel });
   },
 
-  getTail: (sessionId) => get().tails[sessionId] ?? [],
+  getTail: (sessionId) => get().tails[sessionId] ?? EMPTY_TAIL,
 
   _applyEvent: (sessionId, tail) => {
     // Backend already sends a capped ring tail; just clamp to RING_CAP locally.

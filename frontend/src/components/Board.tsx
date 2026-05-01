@@ -21,6 +21,7 @@ import { useIssueViewStore } from "../stores/useIssueViewStore";
 import { matchesQuery } from "../lib/matchesQuery";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { Card } from "./Card";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { Column } from "./Column";
 
 const COLUMNS: { id: ColumnID; title: string }[] = [
@@ -292,13 +293,17 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
               {items.map((iss) => {
                 const meta = wsMeta.get(iss.workspace_id);
                 return (
-                  <Card
-                    key={cardID(iss)}
-                    issue={iss}
-                    workspaceColor={meta?.color}
-                    workspaceLabel={meta?.label}
-                    onClick={() => onCardClick?.(iss)}
-                  />
+                  // ErrorBoundary so a single Card render exception (e.g. an
+                  // unexpected null on view.active_session, a malformed
+                  // started_at, etc.) cannot blank the entire board.
+                  <ErrorBoundary key={cardID(iss)}>
+                    <Card
+                      issue={iss}
+                      workspaceColor={meta?.color}
+                      workspaceLabel={meta?.label}
+                      onClick={() => onCardClick?.(iss)}
+                    />
+                  </ErrorBoundary>
                 );
               })}
               {items.length === 0 && (
