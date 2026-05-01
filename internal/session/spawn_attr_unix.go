@@ -2,7 +2,10 @@
 
 package session
 
-import "syscall"
+import (
+	"os"
+	"syscall"
+)
 
 // detachedProcAttr returns the SysProcAttr that puts the spawned worker into
 // its own session (issue #54). With Setsid the worker is no longer in the
@@ -17,3 +20,7 @@ func detachedProcAttr() *syscall.SysProcAttr {
 // detachedSupported reports whether detached spawning is implemented on this
 // platform. POSIX builds always return true.
 func detachedSupported() bool { return true }
+
+// gracefulSignal returns the OS signal used by KillGraceful to request a
+// polite shutdown before escalating to SIGKILL.
+func gracefulSignal() os.Signal { return syscall.SIGTERM }

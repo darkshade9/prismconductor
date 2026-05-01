@@ -12,6 +12,7 @@ import { getContrastText } from "../lib/contrast";
 import { LabelManagePopover } from "./LabelManagePopover";
 import { MidRunQuestionModal } from "./MidRunQuestionModal";
 import { ContinueModal } from "./ContinueModal";
+import { AgentActivityStrip } from "./AgentActivityStrip";
 import { cn } from "../lib/cn";
 import { CopyMenu, CopyAction, toQuotedBlock } from "./CopyMenu";
 
@@ -182,6 +183,12 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         onContinue={() => setContinueOpen(true)}
         onClearFailure={() => ClearIssueFailure(issue.workspace_id, issue.number).catch((err: any) => alert(String(err?.message ?? err)))}
       />
+      {activeSession && activeSession.state === "running" && (
+        <AgentActivityStrip
+          sessionId={activeSession.id}
+          sessionStartedAt={new Date(activeSession.started_at as any)}
+        />
+      )}
       <div className="flex justify-end items-center gap-2 mt-0.5">
         {(issue.cost_usd ?? 0) > 0 && (
           <CostChip costUSD={issue.cost_usd!} />

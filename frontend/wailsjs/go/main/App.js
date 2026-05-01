@@ -22,6 +22,10 @@ export function ArchiveDone(arg1) {
   return window['go']['main']['App']['ArchiveDone'](arg1);
 }
 
+export function CancelSession(arg1) {
+  return window['go']['main']['App']['CancelSession'](arg1);
+}
+
 export function ClearIssueFailure(arg1, arg2) {
   return window['go']['main']['App']['ClearIssueFailure'](arg1, arg2);
 }
