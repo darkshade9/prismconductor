@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { ListPools } from "../../wailsjs/go/main/App";
+import { workerpool } from "../../wailsjs/go/models";
 
 export type PoolEntry = {
   id: string;
@@ -33,3 +34,65 @@ export const usePoolsStore = create<State>((set) => ({
     }
   },
 }));
+
+export type ProviderSummary = {
+  kind: string;
+  active: number;
+  capacity: number;
+  poolNames: string[];
+};
+
+export type RoleSummary = {
+  role: "orchestrator" | "plan" | "work";
+  label: string;
+  providers: ProviderSummary[];
+};
+
+type Role = "orchestrator" | "plan" | "work";
+
+const ROLE_LABEL: Record<Role, string> = {
+  orchestrator: "Orchestrator",
+  plan: "Planners",
+  work: "Workers",
+};
+
+const ROLE_ORDER: Role[] = ["orchestrator", "plan", "work"];
+
+export function getPoolSummaryByRole(pools: workerpool.PoolStatus[]): RoleSummary[] {
+  const byRole: Record<Role, Map<string, ProviderSummary>> = {
+    orchestrator: new Map(),
+    plan: new Map(),
+    work: new Map(),
+  };
+
+  for (const row of pools) {
+    if (!row.pool?.enabled) continue;
+    const role = ((row.pool.role as Role) || "work") satisfies Role;
+    if (!(role in byRole)) continue;
+    const kind = row.pool.provider || "generic";
+    const map = byRole[role];
+    const existing = map.get(kind);
+    if (existing) {
+      existing.active += row.active ?? 0;
+      existing.capacity += row.pool.capacity ?? 0;
+      existing.poolNames.push(row.pool.name);
+    } else {
+      map.set(kind, {
+        kind,
+        active: row.active ?? 0,
+        capacity: row.pool.capacity ?? 0,
+        poolNames: [row.pool.name],
+      });
+    }
+  }
+
+  return ROLE_ORDER
+    .map((role) => ({
+      role,
+      label: ROLE_LABEL[role],
+      providers: [...byRole[role].values()].sort((a, b) =>
+        a.kind.localeCompare(b.kind)
+      ),
+    }))
+    .filter((r) => r.providers.length > 0);
+}

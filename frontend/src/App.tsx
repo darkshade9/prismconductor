@@ -4,7 +4,6 @@ import {
   GetAutoPullPaused,
   ListArchivedIssues,
   ListPendingPlans,
-  ListPools,
   ListSessions,
   RefreshIssuesNow,
   SetAutoPullPaused,
@@ -31,6 +30,7 @@ import { usePoolsStore } from "./stores/usePoolsStore";
 import { Toast } from "./components/Toast";
 import { useToastStore, type Toast as ToastT } from "./stores/toastStore";
 import { TitleSearch } from "./components/Header";
+import { PoolsHeader } from "./components/PoolsHeader";
 
 type PlanRef = { workspace_id: string; number: number };
 type PlanTarget = PlanRef | null;
@@ -46,10 +46,10 @@ function App() {
   const markPlanReady = usePlanReadyStore((s) => s.markReady);
   const clearPlanReady = usePlanReadyStore((s) => s.clearReady);
   const issues = useIssueStore((s) => s.issues);
-  const [poolStatus, setPoolStatus] = useState({ active: 0, capacity: 0 });
   const [autoPaused, setAutoPaused] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<"workspaces" | "pools" | "skills" | "labels" | "notify" | "logs">("workspaces");
   const [planTarget, setPlanTarget] = useState<PlanTarget>(null);
   const [planQueue, setPlanQueue] = useState<PlanRef[]>([]);
   const planIssue = useMemo(() => {
@@ -188,25 +188,10 @@ function App() {
         }
       },
     );
-    const refreshPool = () =>
-      ListPools()
-        .then((rows) => {
-          const active = (rows ?? []).reduce((s, r) => s + (r.active ?? 0), 0);
-          const capacity = (rows ?? []).reduce(
-            (s, r) => s + (r.pool.enabled ? r.pool.capacity : 0),
-            0,
-          );
-          setPoolStatus({ active, capacity });
-        })
-        .catch(() => {});
-    refreshPool();
     usePoolsStore.getState().refresh();
-    const offPoolFreed = EventsOn("bus.worker_slot_freed", refreshPool);
     const offPoolChanged = EventsOn("bus.agent_count_changed", () => {
-      refreshPool();
       usePoolsStore.getState().refresh();
     });
-    const offPoolState = EventsOn("session.state", refreshPool);
     GetAutoPullPaused().then(setAutoPaused).catch(() => {});
     const offPause = EventsOn(
       "bus.auto_pull_paused_changed",
@@ -232,9 +217,7 @@ function App() {
       if (typeof offPRClosedUnmerged === "function") offPRClosedUnmerged();
       if (typeof offPlanApproved === "function") offPlanApproved();
       if (typeof offPlanRejected === "function") offPlanRejected();
-      if (typeof offPoolFreed === "function") offPoolFreed();
       if (typeof offPoolChanged === "function") offPoolChanged();
-      if (typeof offPoolState === "function") offPoolState();
       if (typeof offGhPoll === "function") offGhPoll();
       if (typeof offGhIssue === "function") offGhIssue();
       if (typeof offGhClosed === "function") offGhClosed();
@@ -384,12 +367,22 @@ function App() {
           }
         />
       </main>
-      <footer className="px-4 py-2 border-t border-slate-800 text-xs text-slate-500">
-        Worker pool: {poolStatus.active}/{poolStatus.capacity} active
-      </footer>
+      <PoolsHeader
+        onOpenPools={() => {
+          setSettingsInitialTab("pools");
+          setSettingsOpen(true);
+        }}
+      />
 
       <SessionDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
-      <Settings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <Settings
+        open={settingsOpen}
+        onClose={() => {
+          setSettingsOpen(false);
+          setSettingsInitialTab("workspaces");
+        }}
+        initialTab={settingsInitialTab}
+      />
       <PlanModal
         open={planTarget !== null}
         onClose={() => {
