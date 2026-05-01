@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 
 	"prismconductor/internal/llm"
 	"prismconductor/internal/types"
@@ -57,14 +58,16 @@ func Execute(ctx context.Context, r Run) error {
 	em := newEmitter(r.Out)
 	em.systemInit()
 
-	// Hard rule from PRISMCONDUCTOR_PLAN.md §10.5: harness-v1 supports the
-	// Bundled skill mode only. Hybrid/Native rely on a repo-side CLI that
-	// non-Claude providers don't have today; refuse cleanly with a BLOCKED:
-	// sentinel rather than spinning the model on a malformed prompt.
+	// SkillMode is a Claude-CLI-era concept: Hybrid and Native both expect a
+	// repo-side CLI binary to dispatch slash commands. Non-Claude pools have
+	// no such CLI — they run through this harness, which uses the bundled
+	// skill markdown as the system prompt regardless of mode. Silently fall
+	// back to bundled instead of BLOCKEDing the user; the issue-#92 redesign
+	// will retire the mode flag entirely. Until then, treat any non-Bundled
+	// mode as Bundled when the harness is the spawn strategy.
 	if r.SkillMode != "" && r.SkillMode != types.SkillModeBundled {
-		em.assistantMessage("BLOCKED: harness-v1 supports SkillModeBundled only", nil)
-		em.done()
-		return nil
+		log.Printf("harness: workspace SkillMode=%q has no harness analog; using bundled skill (SessionID=%s, Pool=%s)",
+			r.SkillMode, r.SessionID, r.Pool.ID)
 	}
 
 	system, err := assembleSystemPrompt(r.Skills, string(r.Mode), r.RepoPath)

@@ -200,11 +200,17 @@ func TestExecute_TokenBudgetEmitsBlocked(t *testing.T) {
 	}
 }
 
-// TestExecute_NonBundledSkillModeRefused pins the q-skillmode answer:
-// Hybrid/Native modes are rejected with a sentinel rather than running an
-// agent loop the model can't make sense of.
-func TestExecute_NonBundledSkillModeRefused(t *testing.T) {
-	prov := &fakeProvider{}
+// TestExecute_NonBundledSkillModeFallsBackToBundled pins the soft-fallback
+// behaviour: a non-Claude pool driven by the harness has no CLI to dispatch
+// Hybrid/Native slash commands to, so the harness silently treats those modes
+// as Bundled instead of BLOCKEDing the user (the prior strict-refuse contract
+// was confusing — operators were getting BLOCKED when they hadn't even chosen
+// hybrid/native deliberately, just inherited it from a CLAUDE.md detection
+// pass).
+func TestExecute_NonBundledSkillModeFallsBackToBundled(t *testing.T) {
+	prov := &fakeProvider{
+		responses: []llm.ChatResponse{{Stop: true, Content: "ok"}},
+	}
 	out := &pipeBuf{}
 	err := harness.Execute(context.Background(), harness.Run{
 		SessionID:  "test",
@@ -220,11 +226,11 @@ func TestExecute_NonBundledSkillModeRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(out.String(), "BLOCKED: harness-v1 supports SkillModeBundled only") {
-		t.Errorf("expected SkillMode refusal sentinel, got: %s", out.String())
+	if strings.Contains(out.String(), "BLOCKED: harness-v1 supports SkillModeBundled only") {
+		t.Errorf("did not expect skill-mode refusal, got: %s", out.String())
 	}
-	if len(prov.calls) != 0 {
-		t.Errorf("provider should not be called for refused skill mode, got %d calls", len(prov.calls))
+	if len(prov.calls) == 0 {
+		t.Error("provider should have been called once Hybrid mode falls back to Bundled")
 	}
 }
 
