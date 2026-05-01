@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { ListPools, UpdateWorkspace } from "../../wailsjs/go/main/App";
+import { DiscoverWorkspaceSkills, ListPools, UpdateWorkspace } from "../../wailsjs/go/main/App";
 import { types, workerpool } from "../../wailsjs/go/models";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { SkillDropdown } from "./SkillDropdown";
 
 type SkillMode = "bundled" | "hybrid" | "native";
 const MODES: SkillMode[] = ["bundled", "hybrid", "native"];
@@ -12,15 +13,24 @@ const MODE_DESC: Record<SkillMode, string> = {
   native: "Use only the repo's own skills (PrismEngine pattern).",
 };
 
+const STAGES = ["plan", "execute", "continue", "close"] as const;
+
 export function SkillProfileEditor({ workspace }: { workspace: types.Workspace }) {
   const refresh = useWorkspaceStore((s) => s.refresh);
   const [pools, setPools] = useState<workerpool.PoolStatus[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<types.SkillRef[]>([]);
 
   useEffect(() => {
     ListPools()
       .then((rows) => setPools(rows ?? []))
       .catch((err) => console.error("SkillProfileEditor ListPools", err));
   }, []);
+
+  useEffect(() => {
+    DiscoverWorkspaceSkills(workspace.id)
+      .then((refs) => setAvailableSkills(refs ?? []))
+      .catch((err) => console.error("SkillProfileEditor DiscoverWorkspaceSkills", err));
+  }, [workspace.id]);
 
   async function update(patch: Partial<types.SkillProfile>) {
     const next = new types.Workspace({
@@ -29,6 +39,12 @@ export function SkillProfileEditor({ workspace }: { workspace: types.Workspace }
     });
     await UpdateWorkspace(next);
     await refresh();
+  }
+
+  async function updateStageSkill(stage: string, ref: types.SkillRef) {
+    const perStage = { ...(workspace.skill_profile.per_stage ?? {}) };
+    perStage[stage] = ref;
+    await update({ per_stage: perStage });
   }
 
   const sp = workspace.skill_profile;
@@ -76,6 +92,21 @@ export function SkillProfileEditor({ workspace }: { workspace: types.Workspace }
             value={sp.native_close_command}
             onChange={(v) => update({ native_close_command: v })}
           />
+        </div>
+      )}
+
+      {availableSkills.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="text-xs text-slate-500">Skills per stage</div>
+          {STAGES.map((stage) => (
+            <SkillDropdown
+              key={stage}
+              stage={stage}
+              skills={availableSkills}
+              selected={sp.per_stage?.[stage]}
+              onChange={(ref) => updateStageSkill(stage, ref)}
+            />
+          ))}
         </div>
       )}
 

@@ -33,18 +33,19 @@ import (
 // Run is the per-session input to Execute. Constructed by the session
 // manager; the harness never reads the SQLite store directly.
 type Run struct {
-	SessionID   string
-	RepoPath    string // ws.RepoPath — used for system-prompt enrichment.
-	WorktreeDir string // tool cwd; defaults to RepoPath when empty.
-	Mode        types.SessionMode
-	SkillMode   types.SkillMode
-	Pool        types.Pool
-	Provider    llm.Provider
-	UserPrompt  string  // already rendered by planPrompt / executePrompt.
-	Skills      fs.FS   // bundle.FS
-	EnvVars     []string // ws.AgentEnv flattened for the Bash tool.
-	Budget      Budget
-	Out         io.Writer // synthetic stream-json sink (the session pipe writer).
+	SessionID     string
+	RepoPath      string // ws.RepoPath — used for system-prompt enrichment.
+	WorktreeDir   string // tool cwd; defaults to RepoPath when empty.
+	Mode          types.SessionMode
+	SkillMode     types.SkillMode // DEPRECATED: use SkillMarkdown (issue #92).
+	SkillMarkdown string          // explicit skill markdown; empty falls back to Mode-based lookup.
+	Pool          types.Pool
+	Provider      llm.Provider
+	UserPrompt    string   // already rendered by planPrompt / executePrompt.
+	Skills        fs.FS    // bundle.FS
+	EnvVars       []string // ws.AgentEnv flattened for the Bash tool.
+	Budget        Budget
+	Out           io.Writer // synthetic stream-json sink (the session pipe writer).
 }
 
 // Execute drives the agent loop until: (1) the model emits a sentinel that
@@ -58,19 +59,21 @@ func Execute(ctx context.Context, r Run) error {
 	em := newEmitter(r.Out)
 	em.systemInit()
 
-	// SkillMode is a Claude-CLI-era concept: Hybrid and Native both expect a
-	// repo-side CLI binary to dispatch slash commands. Non-Claude pools have
-	// no such CLI — they run through this harness, which uses the bundled
-	// skill markdown as the system prompt regardless of mode. Silently fall
-	// back to bundled instead of BLOCKEDing the user; the issue-#92 redesign
-	// will retire the mode flag entirely. Until then, treat any non-Bundled
-	// mode as Bundled when the harness is the spawn strategy.
-	if r.SkillMode != "" && r.SkillMode != types.SkillModeBundled {
-		log.Printf("harness: workspace SkillMode=%q has no harness analog; using bundled skill (SessionID=%s, Pool=%s)",
-			r.SkillMode, r.SessionID, r.Pool.ID)
+	var system string
+	var err error
+	if r.SkillMarkdown != "" {
+		// Per-stage skill selected (issue #92): use the provided markdown directly.
+		system, err = assembleSystemPromptWithMarkdown(r.SkillMarkdown, r.RepoPath)
+	} else {
+		// Legacy path: derive skill from Mode. SkillMode is a Claude-CLI-era
+		// concept — Hybrid and Native both expect a repo-side CLI binary.
+		// Non-Claude pools have no such CLI; silently fall back to bundled.
+		if r.SkillMode != "" && r.SkillMode != types.SkillModeBundled {
+			log.Printf("harness: workspace SkillMode=%q has no harness analog; using bundled skill (SessionID=%s, Pool=%s)",
+				r.SkillMode, r.SessionID, r.Pool.ID)
+		}
+		system, err = assembleSystemPrompt(r.Skills, string(r.Mode), r.RepoPath)
 	}
-
-	system, err := assembleSystemPrompt(r.Skills, string(r.Mode), r.RepoPath)
 	if err != nil {
 		em.assistantMessage("BLOCKED: harness skill bundle missing — "+err.Error(), nil)
 		em.done()

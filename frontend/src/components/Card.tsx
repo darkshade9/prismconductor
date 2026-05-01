@@ -132,20 +132,24 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         "shadow-sm transition-colors cursor-grab active:cursor-grabbing select-none",
         // Paused-for-question (#17) beats mode color so a pending question is
         // always visually distinct from a running execute.
+        // waiting_for_pool sits above lastFailure: a card actively queued for
+        // a slot is a *current* state — the prior failure is history. Without
+        // this ordering the red blocked-glow shadows the pink waiting-glow on
+        // any card that previously failed and got requeued.
         pausedSession
           ? "border-amber-500 card-glow-ready"
           : activeSession && activeSession.state === "blocked"
-          ? "border-red-500 card-glow-blocked"
-          : !activeSession && lastFailure
           ? "border-red-500 card-glow-blocked"
           : activeSession && activeSession.mode === "plan"
           ? "border-sky-500 card-glow-plan"
           : activeSession && activeSession.mode === "execute"
           ? "border-purple-500 card-glow-execute"
-          : planReady
-          ? "border-amber-500 card-glow-ready"
           : issue.waiting_for_pool
           ? "border-pink-500 card-glow-waiting"
+          : !activeSession && lastFailure
+          ? "border-red-500 card-glow-blocked"
+          : planReady
+          ? "border-amber-500 card-glow-ready"
           : "border-slate-700",
       )}
     >
