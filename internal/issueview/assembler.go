@@ -167,8 +167,16 @@ func selectSessions(iss types.Issue, sessions []types.Session) (active, paused, 
 			continue
 		}
 
-		if m.State == types.StateRunning || m.State == types.StateWaitingForInput ||
-			(m.State == types.StateBlocked && notAck) {
+		// `state=blocked` is a TERMINAL state: the worker emitted the BLOCKED
+		// sentinel and exited (or got killed). Routing it as `active` was the
+		// historical behavior from when "blocked" briefly meant "worker still
+		// alive, just emitted BLOCKED, mid-shutdown" — but in practice every
+		// `blocked` row in the DB is a stale failure. Treating them as active
+		// causes DONE cards (whose old plan/execute sessions ended in
+		// `blocked`) to glow purple/blue forever as if work were ongoing.
+		// Route blocked → lastFail only. The suppression rules below then
+		// hide it from REVIEW/DONE cards naturally.
+		if m.State == types.StateRunning || m.State == types.StateWaitingForInput {
 			if active == nil {
 				active = m
 			}
@@ -180,6 +188,12 @@ func selectSessions(iss types.Issue, sessions []types.Session) (active, paused, 
 			if lastFail == nil || m.StartedAt.After(lastFail.StartedAt) {
 				lastFail = m
 			}
+			continue
+		}
+
+		// Blocked-without-reason: still terminal, just no captured reason.
+		// Don't surface as active (would falsely glow); skip silently.
+		if m.State == types.StateBlocked {
 			continue
 		}
 
