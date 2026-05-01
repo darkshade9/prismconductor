@@ -50,6 +50,10 @@ export function DeletePool(arg1) {
   return window['go']['main']['App']['DeletePool'](arg1);
 }
 
+export function DiagnoseIssue(arg1, arg2) {
+  return window['go']['main']['App']['DiagnoseIssue'](arg1, arg2);
+}
+
 export function DiscoverWorkspaceSkills(arg1) {
   return window['go']['main']['App']['DiscoverWorkspaceSkills'](arg1);
 }

@@ -1,3 +1,26 @@
+export namespace diagnose {
+	
+	export class IssueDiagnosis {
+	    summary: string;
+	    detail: string[];
+	    suggestion: string;
+	    severity_level: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new IssueDiagnosis(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.summary = source["summary"];
+	        this.detail = source["detail"];
+	        this.suggestion = source["suggestion"];
+	        this.severity_level = source["severity_level"];
+	    }
+	}
+
+}
+
 export namespace github {
 	
 	export class AdvancedSecurity {
