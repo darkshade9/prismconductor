@@ -829,6 +829,18 @@ func (a *App) MoveIssueColumn(workspaceID string, number int, column string) err
 		"column":       column,
 	})
 
+	// Auto-acknowledge the most recent blocked/failed session when the user
+	// moves the card to TODO or PLAN — dragging it back is the explicit signal
+	// that they want to start over (issue #88).
+	if types.BoardColumn(column) == types.ColTodo || types.BoardColumn(column) == types.ColPlan {
+		if sess, err := a.store.AcknowledgeLatestFailure(workspaceID, number); err != nil {
+			log.Printf("MoveIssueColumn: acknowledge failure for #%d: %v", number, err)
+		} else if sess != nil {
+			wruntime.EventsEmit(a.ctx, "session.state", *sess)
+			log.Printf("MoveIssueColumn: acknowledged blocked session %s for #%d on move to %s", sess.ID[:8], number, column)
+		}
+	}
+
 	if types.BoardColumn(column) == types.ColPlan && a.wsReg != nil && a.mgr != nil {
 		// Auto-spawn rules:
 		//   - Skip if a plan worker is already in flight (avoid double-spawn).
@@ -876,6 +888,29 @@ func (a *App) MoveIssueColumn(workspaceID string, number int, column string) err
 				}
 			}
 		}
+	}
+	return nil
+}
+
+// ClearIssueFailure acknowledges the most recent blocked/failed session for
+// the given issue (issue #88). The session row is preserved for audit;
+// acknowledged_at is set and a session.state event is emitted so the frontend
+// immediately removes the blocked overlay without needing an app restart.
+func (a *App) ClearIssueFailure(workspaceID string, issueNumber int) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if a.wsReg != nil {
+		if _, ok := a.wsReg.Get(workspaceID); !ok {
+			return fmt.Errorf("unknown workspace %q", workspaceID)
+		}
+	}
+	sess, err := a.store.AcknowledgeLatestFailure(workspaceID, issueNumber)
+	if err != nil {
+		return err
+	}
+	if sess != nil {
+		wruntime.EventsEmit(a.ctx, "session.state", *sess)
 	}
 	return nil
 }
