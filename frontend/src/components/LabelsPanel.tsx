@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { CreateLabel, DeleteLabel, UpdateLabel } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
-import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
 import { getContrastText, normalizeHex } from "../lib/contrast";
 
 type Props = {
-  // When set, the panel is locked to this workspace (board-level modal).
-  workspaceID?: string;
+  workspaceID: string;
   // Pre-fill the new-label form with this name (used by PlanModal suggestions).
   initialNewName?: string;
 };
@@ -15,77 +13,30 @@ type Props = {
 const DEFAULT_COLOR = "#94a3b8";
 
 export function LabelsPanel({ workspaceID, initialNewName }: Props) {
-  const { workspaces, selectedID } = useWorkspaceStore();
-  const [activeID, setActiveID] = useState<string>(
-    workspaceID ?? selectedID ?? workspaces[0]?.id ?? "",
-  );
-  // Keep activeID in sync if the parent passes a workspaceID later, or if
-  // the global selected workspace changes while this panel is open.
-  useEffect(() => {
-    if (workspaceID && workspaceID !== activeID) {
-      setActiveID(workspaceID);
-    }
-  }, [workspaceID, activeID]);
-  useEffect(() => {
-    if (!workspaceID && !activeID && workspaces.length > 0) {
-      setActiveID(selectedID ?? workspaces[0].id);
-    }
-  }, [workspaceID, activeID, workspaces, selectedID]);
-
-  const labels = useLabelsStore((s) => (activeID ? s.byWorkspace[activeID] ?? EMPTY_LABELS : EMPTY_LABELS));
+  const labels = useLabelsStore((s) => s.byWorkspace[workspaceID] ?? EMPTY_LABELS);
   const refresh = useLabelsStore((s) => s.refresh);
-  const loading = useLabelsStore((s) => (activeID ? s.loading[activeID] : false));
+  const loading = useLabelsStore((s) => s.loading[workspaceID] ?? false);
 
   useEffect(() => {
-    if (activeID) refresh(activeID);
-  }, [activeID, refresh]);
+    refresh(workspaceID);
+  }, [workspaceID, refresh]);
 
   return (
     <div className="space-y-3">
-      {!workspaceID && (
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-slate-500">Workspace:</span>
-          {workspaces.map((w) => (
-            <button
-              key={w.id}
-              onClick={() => setActiveID(w.id)}
-              className={
-                "px-2 py-0.5 rounded border " +
-                (activeID === w.id
-                  ? "bg-slate-800 border-slate-600 text-slate-200"
-                  : "border-slate-700 text-slate-400 hover:text-slate-200")
-              }
-            >
-              <span
-                className="inline-block w-2 h-2 rounded-full mr-1.5"
-                style={{ backgroundColor: w.color || "#64748b" }}
-              />
-              {w.display_name || w.id}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {!activeID ? (
-        <div className="text-sm text-slate-500">Pick a workspace first.</div>
-      ) : (
-        <>
-          <NewLabelForm workspaceID={activeID} initialName={initialNewName} />
-          <ul className="divide-y divide-slate-800 rounded border border-slate-800">
-            {loading && labels.length === 0 && (
-              <li className="px-3 py-3 text-xs text-slate-500">loading…</li>
-            )}
-            {!loading && labels.length === 0 && (
-              <li className="px-3 py-3 text-xs text-slate-500">
-                No labels yet. Add one above to get started.
-              </li>
-            )}
-            {labels.map((l) => (
-              <LabelRow key={l.name} workspaceID={activeID} label={l} />
-            ))}
-          </ul>
-        </>
-      )}
+      <NewLabelForm workspaceID={workspaceID} initialName={initialNewName} />
+      <ul className="divide-y divide-slate-800 rounded border border-slate-800">
+        {loading && labels.length === 0 && (
+          <li className="px-3 py-3 text-xs text-slate-500">loading…</li>
+        )}
+        {!loading && labels.length === 0 && (
+          <li className="px-3 py-3 text-xs text-slate-500">
+            No labels yet. Add one above to get started.
+          </li>
+        )}
+        {labels.map((l) => (
+          <LabelRow key={l.name} workspaceID={workspaceID} label={l} />
+        ))}
+      </ul>
     </div>
   );
 }
