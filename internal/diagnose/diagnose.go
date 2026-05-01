@@ -1,4 +1,4 @@
-// Package diagnose implements the "Why is this stuck?" decision tree for
+// Package diagnose implements the "Tell me about X?" decision tree for
 // PrismConductor issues (issue #100). All logic is rules-based and
 // deterministic — no LLM calls, no side effects.
 package diagnose
@@ -12,7 +12,7 @@ import (
 	"prismconductor/internal/types"
 )
 
-// IssueDiagnosis is the structured result of a "Why is this stuck?" lookup.
+// IssueDiagnosis is the structured result of a "Tell me about X?" lookup.
 type IssueDiagnosis struct {
 	Summary       string   `json:"summary"`
 	Detail        []string `json:"detail"`

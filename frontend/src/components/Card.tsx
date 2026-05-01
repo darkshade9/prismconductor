@@ -148,7 +148,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
             onMouseDown={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
             className="text-slate-600 hover:text-slate-300 text-[11px] leading-none"
-            title="Why is this stuck? — show system diagnostic"
+            title="Tell me about X? — show system diagnostic"
           >
             ⓘ
           </button>
