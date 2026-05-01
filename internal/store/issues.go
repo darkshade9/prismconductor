@@ -81,16 +81,19 @@ func (s *Store) SaveIssue(iss types.Issue) (bool, error) {
 	}
 	iss.Column = col
 
-	// Decide new archived_at: a state=open save clears it (auto-unarchive on
-	// GitHub reopen); anything else preserves the existing value.
+	// archived_at is STICKY across SaveIssue calls. The original design tried
+	// to auto-unarchive on every save where State=="open" (so that a GitHub
+	// reopen would restore the card to the board), but the GitHub poller
+	// calls SaveIssue every 5 minutes for every issue — including DONE-column
+	// cards whose GitHub issue is still open. The result was that "Archive
+	// Done" worked for a few minutes and then the next poll cycle re-cleared
+	// archived_at, dumping every archived card back into DONE. Make
+	// archive/unarchive purely user-driven: SaveIssue never mutates
+	// archived_at. The explicit UnarchiveIssue / UnarchiveAll paths are the
+	// only way to restore an archived row.
 	var newArchivedAt any
 	unarchived := false
-	if iss.State == "open" {
-		if existingArchivedAt.Valid {
-			unarchived = true
-		}
-		// newArchivedAt stays nil → SET clears the column.
-	} else if existingArchivedAt.Valid {
+	if existingArchivedAt.Valid {
 		newArchivedAt = existingArchivedAt.Int64
 	}
 	if newArchivedAt != nil {

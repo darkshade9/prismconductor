@@ -71,6 +71,20 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         }
       }
     }
+    // Suppress lastFailure when the card has reached REVIEW or DONE — the
+    // PR is up, the work demonstrably succeeded, and any earlier
+    // failed/blocked session in this issue's history is stale. Without
+    // this, a false-positive BLOCKED match (or a real planner blow-up
+    // that the user later worked around manually) keeps the red glow on
+    // the card forever after the PR opens. Same logic for a successful
+    // EXECUTE session that came AFTER the most recent failure: the post-
+    // failure success retires the failure.
+    if (lastFail && (issue.column === "review" || issue.column === "done")) {
+      lastFail = null;
+    } else if (lastFail && mostRecent && mostRecent.state === "completed" &&
+        String(mostRecent.started_at ?? "") > String(lastFail.started_at ?? "")) {
+      lastFail = null;
+    }
     return { activeSession: active, activity: activeAct, lastFailure: lastFail, pausedSession: paused, mostRecentSession: mostRecent };
   })();
 
@@ -378,6 +392,16 @@ function StatusRow({
     const blockedReason = isBlocked
       ? (activeSession.blocked_reason || "BLOCKED: (no reason given)")
       : null;
+    // Disambiguate fresh-execute from continue-on-open-PR. ContinueWork moves
+    // the card to in_progress AND the issue already has a PR number — that
+    // tuple is unique to a Continue run because the original execute moves
+    // the card to review on PR_OPENED. Without this label users see
+    // identical "working" copy on both and can't tell which mode is active.
+    const isContinue =
+      !planMode &&
+      activeSession.state === "running" &&
+      prNumber != null &&
+      column === "in_progress";
     const label = isBlocked
       ? "blocked"
       : activeSession.state === "waiting_for_input"
@@ -386,6 +410,8 @@ function StatusRow({
         : "needs input"
       : planMode
       ? "planning"
+      : isContinue
+      ? `continuing PR #${prNumber}`
       : "working";
     const dotCls = isBlocked ? "bg-red-400" : planMode ? "bg-sky-400" : "bg-purple-400";
     const textCls = isBlocked ? "text-red-300" : planMode ? "text-sky-300" : "text-purple-300";

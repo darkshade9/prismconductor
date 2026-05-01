@@ -213,7 +213,23 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
       return;
     }
 
-    // Same-column reorder.
+    // Same-column reorder. Special case: a card that is already in PLAN but
+    // has neither a plan attached nor an active plan session is "stuck" —
+    // its prior planner exited without producing a plan (e.g. emitted Work
+    // complete. without `Plan written to ...`). Without this branch, dnd-kit
+    // treats a re-drop in the same column as a no-op reorder and the user
+    // has no way to re-trigger the planner short of dragging the card out
+    // and back in. Calling moveColumn with the same column lets the backend
+    // re-run its drag-to-PLAN auto-spawn rules and start a fresh plan.
+    if (targetCol === "plan" && !activeIssue.plan) {
+      const hasActivePlan = issues.some(
+        (i) => i.number === activeIssue.number && i.session_id,
+      );
+      if (!hasActivePlan) {
+        await moveColumn(activeIssue.workspace_id, activeIssue.number, targetCol);
+        return;
+      }
+    }
     const overIssue = findIssue(overStr);
     if (!overIssue || overIssue.number === activeIssue.number) return;
     const ids = colIssues.map((i) => i.number);

@@ -406,7 +406,14 @@ func TestArchiveDoneIdempotent(t *testing.T) {
 	}
 }
 
-func TestSaveIssueAutoUnarchivesOnReopen(t *testing.T) {
+// TestSaveIssuePreservesArchivedAtOnReopen pins the bug-fix behaviour: a
+// state=open SaveIssue (e.g. the 5-minute GitHub poller's natural re-save of
+// every still-open issue) MUST NOT clobber a user-set archived_at. The prior
+// "auto-unarchive on reopen" arm fired on every poll and clobbered any card
+// the user had archived from DONE — DONE is a board column, not a GitHub
+// state, so most archived cards still have State=="open" upstream.
+// Unarchive is now exclusively an explicit user action.
+func TestSaveIssuePreservesArchivedAtOnReopen(t *testing.T) {
 	s := newTestStore(t)
 	if _, err := s.SaveIssue(types.Issue{
 		WorkspaceID: "ws1",
@@ -420,7 +427,8 @@ func TestSaveIssueAutoUnarchivesOnReopen(t *testing.T) {
 	if _, err := s.ArchiveDone("ws1"); err != nil {
 		t.Fatalf("ArchiveDone: %v", err)
 	}
-	// Now GitHub poll shows it state=open again.
+	// Now the GitHub poller re-fetches the issue and saves it again. The
+	// archive must survive.
 	unarchived, err := s.SaveIssue(types.Issue{
 		WorkspaceID: "ws1",
 		Number:      42,
@@ -431,15 +439,16 @@ func TestSaveIssueAutoUnarchivesOnReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveIssue reopen: %v", err)
 	}
-	if !unarchived {
-		t.Errorf("unarchived = false, want true")
+	if unarchived {
+		t.Errorf("unarchived = true, want false (archive must be sticky)")
 	}
 	live, _ := s.ListIssues("ws1")
-	if len(live) != 1 || live[0].Number != 42 {
-		t.Errorf("reopened row missing from ListIssues: %+v", live)
+	if len(live) != 0 {
+		t.Errorf("archived row should be excluded from ListIssues, got: %+v", live)
 	}
-	if live[0].ArchivedAt != nil {
-		t.Errorf("ArchivedAt = %v, want nil after reopen", live[0].ArchivedAt)
+	archived, _ := s.ListArchivedIssues("ws1")
+	if len(archived) != 1 || archived[0].Number != 42 {
+		t.Errorf("archived row should remain in ListArchivedIssues, got: %+v", archived)
 	}
 }
 

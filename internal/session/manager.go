@@ -821,10 +821,36 @@ func mapTerminalState(prev types.SessionState, waitErr error) types.SessionState
 	return prev
 }
 
+// sentinelAtLineStart reports whether the worker's text on this line begins
+// with `pat`. Lines from the StreamParser are role-prefixed (e.g.
+// `@asst BLOCKED: tests failed`), so the sentinel must follow the prefix
+// not be embedded mid-sentence. Plain string-only check per CLAUDE.md;
+// just anchored to the start so quoting/discussion of the literal sentinel
+// text inside an assistant message can't false-positive a state transition.
+func sentinelAtLineStart(line, pat string) bool {
+	// Strip the 6-char role prefix `@xxxx ` if present. RoleAssistant /
+	// RoleSystem / RoleResult / RoleUser / RoleTool / RoleLive are all six
+	// characters wide ending in a space, so a fixed-width skip works without
+	// importing the role table.
+	if len(line) >= 6 && line[0] == '@' && line[5] == ' ' {
+		line = line[6:]
+	}
+	return strings.HasPrefix(line, pat)
+}
+
 func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 	prev := rs.sess.State
+	// Sentinel matching is anchored to the start of the assistant text (after
+	// the role prefix). Without anchoring, any plan/execute run that quotes
+	// or discusses the literal text — e.g. a ticket body that contains the
+	// word "BLOCKED:" — flips the session into the wrong terminal state on
+	// the quoting line, even though the worker is happily mid-task. The
+	// skill contract already requires sentinels to be the leading text of
+	// their own line, so anchoring is just enforcing what the worker should
+	// be doing anyway. Per CLAUDE.md "PTY pattern matching is plain string
+	// contains, not regex" — this stays string-only, just at the line head.
 	switch {
-	case strings.Contains(line, PatternQuestionPending):
+	case sentinelAtLineStart(line, PatternQuestionPending):
 		// Mid-run question (#17). Capture the trailing UUID; flip the session
 		// to paused_for_question so the answer-file watcher can pick it up.
 		// Order matters: this arm must run BEFORE PatternQuestion (which only
@@ -852,10 +878,10 @@ func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 		if m.store != nil {
 			_ = m.store.SaveSession(rs.sess, rs.transcriptPath)
 		}
-	case strings.Contains(line, PatternQuestion):
+	case sentinelAtLineStart(line, PatternQuestion):
 		rs.sess.State = types.StateWaitingForInput
 		rs.sess.LastPrompt = line
-	case strings.Contains(line, PatternPlanWritten):
+	case sentinelAtLineStart(line, PatternPlanWritten):
 		// Extract the relative path the worker emitted. The sentinel ends with
 		// ".prismconductor/plans/" so we pick up everything from that prefix
 		// to the end of the line — yields ".prismconductor/plans/<num>-rev<N>.json".
@@ -869,7 +895,7 @@ func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 		if m.onPlanReady == nil && m.bus != nil {
 			m.bus.Publish(eventbus.EvtPlanReady, rs.sess.ID)
 		}
-	case strings.Contains(line, PatternPROpened):
+	case sentinelAtLineStart(line, PatternPROpened):
 		// No state mutation here — worker keeps running until PatternComplete.
 		// Mirrors the PatternPlanWritten arm shape.
 		idx := strings.Index(line, PatternPROpened)
@@ -879,9 +905,9 @@ func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 		} else if m.onPROpened != nil {
 			m.onPROpened(*rs.sess, url)
 		}
-	case strings.Contains(line, PatternComplete):
+	case sentinelAtLineStart(line, PatternComplete):
 		rs.sess.State = types.StateCompleted
-	case strings.Contains(line, PatternBlocked):
+	case sentinelAtLineStart(line, PatternBlocked):
 		rs.sess.State = types.StateBlocked
 		// Capture the reason text after the BLOCKED: prefix so the UI can
 		// surface it on the card. The line is already stripped + role-prefixed
