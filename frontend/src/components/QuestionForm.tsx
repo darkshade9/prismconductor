@@ -1,6 +1,8 @@
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { types } from "../../wailsjs/go/models";
+import { CopyMenu, CopyAction } from "./CopyMenu";
 
 export type AnswerState = {
   single: Record<string, string>;
@@ -69,6 +71,8 @@ export function QuestionForm({
   state: AnswerState;
   onChange: (next: AnswerState) => void;
 }) {
+  const [qMenu, setQMenu] = useState<{ x: number; y: number; actions: CopyAction[] } | null>(null);
+
   function setSingle(id: string, value: string) {
     onChange({ ...state, single: { ...state.single, [id]: value } });
   }
@@ -77,8 +81,14 @@ export function QuestionForm({
     const next = cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value];
     onChange({ ...state, multi: { ...state.multi, [id]: next } });
   }
+  function openQMenu(e: React.MouseEvent, actions: CopyAction[]) {
+    e.preventDefault();
+    e.stopPropagation();
+    setQMenu({ x: e.clientX, y: e.clientY, actions });
+  }
 
   return (
+    <>
     <ol className="space-y-4 list-none p-0">
       {questions.map((q, idx) => {
         const { prompt, expanded } = expandLetterOptions(q.prompt, q.options ?? []);
@@ -89,7 +99,10 @@ export function QuestionForm({
           >
             <div className="flex items-baseline gap-2 mb-2">
               <span className="text-xs font-mono text-slate-500 mt-0.5">{idx + 1}.</span>
-              <div className="flex-1 prose prose-sm prose-invert max-w-none prose-p:my-0 prose-code:text-amber-200 prose-code:bg-slate-950 prose-code:px-1 prose-code:rounded prose-code:before:content-[''] prose-code:after:content-['']">
+              <div
+                className="flex-1 prose prose-sm prose-invert max-w-none prose-p:my-0 prose-code:text-amber-200 prose-code:bg-slate-950 prose-code:px-1 prose-code:rounded prose-code:before:content-[''] prose-code:after:content-['']"
+                onContextMenu={(e) => openQMenu(e, [{ label: "Copy prompt", text: prompt }])}
+              >
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{prompt}</ReactMarkdown>
               </div>
               {q.required && !q.default && (
@@ -120,6 +133,7 @@ export function QuestionForm({
                           ? "border-sky-600 bg-sky-950/30"
                           : "border-slate-800 hover:border-slate-600 hover:bg-slate-900/60")
                       }
+                      onContextMenu={(e) => openQMenu(e, [{ label: "Copy option", text: opt.label }])}
                     >
                       <input
                         type={q.type === "multi_choice" ? "checkbox" : "radio"}
@@ -212,6 +226,10 @@ export function QuestionForm({
         );
       })}
     </ol>
+    {qMenu && (
+      <CopyMenu x={qMenu.x} y={qMenu.y} actions={qMenu.actions} onClose={() => setQMenu(null)} />
+    )}
+    </>
   );
 }
 

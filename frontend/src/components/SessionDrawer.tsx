@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { KillSession, ReadTranscript, SendInput } from "../../wailsjs/go/main/App";
 import { useSessionStore } from "../stores/sessionStore";
+import { CopyMenu, CopyAction } from "./CopyMenu";
 
 const STATE_COLOR: Record<string, string> = {
   running: "text-emerald-400",
@@ -38,6 +39,7 @@ export function SessionDrawer({ open, onClose }: { open: boolean; onClose: () =>
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [verbose, setVerbose] = useState(false);
+  const [lineMenu, setLineMenu] = useState<{ x: number; y: number; actions: CopyAction[] } | null>(null);
   const sess = activeId ? sessions[activeId] : null;
   const noisyRoles = new Set<Role>(["tool", "res", "sys"]);
   const visibleLines = (sess?.lines ?? []).filter((raw) => {
@@ -124,6 +126,11 @@ export function SessionDrawer({ open, onClose }: { open: boolean; onClose: () =>
               <div
                 key={i}
                 className={`rounded px-2 py-1 ${meta.bg} flex gap-2`}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setLineMenu({ x: e.clientX, y: e.clientY, actions: [{ label: "Copy line", text }] });
+                }}
               >
                 {meta.label && (
                   <span className={`shrink-0 font-mono text-[10px] uppercase tracking-wider ${meta.cls} pt-0.5`}>
@@ -139,6 +146,14 @@ export function SessionDrawer({ open, onClose }: { open: boolean; onClose: () =>
           <span className="text-slate-600 px-2">
             {sess?.lines.length ? "all output filtered — toggle verbose to show tool calls" : "no output yet…"}
           </span>
+        )}
+        {lineMenu && (
+          <CopyMenu
+            x={lineMenu.x}
+            y={lineMenu.y}
+            actions={lineMenu.actions}
+            onClose={() => setLineMenu(null)}
+          />
         )}
       </div>
 
