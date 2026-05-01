@@ -808,6 +808,24 @@ export namespace githubauth {
 
 export namespace issueview {
 	
+	export class ConflictsInfo {
+	    pr_number: number;
+	    base: string;
+	    head: string;
+	    conflicting_files: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ConflictsInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pr_number = source["pr_number"];
+	        this.base = source["base"];
+	        this.head = source["head"];
+	        this.conflicting_files = source["conflicting_files"];
+	    }
+	}
 	export class TestsFailingInfo {
 	    failing_jobs: string[];
 	    failing_check_run_urls: string[];
@@ -856,6 +874,7 @@ export namespace issueview {
 	    pool_badge?: PoolBadge;
 	    derived_column: string;
 	    tests_failing_info?: TestsFailingInfo;
+	    conflicts_info?: ConflictsInfo;
 	
 	    static createFrom(source: any = {}) {
 	        return new IssueView(source);
@@ -872,6 +891,7 @@ export namespace issueview {
 	        this.pool_badge = this.convertValues(source["pool_badge"], PoolBadge);
 	        this.derived_column = source["derived_column"];
 	        this.tests_failing_info = this.convertValues(source["tests_failing_info"], TestsFailingInfo);
+	        this.conflicts_info = this.convertValues(source["conflicts_info"], ConflictsInfo);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

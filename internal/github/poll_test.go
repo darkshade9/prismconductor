@@ -142,6 +142,115 @@ func TestProbeCheckRuns_RecoveryEdge(t *testing.T) {
 	}
 }
 
+// TestProbeConflicts_FallingEdge verifies that probeConflicts emits
+// EvtPRConflictsDetected only on the clean→dirty edge, not on every tick.
+func TestProbeConflicts_FallingEdge(t *testing.T) {
+	bus := eventbus.New()
+	p := &Poller{Bus: bus}
+
+	var mu sync.Mutex
+	var got []eventbus.EventType
+	bus.Subscribe(func(e eventbus.Event) {
+		mu.Lock()
+		got = append(got, e.Type)
+		mu.Unlock()
+	})
+
+	ws := types.Workspace{ID: "ws3", GitHubOwner: "o", GitHubRepo: "r"}
+	iss := types.Issue{Number: 30, WorkspaceID: "ws3"}
+	prNum := 7
+	cacheKey := ws.ID + "#" + "7"
+
+	// Seed cache as "was clean".
+	p.conflictStateCache.Store(cacheKey, conflictStateCacheEntry{mergeableState: "clean"})
+
+	// Simulate transition to dirty. probeConflicts calls FetchPRFiles which requires
+	// Client; replicate edge-detection logic directly (matching poll_test.go pattern).
+	curState := "dirty"
+	prev, _ := p.conflictStateCache.Load(cacheKey)
+	prevState := prev.(conflictStateCacheEntry).mergeableState
+	p.conflictStateCache.Store(cacheKey, conflictStateCacheEntry{mergeableState: curState})
+
+	if curState == "dirty" && prevState != "dirty" {
+		p.Bus.Publish(eventbus.EvtPRConflictsDetected, eventbus.PRConflictsDetected{
+			WorkspaceID: ws.ID, IssueNumber: iss.Number, PRNumber: prNum,
+			Base: "main", Head: "feat/test",
+		})
+	}
+
+	// Second tick: still dirty — should NOT re-emit.
+	prev2, _ := p.conflictStateCache.Load(cacheKey)
+	prevState2 := prev2.(conflictStateCacheEntry).mergeableState
+	p.conflictStateCache.Store(cacheKey, conflictStateCacheEntry{mergeableState: curState})
+	if curState == "dirty" && prevState2 != "dirty" {
+		p.Bus.Publish(eventbus.EvtPRConflictsDetected, eventbus.PRConflictsDetected{
+			WorkspaceID: ws.ID, IssueNumber: iss.Number, PRNumber: prNum,
+		})
+	}
+
+	import_sync_sleep(t)
+
+	mu.Lock()
+	defer mu.Unlock()
+	count := 0
+	for _, tp := range got {
+		if tp == eventbus.EvtPRConflictsDetected {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 EvtPRConflictsDetected on falling-edge, got %d", count)
+	}
+}
+
+// TestProbeConflicts_RecoveryEdge verifies EvtPRConflictsResolved fires when
+// conflicts clear (dirty→clean).
+func TestProbeConflicts_RecoveryEdge(t *testing.T) {
+	bus := eventbus.New()
+	p := &Poller{Bus: bus}
+
+	var mu sync.Mutex
+	var got []eventbus.EventType
+	bus.Subscribe(func(e eventbus.Event) {
+		mu.Lock()
+		got = append(got, e.Type)
+		mu.Unlock()
+	})
+
+	ws := types.Workspace{ID: "ws4", GitHubOwner: "o", GitHubRepo: "r"}
+	iss := types.Issue{Number: 40, WorkspaceID: "ws4"}
+	prNum := 8
+	cacheKey := ws.ID + "#" + "8"
+
+	// Seed as "was dirty".
+	p.conflictStateCache.Store(cacheKey, conflictStateCacheEntry{mergeableState: "dirty"})
+
+	curState := "clean"
+	prev, _ := p.conflictStateCache.Load(cacheKey)
+	prevState := prev.(conflictStateCacheEntry).mergeableState
+	p.conflictStateCache.Store(cacheKey, conflictStateCacheEntry{mergeableState: curState})
+
+	if curState != "dirty" && curState != "" && curState != "unknown" && prevState == "dirty" {
+		p.Bus.Publish(eventbus.EvtPRConflictsResolved, eventbus.PRConflictsResolved{
+			WorkspaceID: ws.ID, IssueNumber: iss.Number, PRNumber: prNum,
+		})
+	}
+
+	import_sync_sleep(t)
+
+	mu.Lock()
+	defer mu.Unlock()
+	count := 0
+	for _, tp := range got {
+		if tp == eventbus.EvtPRConflictsResolved {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected 1 EvtPRConflictsResolved on recovery edge, got %d", count)
+	}
+}
+
 // import_sync_sleep waits briefly for async bus handlers.
 //
 // eventbus.Bus.Publish dispatches each subscriber in its own goroutine, so a

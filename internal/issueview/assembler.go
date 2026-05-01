@@ -22,6 +22,13 @@ type checkFailEntry struct {
 	maxReached bool
 }
 
+// conflictEntry is the in-memory state the Assembler keeps per issue for
+// PR merge-conflict state. Set on EvtPRConflictsDetected, cleared on
+// EvtPRConflictsResolved / EvtPRMerged / EvtPRClosedUnmerged (#124).
+type conflictEntry struct {
+	info eventbus.PRConflictsDetected
+}
+
 // issueStore is the subset of *store.Store that the Assembler needs.
 type issueStore interface {
 	LoadIssue(workspaceID string, number int) (types.Issue, error)
@@ -37,18 +44,20 @@ type Assembler struct {
 	store issueStore
 	bus   *eventbus.Bus
 
-	mu           sync.Mutex
-	cache        map[string]string          // "wsID#num" → last-emitted JSON
-	checkFails   map[string]*checkFailEntry // "wsID#num" → latest check failure
+	mu            sync.Mutex
+	cache         map[string]string           // "wsID#num" → last-emitted JSON
+	checkFails    map[string]*checkFailEntry  // "wsID#num" → latest check failure
+	conflictFails map[string]*conflictEntry   // "wsID#num" → latest conflict state
 }
 
 // New wires the Assembler to the bus. Call once at startup after the store is ready.
 func New(bus *eventbus.Bus, st issueStore) *Assembler {
 	a := &Assembler{
-		store:      st,
-		bus:        bus,
-		cache:      make(map[string]string),
-		checkFails: make(map[string]*checkFailEntry),
+		store:         st,
+		bus:           bus,
+		cache:         make(map[string]string),
+		checkFails:    make(map[string]*checkFailEntry),
+		conflictFails: make(map[string]*conflictEntry),
 	}
 	bus.Subscribe(a.handleEvent)
 	return a
@@ -72,6 +81,8 @@ var issueRelevantEvents = map[eventbus.EventType]bool{
 	eventbus.EvtPendingPoolDequeued: true,
 	eventbus.EvtPRChecksFailed:      true,
 	eventbus.EvtPRChecksRecovered:   true,
+	eventbus.EvtPRConflictsDetected: true,
+	eventbus.EvtPRConflictsResolved: true,
 }
 
 func (a *Assembler) handleEvent(e eventbus.Event) {
@@ -103,6 +114,21 @@ func (a *Assembler) handleEvent(e eventbus.Event) {
 			key := wsID + "#" + strconv.Itoa(issueNum)
 			a.mu.Lock()
 			delete(a.checkFails, key)
+			delete(a.conflictFails, key)
+			a.mu.Unlock()
+		}
+	case eventbus.EvtPRConflictsDetected:
+		if p, ok := e.Payload.(eventbus.PRConflictsDetected); ok {
+			key := p.WorkspaceID + "#" + strconv.Itoa(p.IssueNumber)
+			a.mu.Lock()
+			a.conflictFails[key] = &conflictEntry{info: p}
+			a.mu.Unlock()
+		}
+	case eventbus.EvtPRConflictsResolved:
+		if wsID != "" && issueNum != 0 {
+			key := wsID + "#" + strconv.Itoa(issueNum)
+			a.mu.Lock()
+			delete(a.conflictFails, key)
 			a.mu.Unlock()
 		}
 	}
@@ -163,6 +189,7 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 	key := workspaceID + "#" + strconv.Itoa(issueNumber)
 	a.mu.Lock()
 	cfEntry := a.checkFails[key]
+	conflEntry := a.conflictFails[key]
 	a.mu.Unlock()
 
 	var testsFailingInfo *TestsFailingInfo
@@ -177,6 +204,16 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		}
 	}
 
+	var conflictsInfo *ConflictsInfo
+	if conflEntry != nil {
+		conflictsInfo = &ConflictsInfo{
+			PRNumber:         conflEntry.info.PRNumber,
+			Base:             conflEntry.info.Base,
+			Head:             conflEntry.info.Head,
+			ConflictingFiles: conflEntry.info.ConflictingFiles,
+		}
+	}
+
 	return IssueView{
 		Issue:            iss,
 		LatestPlan:       plan,
@@ -187,6 +224,7 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		PoolBadge:        poolBadge,
 		DerivedColumn:    derivedColumn(iss, plan, active),
 		TestsFailingInfo: testsFailingInfo,
+		ConflictsInfo:    conflictsInfo,
 	}, nil
 }
 
@@ -347,6 +385,10 @@ func extractIssueKey(e eventbus.Event) (wsID string, issueNum int) {
 	case eventbus.PRChecksFailed:
 		return p.WorkspaceID, p.IssueNumber
 	case eventbus.PRChecksRecovered:
+		return p.WorkspaceID, p.IssueNumber
+	case eventbus.PRConflictsDetected:
+		return p.WorkspaceID, p.IssueNumber
+	case eventbus.PRConflictsResolved:
 		return p.WorkspaceID, p.IssueNumber
 	case map[string]any:
 		wsID, _ = p["workspace_id"].(string)
