@@ -230,6 +230,20 @@ CREATE TABLE IF NOT EXISTS pools (
 			return err
 		}
 	}
+	// Issue #101: per-session LLM token counts and estimated cost persisted at
+	// session end. Dedicated columns enable fast per-pool/per-goal aggregation
+	// without unmarshalling every JSON blob. Default 0 so existing rows read 0.
+	for _, col := range []string{
+		`ALTER TABLE sessions ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE sessions ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE sessions ADD COLUMN estimated_cost_cents REAL NOT NULL DEFAULT 0`,
+	} {
+		if _, err := s.DB.Exec(col); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return err
+			}
+		}
+	}
 	// One-time backfill: sync `$.state` inside the JSON blob to the indexed
 	// `state` column for any drifted rows. Pre-fix (UpdateSessionState only
 	// touched the indexed column), every terminal transition left

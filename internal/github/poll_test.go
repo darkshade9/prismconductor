@@ -3,6 +3,7 @@ package github
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"prismconductor/internal/eventbus"
 	"prismconductor/internal/types"
@@ -142,16 +143,16 @@ func TestProbeCheckRuns_RecoveryEdge(t *testing.T) {
 }
 
 // import_sync_sleep waits briefly for async bus handlers.
+//
+// eventbus.Bus.Publish dispatches each subscriber in its own goroutine, so a
+// caller that publishes and then immediately reads the result needs to give
+// the runtime a chance to actually run those goroutines. The original
+// implementation just chained `close(ch); <-ch`, which is a single yield —
+// not enough on most schedulers and the event arrives after the assertion
+// has already run, so the test sees `got 0` deterministically.
 func import_sync_sleep(t *testing.T) {
 	t.Helper()
-	// Use a channel-based spin instead of time.Sleep to stay deterministic.
-	done := make(chan struct{})
-	go func() {
-		// 10ms is generous for in-process goroutine scheduling.
-		ch := make(chan struct{})
-		go func() { close(ch) }()
-		<-ch
-		close(done)
-	}()
-	<-done
+	// 50ms is well below the test-suite budget but long enough for any
+	// in-process goroutine to be scheduled even on a busy CI runner.
+	time.Sleep(50 * time.Millisecond)
 }

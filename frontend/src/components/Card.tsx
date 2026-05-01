@@ -215,7 +215,11 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
       )}
       <div className="flex justify-end items-center gap-2 mt-0.5">
         {(issue.cost_usd ?? 0) > 0 && (
-          <CostChip costUSD={issue.cost_usd!} />
+          <CostChip
+            costUSD={issue.cost_usd!}
+            inputTokens={view?.last_session?.input_tokens ?? null}
+            outputTokens={view?.last_session?.output_tokens ?? null}
+          />
         )}
         <WorkTimerChip
           baseSecs={issue.work_seconds ?? 0}
@@ -289,13 +293,36 @@ function formatWorkDuration(s: number): string {
   return `${d}d${h.toString().padStart(2, "0")}h`;
 }
 
-function CostChip({ costUSD }: { costUSD: number }) {
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+function CostChip({
+  costUSD,
+  inputTokens,
+  outputTokens,
+}: {
+  costUSD: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+}) {
+  const totalTokens = (inputTokens ?? 0) + (outputTokens ?? 0);
+  const tokenSuffix = totalTokens > 0 ? ` · ${formatTokens(totalTokens)} tok` : "";
+  let tooltip = `Cumulative LLM cost: $${costUSD.toFixed(4)}`;
+  if (inputTokens != null || outputTokens != null) {
+    const parts = [];
+    if (inputTokens != null && inputTokens > 0) parts.push(`${formatTokens(inputTokens)} in`);
+    if (outputTokens != null && outputTokens > 0) parts.push(`${formatTokens(outputTokens)} out`);
+    if (parts.length > 0) tooltip += `\nlast session: ${parts.join(", ")}`;
+  }
   return (
     <span
       className="text-[10px] text-slate-500 font-mono tabular-nums"
-      title={`Cumulative LLM cost: $${costUSD.toFixed(4)}`}
+      title={tooltip}
     >
-      ${costUSD < 0.01 ? costUSD.toFixed(4) : costUSD.toFixed(2)}
+      ${costUSD < 0.01 ? costUSD.toFixed(4) : costUSD.toFixed(2)}{tokenSuffix}
     </span>
   );
 }
