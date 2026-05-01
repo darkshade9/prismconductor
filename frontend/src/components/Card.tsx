@@ -5,9 +5,8 @@ import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
 import { Replan, ClearIssueFailure } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "../stores/sessionStore";
-import { usePlanReadyStore } from "../stores/planReadyStore";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
-import { usePoolsStore } from "../stores/usePoolsStore";
+import { useIssueViewStore } from "../stores/useIssueViewStore";
 import { resolveProviderIcon } from "../lib/providerIcon";
 import { getContrastText } from "../lib/contrast";
 import { LabelManagePopover } from "./LabelManagePopover";
@@ -35,71 +34,24 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
     opacity: isDragging ? 0.4 : 1,
   };
 
-  // Live state: subscribe to the *whole* sessions table so we re-render when any
-  // session changes.
-  const allSessions = useSessionStore((s) => s.sessions);
-  const pools = usePoolsStore((s) => s.pools);
-  const { activeSession, activity, lastFailure, pausedSession, mostRecentSession } = (() => {
-    let active: types.Session | null = null;
-    let activeAct: SessionActivity | null = null;
-    let lastFail: types.Session | null = null;
-    let paused: types.Session | null = null;
-    let mostRecent: types.Session | null = null;
-    for (const view of Object.values(allSessions)) {
-      const m = view.meta;
-      if (!m) continue;
-      if (m.workspace_id !== issue.workspace_id || m.issue_number !== issue.number) continue;
-      // Track most-recent session by start time for provider badge (issue #37).
-      if (!mostRecent || String(m.started_at ?? "") > String(mostRecent.started_at ?? "")) {
-        mostRecent = m;
-      }
-      if (m.state === "paused_for_question") {
-        // Paused for a mid-run question (#17). Track separately so it overrides
-        // both running/active and last-failure rendering.
-        if (!paused || String(m.started_at ?? "") > String(paused.started_at ?? "")) {
-          paused = m;
-        }
-      } else if ((m.state === "running" || m.state === "waiting_for_input" || (m.state === "blocked" && !m.acknowledged_at))) {
-        if (!active) {
-          active = m;
-          activeAct = view.activity ?? null;
-        }
-      } else if ((m.state === "failed" || m.state === "blocked") && m.blocked_reason && !m.acknowledged_at) {
-        // Newest failed-with-reason unacknowledged session, regardless of column.
-        if (!lastFail || String(m.started_at ?? "") > String(lastFail.started_at ?? "")) {
-          lastFail = m;
-        }
-      }
-    }
-    // Suppress lastFailure when the card has reached REVIEW or DONE — the
-    // PR is up, the work demonstrably succeeded, and any earlier
-    // failed/blocked session in this issue's history is stale. Without
-    // this, a false-positive BLOCKED match (or a real planner blow-up
-    // that the user later worked around manually) keeps the red glow on
-    // the card forever after the PR opens. Same logic for a successful
-    // EXECUTE session that came AFTER the most recent failure: the post-
-    // failure success retires the failure.
-    if (lastFail && (issue.column === "review" || issue.column === "done")) {
-      lastFail = null;
-    } else if (lastFail && mostRecent && mostRecent.state === "completed" &&
-        String(mostRecent.started_at ?? "") > String(lastFail.started_at ?? "")) {
-      lastFail = null;
-    }
-    return { activeSession: active, activity: activeAct, lastFailure: lastFail, pausedSession: paused, mostRecentSession: mostRecent };
-  })();
+  // Canonical IssueView from the backend assembler (#98). Provides
+  // pre-derived session state, pool badge, and plan-ready flag without
+  // requiring the card to reconcile multiple stores.
+  const view = useIssueViewStore((s) => s.get(issue.workspace_id, issue.number));
+  const activeSession: types.Session | null = view?.active_session ?? null;
+  const pausedSession: types.Session | null = view?.paused_session ?? null;
+  const lastFailure: types.Session | null = view?.last_failure ?? null;
+  // Activity is live-streaming data not captured in the view — still from sessionStore.
+  const activity: SessionActivity | null = useSessionStore((s) =>
+    activeSession ? (s.sessions[activeSession.id]?.activity ?? null) : null
+  );
 
-  // Provider badge (issue #37): resolve from most-recent session's pool_id.
+  // Provider badge (#37): resolved by the assembler from the most-recent session's pool_id.
   const providerBadge = (() => {
-    const poolId = mostRecentSession?.pool_id;
-    if (!poolId) return null;
-    const pool = pools[poolId];
-    if (!pool) {
-      // Pool was deleted — show generic icon with deleted tooltip.
-      const icon = resolveProviderIcon("generic");
-      return { icon, tooltipName: "(deleted pool)", deleted: true };
-    }
-    const icon = resolveProviderIcon(pool.provider);
-    return { icon, tooltipName: pool.name, deleted: false };
+    const badge = view?.pool_badge;
+    if (!badge) return null;
+    const icon = resolveProviderIcon(badge.provider);
+    return { icon, tooltipName: badge.name, deleted: false };
   })();
   if (activeSession) {
     // Visible in DevTools (Cmd+Opt+I in the Wails window) — confirms the
@@ -110,7 +62,12 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
     );
   }
 
-  const planReady = usePlanReadyStore((s) => s.isReady(issue.workspace_id, issue.number));
+  // Plan-ready state derived from the canonical view's LatestPlan.
+  const planReady = (() => {
+    const p = view?.latest_plan;
+    if (!p || !p.ready_to_execute || p.approved_at) return null;
+    return { revision: p.revision };
+  })();
 
   const blocked = (issue.dependencies ?? []).length > 0;
   const isPrimitive = !blocked && (issue.priority ?? 0) >= 0.7;
@@ -220,13 +177,15 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         workspaceID={issue.workspace_id}
         issueNumber={issue.number}
         waitingForPool={issue.waiting_for_pool ?? false}
-        pools={pools}
         column={issue.column}
         prNumber={issue.pr_number ?? null}
         onContinue={() => setContinueOpen(true)}
         onClearFailure={() => ClearIssueFailure(issue.workspace_id, issue.number).catch((err: any) => alert(String(err?.message ?? err)))}
       />
-      <div className="flex justify-end mt-0.5">
+      <div className="flex justify-end items-center gap-2 mt-0.5">
+        {(issue.cost_usd ?? 0) > 0 && (
+          <CostChip costUSD={issue.cost_usd!} />
+        )}
         <WorkTimerChip
           baseSecs={issue.work_seconds ?? 0}
           planBaseSecs={issue.work_seconds_plan ?? 0}
@@ -291,6 +250,17 @@ function formatWorkDuration(s: number): string {
   return `${d}d${h.toString().padStart(2, "0")}h`;
 }
 
+function CostChip({ costUSD }: { costUSD: number }) {
+  return (
+    <span
+      className="text-[10px] text-slate-500 font-mono tabular-nums"
+      title={`Cumulative LLM cost: $${costUSD.toFixed(4)}`}
+    >
+      ${costUSD < 0.01 ? costUSD.toFixed(4) : costUSD.toFixed(2)}
+    </span>
+  );
+}
+
 function WorkTimerChip({
   baseSecs,
   planBaseSecs,
@@ -341,7 +311,6 @@ function StatusRow({
   workspaceID,
   issueNumber,
   waitingForPool,
-  pools,
   column,
   prNumber,
   onContinue,
@@ -359,7 +328,6 @@ function StatusRow({
   workspaceID: string;
   issueNumber: number;
   waitingForPool: boolean;
-  pools: Record<string, import("../stores/usePoolsStore").PoolEntry>;
   column: string;
   prNumber: number | null;
   onContinue: () => void;
@@ -444,12 +412,7 @@ function StatusRow({
     );
   }
   if (!activeSession && waitingForPool) {
-    // Build tooltip: "waiting for an available work pool — 0 of 7 slots free (Opus, Sonnet)"
-    const poolNames = Object.values(pools).map((p) => p.name);
-    const tooltip =
-      poolNames.length > 0
-        ? `waiting for an available agent pool — ${poolNames.join(", ")}`
-        : "no agent pools configured — add one in Settings → Pools";
+    const tooltip = "waiting for an available agent pool";
     return (
       <>
         <div className="text-[11px] mt-1.5 flex items-center gap-1.5 flex-wrap" title={tooltip}>

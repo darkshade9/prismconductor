@@ -783,6 +783,69 @@ export namespace githubauth {
 
 }
 
+export namespace issueview {
+	
+	export class PoolBadge {
+	    pool_id: string;
+	    name: string;
+	    provider: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PoolBadge(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pool_id = source["pool_id"];
+	        this.name = source["name"];
+	        this.provider = source["provider"];
+	    }
+	}
+	export class IssueView {
+	    issue: types.Issue;
+	    latest_plan?: types.Plan;
+	    active_session?: types.Session;
+	    paused_session?: types.Session;
+	    last_failure?: types.Session;
+	    pool_badge?: PoolBadge;
+	    derived_column: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new IssueView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.issue = this.convertValues(source["issue"], types.Issue);
+	        this.latest_plan = this.convertValues(source["latest_plan"], types.Plan);
+	        this.active_session = this.convertValues(source["active_session"], types.Session);
+	        this.paused_session = this.convertValues(source["paused_session"], types.Session);
+	        this.last_failure = this.convertValues(source["last_failure"], types.Session);
+	        this.pool_badge = this.convertValues(source["pool_badge"], PoolBadge);
+	        this.derived_column = source["derived_column"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace logbuffer {
 	
 	export class Entry {
@@ -861,6 +924,24 @@ export namespace main {
 	        this.name = source["name"];
 	        this.path = source["path"];
 	        this.body = source["body"];
+	    }
+	}
+	export class CostEstimate {
+	    tokens: number;
+	    cost_usd: number;
+	    has_rate: boolean;
+	    model: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CostEstimate(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.tokens = source["tokens"];
+	        this.cost_usd = source["cost_usd"];
+	        this.has_rate = source["has_rate"];
+	        this.model = source["model"];
 	    }
 	}
 	export class NotifyPrefs {
@@ -1155,6 +1236,7 @@ export namespace types {
 	    work_seconds?: number;
 	    work_seconds_plan?: number;
 	    work_seconds_execute?: number;
+	    cost_usd?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Issue(source);
@@ -1185,6 +1267,7 @@ export namespace types {
 	        this.work_seconds = source["work_seconds"];
 	        this.work_seconds_plan = source["work_seconds_plan"];
 	        this.work_seconds_execute = source["work_seconds_execute"];
+	        this.cost_usd = source["cost_usd"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

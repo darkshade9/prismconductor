@@ -21,6 +21,14 @@ const (
 	RoleDone      = "@done "
 )
 
+// CostData holds token counts and dollar cost captured from a Claude
+// stream-json "result" event (issue #47). Zero-value means no data yet.
+type CostData struct {
+	TotalCostUSD float64
+	InputTokens  int64
+	OutputTokens int64
+}
+
 // StreamParser is per-session state for converting the line-delimited
 // stream-json events from `claude -p --output-format stream-json` into
 // role-prefixed display lines.
@@ -28,12 +36,21 @@ type StreamParser struct {
 	mu       sync.Mutex
 	enabled  bool
 	pending  strings.Builder // in-flight assistant text (between newlines)
+	cost     *CostData       // populated when result event arrives (issue #47)
 }
 
 // NewStreamParser returns a parser that's enabled by default. If the spawn
 // fell back to non-streaming mode, the parser auto-disables on the first
 // non-JSON line.
 func NewStreamParser() *StreamParser { return &StreamParser{enabled: true} }
+
+// LastCost returns the cost data captured from the most recent "result" event,
+// or nil if no result event has been observed yet (issue #47).
+func (p *StreamParser) LastCost() *CostData {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cost
+}
 
 // Feed processes one raw line from the PTY and returns 0+ display lines.
 func (p *StreamParser) Feed(raw string) []string {
@@ -179,6 +196,24 @@ func (p *StreamParser) Feed(raw string) []string {
 
 	case "result":
 		flushPending()
+		// Extract token counts and cost from the result event (issue #47).
+		// These fields are only present on Claude stream-json output.
+		var res struct {
+			TotalCostUSD float64 `json:"total_cost_usd"`
+			Usage        struct {
+				InputTokens  int64 `json:"input_tokens"`
+				OutputTokens int64 `json:"output_tokens"`
+			} `json:"usage"`
+		}
+		if err := json.Unmarshal([]byte(raw), &res); err == nil {
+			if res.TotalCostUSD > 0 || res.Usage.InputTokens > 0 {
+				p.cost = &CostData{
+					TotalCostUSD: res.TotalCostUSD,
+					InputTokens:  res.Usage.InputTokens,
+					OutputTokens: res.Usage.OutputTokens,
+				}
+			}
+		}
 		if generic.Result != "" {
 			// Result text is already streamed as @asst lines; add a small
 			// completion marker.

@@ -31,6 +31,10 @@ const (
 	// Issue #40: pending pool queue events.
 	EvtPendingPoolEnqueued EventType = "pending_pool_enqueued"
 	EvtPendingPoolDequeued EventType = "pending_pool_dequeued"
+
+	// Issue #98: canonical IssueView assembler events.
+	EvtIssueViewUpdated    EventType = "issue_view_updated"
+	EvtSessionStateChanged EventType = "session_state_changed"
 )
 
 type Event struct {
@@ -52,6 +56,15 @@ type PendingPoolChange struct {
 	WorkspaceID string `json:"workspace_id"`
 	IssueNumber int    `json:"issue_number"`
 	Role        string `json:"role"`
+}
+
+// SessionStateChanged is the payload for EvtSessionStateChanged (#98). Published
+// from handleSessionStateChange so the IssueView assembler can react to every
+// session transition without subscribing to Wails-only events.
+type SessionStateChanged struct {
+	WorkspaceID string `json:"workspace_id"`
+	IssueNumber int    `json:"issue_number"`
+	SessionID   string `json:"session_id"`
 }
 
 type Handler func(Event)

@@ -316,6 +316,41 @@ func (s *Store) SessionTranscriptPath(id string) (string, error) {
 	return path, err
 }
 
+// ListSessionsForIssue returns all sessions for (workspaceID, issueNumber),
+// ordered by started_at descending. Used by the IssueView assembler to derive
+// activeSession, pausedSession, lastFailure, and the pool-badge source.
+func (s *Store) ListSessionsForIssue(workspaceID string, issueNumber int) ([]types.Session, error) {
+	if s == nil || s.DB == nil {
+		return nil, nil
+	}
+	rows, err := s.DB.Query(
+		`SELECT json, pending_question_id FROM sessions
+		 WHERE workspace_id = ? AND issue_number = ?
+		 ORDER BY json_extract(json, '$.started_at') DESC`,
+		workspaceID, issueNumber)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []types.Session
+	for rows.Next() {
+		var raw string
+		var pendingQID sql.NullString
+		if err := rows.Scan(&raw, &pendingQID); err != nil {
+			return nil, err
+		}
+		var sess types.Session
+		if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+			continue
+		}
+		if pendingQID.Valid {
+			sess.PendingQuestionID = pendingQID.String
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
 // AcknowledgeLatestFailure marks the most recent unacknowledged blocked/failed
 // session for the given issue as acknowledged (issue #88). The session row is
 // preserved for audit; only acknowledged_at is set so the UI stops showing the
