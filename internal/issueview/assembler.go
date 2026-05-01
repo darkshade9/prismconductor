@@ -156,7 +156,8 @@ func selectSessions(iss types.Issue, sessions []types.Session) (active, paused, 
 	var mostRecentCompleted *types.Session
 
 	for i := range sessions {
-		m := &sessions[i]
+		cp := sessions[i] // deep copy: each returned pointer owns its struct
+		m := &cp
 		notAck := m.AcknowledgedAt == nil || *m.AcknowledgedAt == 0
 
 		if m.State == types.StatePausedForQuestion {

@@ -67,6 +67,15 @@ func (p *Pool) Release() {
 	p.mu.Unlock()
 }
 
+// AcquireForce increments the active counter unconditionally. Used by
+// Registry.AcquireSpecific during startup rehydration to mark a slot that was
+// already occupied before shutdown.
+func (p *Pool) AcquireForce() {
+	p.mu.Lock()
+	p.active++
+	p.mu.Unlock()
+}
+
 // ResetActive zeros the in-memory active counter. Used by the Settings →
 // "Reset pool counters" button to recover from drift caused by orphaned
 // sessions (e.g. conductor killed mid-session before tailAndParse could
@@ -287,6 +296,22 @@ func (r *Registry) ResetAllActive() int {
 		p.ResetActive()
 	}
 	return len(pools)
+}
+
+// AcquireSpecific increments the active counter for the named pool regardless
+// of current free capacity. Returns (true, nil) when the pool exists and was
+// incremented; (false, nil) when the pool ID is not in the registry (unknown
+// or removed since shutdown). Used by session.Reattach to rehydrate live slots
+// so the UI worker counter reflects reality after a restart.
+func (r *Registry) AcquireSpecific(poolID string) (bool, error) {
+	r.mu.RLock()
+	p := r.pools[poolID]
+	r.mu.RUnlock()
+	if p == nil {
+		return false, nil
+	}
+	p.AcquireForce()
+	return true, nil
 }
 
 // ReleaseByPool returns a slot to the named pool. No-op if the pool was

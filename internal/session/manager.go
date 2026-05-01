@@ -99,6 +99,7 @@ type Manager struct {
 	onActivity     ActivityHandler
 	onRateLimit    RateLimitHandler
 	providers      *llm.Registry
+	poolReg        PoolRehydrator
 
 	mu       sync.RWMutex
 	sessions map[string]*runtimeSession

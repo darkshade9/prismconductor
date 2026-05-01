@@ -4,9 +4,20 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"prismconductor/internal/types"
 )
+
+// fakePoolRehydrator records AcquireSpecific calls for test assertions.
+type fakePoolRehydrator struct {
+	acquired []string
+}
+
+func (f *fakePoolRehydrator) AcquireSpecific(poolID string) (bool, error) {
+	f.acquired = append(f.acquired, poolID)
+	return true, nil
+}
 
 // writeTranscript writes raw content to a temp transcript file and returns
 // its path.
@@ -125,6 +136,76 @@ func TestClassifyDeadWorkerKeepsPausedForQuestion(t *testing.T) {
 	}
 	if rs.sess.PendingQuestionID == "" {
 		t.Errorf("PendingQuestionID empty, expected the captured uuid")
+	}
+}
+
+// TestReattach_LiveSessionAcquiresPoolSlot verifies that Reattach calls
+// AcquireSpecific on the pool rehydrator for every live session that carries
+// a non-empty PoolID. This restores the in-memory active counter after a
+// conductor restart so the UI worker counter does not undercount.
+func TestReattach_LiveSessionAcquiresPoolSlot(t *testing.T) {
+	// Write an empty transcript so the follow goroutine can open it.
+	dir := t.TempDir()
+	transcriptPath := filepath.Join(dir, "live.log")
+	if err := os.WriteFile(transcriptPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("write empty transcript: %v", err)
+	}
+
+	reg := &fakePoolRehydrator{}
+	m := &Manager{
+		sessions: map[string]*runtimeSession{},
+		store:    &fakePersister{},
+		poolReg:  reg,
+	}
+
+	sess := types.Session{
+		ID:          "live-sess",
+		PoolID:      "pool-1",
+		State:       types.StateRunning,
+		PID:         os.Getpid(), // current process is always alive
+		Transcript:  transcriptPath,
+		StartedAt:   time.Now(),
+	}
+
+	m.Reattach([]types.Session{sess}, nil)
+
+	// AcquireSpecific is called synchronously before the follow goroutine starts.
+	if len(reg.acquired) != 1 || reg.acquired[0] != "pool-1" {
+		t.Errorf("AcquireSpecific calls = %v, want [pool-1]", reg.acquired)
+	}
+
+	// Clean up the goroutine that was started for the live session.
+	m.mu.Lock()
+	if rs, ok := m.sessions["live-sess"]; ok && rs.cancel != nil {
+		rs.cancel()
+	}
+	m.mu.Unlock()
+}
+
+// TestReattach_DeadSessionSkipsAcquire verifies that AcquireSpecific is NOT
+// called for sessions whose worker is already dead on arrival (PID=0).
+func TestReattach_DeadSessionSkipsAcquire(t *testing.T) {
+	path := writeTranscript(t, "Work complete.\n")
+
+	reg := &fakePoolRehydrator{}
+	m := &Manager{
+		sessions: map[string]*runtimeSession{},
+		store:    &fakePersister{},
+		poolReg:  reg,
+	}
+
+	sess := types.Session{
+		ID:         "dead-sess",
+		PoolID:     "pool-1",
+		State:      types.StateRunning,
+		PID:        0, // dead
+		Transcript: path,
+	}
+
+	m.Reattach([]types.Session{sess}, nil)
+
+	if len(reg.acquired) != 0 {
+		t.Errorf("AcquireSpecific called %d times for dead session, want 0", len(reg.acquired))
 	}
 }
 

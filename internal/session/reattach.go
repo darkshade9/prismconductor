@@ -51,6 +51,16 @@ func (m *Manager) Reattach(sessions []types.Session, workspaces []types.Workspac
 		ws := lookupWorkspace(workspaces, sess.WorkspaceID)
 		rs := buildReattachedRuntime(sess, ws)
 		if alive {
+			// Rehydrate the pool slot that was occupied before shutdown so the
+			// in-memory active counter reflects reality. Without this call the
+			// UI worker counter undercounts by one per still-running session.
+			if sess.PoolID != "" && m.poolReg != nil {
+				if ok, err := m.poolReg.AcquireSpecific(sess.PoolID); err != nil {
+					log.Printf("reattach: AcquireSpecific pool %s: %v", sess.PoolID, err)
+				} else if !ok {
+					log.Printf("reattach: pool %s not in registry for live session %s", sess.PoolID, sess.ID)
+				}
+			}
 			// Register and follow the file. matchPatterns inside the goroutine
 			// is responsible for any further state transitions (Q5 / Q6 /
 			// PR_OPENED / Work complete / BLOCKED). On terminal exit the goroutine
