@@ -2376,13 +2376,40 @@ func (a *App) SpawnPlanForIssue(workspaceID string, issueNumber int) (*types.Ses
 	return sess, nil
 }
 
-// ListSessions returns the live in-process sessions plus any running rows
-// from the store that haven't been re-attached.
+// ListSessions returns the live in-process sessions plus the most-recent
+// terminal session per (workspace, issue) so the frontend's lastFailure
+// selector can render the red-glow / blocked-reason overlay on cards whose
+// failure happened before the conductor restarted. Without this rehydration,
+// post-restart the card shows a blank in-progress state with no indication
+// that the prior execute died — every restart silently swallows the failure
+// context.
 func (a *App) ListSessions() []types.Session {
 	if a.mgr == nil {
 		return nil
 	}
-	return a.mgr.Snapshot()
+	live := a.mgr.Snapshot()
+	if a.store == nil {
+		return live
+	}
+	terminal, err := a.store.RecentTerminalSessions(50)
+	if err != nil {
+		log.Printf("ListSessions: RecentTerminalSessions: %v", err)
+		return live
+	}
+	// De-dup by id: live wins over terminal (live is current truth).
+	seen := make(map[string]struct{}, len(live)+len(terminal))
+	out := make([]types.Session, 0, len(live)+len(terminal))
+	for _, s := range live {
+		seen[s.ID] = struct{}{}
+		out = append(out, s)
+	}
+	for _, s := range terminal {
+		if _, dup := seen[s.ID]; dup {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // ReadTranscript returns the full transcript file for a session id.

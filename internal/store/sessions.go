@@ -151,6 +151,61 @@ func (s *Store) ListPausedForQuestionSessions() ([]PausedSession, error) {
 	return out, rows.Err()
 }
 
+// RecentTerminalSessions returns the most-recent terminal-state session per
+// (workspace, issue). Used at app startup to rehydrate the frontend's
+// session store with prior failures so the lastFailure overlay survives a
+// restart instead of silently disappearing every time the user closes the
+// app. Caps at `limit` rows total to keep payload bounded.
+func (s *Store) RecentTerminalSessions(limit int) ([]types.Session, error) {
+	if s == nil || s.DB == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	// One row per (workspace, issue): the latest started_at among terminal
+	// states, excluding acknowledged sessions (issue #88's clear path) so the
+	// red overlay doesn't resurrect on restart after the user dismissed it.
+	rows, err := s.DB.Query(`
+WITH ranked AS (
+    SELECT id, json, transcript_path, transcript_offset,
+           ROW_NUMBER() OVER (
+               PARTITION BY workspace_id, issue_number
+               ORDER BY json_extract(json, '$.started_at') DESC
+           ) AS rn
+    FROM sessions
+    WHERE state IN ('completed','failed','blocked')
+      AND (acknowledged_at IS NULL OR acknowledged_at = 0)
+)
+SELECT json, transcript_path, transcript_offset
+FROM ranked
+WHERE rn = 1
+ORDER BY json_extract(json, '$.started_at') DESC
+LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []types.Session
+	for rows.Next() {
+		var raw, transcript string
+		var offset int64
+		if err := rows.Scan(&raw, &transcript, &offset); err != nil {
+			return nil, err
+		}
+		var sess types.Session
+		if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+			continue
+		}
+		if sess.Transcript == "" {
+			sess.Transcript = transcript
+		}
+		sess.TranscriptOffset = offset
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
 // HasRecentFailedPlanSession reports whether the most recent plan-mode
 // session for (workspace, issue) ended in a failed/blocked state within the
 // given window. Used to gate drag-to-PLAN auto-spawn against silent re-bills

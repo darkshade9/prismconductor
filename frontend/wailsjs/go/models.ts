@@ -1363,11 +1363,11 @@ export namespace types {
 	    pending_question_id?: string;
 	    pool_id?: string;
 	    acknowledged_at?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
