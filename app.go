@@ -23,6 +23,7 @@ import (
 	"prismconductor/internal/eventbus"
 	pcgit "prismconductor/internal/git"
 	pcgithub "prismconductor/internal/github"
+	"prismconductor/internal/issueview"
 	"prismconductor/internal/logbuffer"
 	"prismconductor/internal/goalfilter"
 	"prismconductor/internal/planio"
@@ -56,6 +57,7 @@ type App struct {
 	cfgDir    string
 
 	answerWatcher *store.AnswerWatcher
+	assembler     *issueview.Assembler
 
 	pendingDevice *githubauth.DeviceCode
 
@@ -256,6 +258,10 @@ func (a *App) startup(ctx context.Context) {
 			wruntime.EventsEmit(a.ctx, "bus."+string(e.Type), e.Payload)
 			a.notifyOnPRStateChange(e)
 		})
+
+		// Issue #98: canonical IssueView assembler — emits bus.issue_view_updated
+		// whenever any contributing source changes.
+		a.assembler = issueview.New(a.bus, a.store)
 	}
 
 	// Issue #17: answer-file watcher. Polls each enabled workspace's
@@ -324,6 +330,11 @@ func (a *App) startup(ctx context.Context) {
 // new state to the UI as a Wails event and fires an in-app toast per §15.6.
 func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionState) {
 	wruntime.EventsEmit(a.ctx, "session.state", sess)
+	a.bus.Publish(eventbus.EvtSessionStateChanged, eventbus.SessionStateChanged{
+		WorkspaceID: sess.WorkspaceID,
+		IssueNumber: sess.IssueNumber,
+		SessionID:   sess.ID,
+	})
 
 	if prev == sess.State {
 		return
@@ -1773,6 +1784,24 @@ func (a *App) notifyOnPRStateChange(e eventbus.Event) {
 		toastPayload["pr_url"] = prURL
 	}
 	a.emitToast(level, title, body, toastPayload)
+}
+
+// GetIssueView returns the canonical IssueView for a single issue (#98).
+func (a *App) GetIssueView(workspaceID string, issueNumber int) (issueview.IssueView, error) {
+	if a.assembler == nil {
+		return issueview.IssueView{}, fmt.Errorf("assembler unavailable")
+	}
+	return a.assembler.Assemble(workspaceID, issueNumber)
+}
+
+// ListIssueViews returns canonical IssueViews for every non-archived issue
+// in the workspace (#98). Used by the frontend on workspace load to populate
+// the IssueView store before incremental bus.issue_view_updated events arrive.
+func (a *App) ListIssueViews(workspaceID string) ([]issueview.IssueView, error) {
+	if a.assembler == nil {
+		return nil, fmt.Errorf("assembler unavailable")
+	}
+	return a.assembler.ListForWorkspace(workspaceID)
 }
 
 // LatestPlan returns the highest-revision plan for an issue.
