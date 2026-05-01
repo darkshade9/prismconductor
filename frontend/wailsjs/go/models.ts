@@ -863,6 +863,24 @@ export namespace main {
 	        this.body = source["body"];
 	    }
 	}
+	export class CostEstimate {
+	    tokens: number;
+	    cost_usd: number;
+	    has_rate: boolean;
+	    model: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CostEstimate(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.tokens = source["tokens"];
+	        this.cost_usd = source["cost_usd"];
+	        this.has_rate = source["has_rate"];
+	        this.model = source["model"];
+	    }
+	}
 	export class NotifyPrefs {
 	    muted: boolean;
 	    quiet_start: string;
@@ -1155,6 +1173,7 @@ export namespace types {
 	    work_seconds?: number;
 	    work_seconds_plan?: number;
 	    work_seconds_execute?: number;
+	    cost_usd?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Issue(source);
@@ -1185,6 +1204,7 @@ export namespace types {
 	        this.work_seconds = source["work_seconds"];
 	        this.work_seconds_plan = source["work_seconds_plan"];
 	        this.work_seconds_execute = source["work_seconds_execute"];
+	        this.cost_usd = source["cost_usd"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1363,11 +1383,11 @@ export namespace types {
 	    pending_question_id?: string;
 	    pool_id?: string;
 	    acknowledged_at?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];

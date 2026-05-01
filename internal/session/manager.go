@@ -60,6 +60,8 @@ type Persister interface {
 	UpdateSessionTranscriptOffset(id string, off int64) error
 	// AccumulateIssueWork adds elapsed seconds to the issue's work timer (issue #46).
 	AccumulateIssueWork(workspaceID string, number int, mode types.SessionMode, seconds int64) error
+	// AccumulateIssueCost adds LLM cost to the issue's cost_usd counter (issue #47).
+	AccumulateIssueCost(workspaceID string, number int, costUSD float64) error
 }
 
 // StateChangeHandler is fired on every state transition. Used by the App layer
@@ -722,6 +724,11 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 			if secs > 0 {
 				_ = m.store.AccumulateIssueWork(rs.sess.WorkspaceID, rs.sess.IssueNumber, rs.sess.Mode, secs)
 			}
+		}
+		// Accumulate LLM cost from Claude stream-json result event (issue #47).
+		// Only Claude subprocess sessions emit this; harness sessions don't.
+		if cd := rs.parser.LastCost(); cd != nil && cd.TotalCostUSD > 0 {
+			_ = m.store.AccumulateIssueCost(rs.sess.WorkspaceID, rs.sess.IssueNumber, cd.TotalCostUSD)
 		}
 	}
 	if m.onStateChange != nil && prev != rs.sess.State {

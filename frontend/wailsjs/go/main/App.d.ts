@@ -63,6 +63,8 @@ export function GitHubLogout():Promise<void>;
 
 export function InspectRepo(arg1:string):Promise<workspace.Inspection>;
 
+export function IssueCost(arg1:string,arg2:number):Promise<number>;
+
 export function KillSession(arg1:string):Promise<void>;
 
 export function LatestPlan(arg1:string,arg2:number):Promise<types.Plan>;
@@ -96,6 +98,8 @@ export function OnboardCheck(arg1:string):Promise<Array<workspace.OnboardCheck>>
 export function OpenBundledSkill(arg1:string):Promise<void>;
 
 export function PickRepoPath():Promise<string>;
+
+export function PlanCostEstimate(arg1:string,arg2:number):Promise<main.CostEstimate>;
 
 export function ProbeProviderModels(arg1:types.Provider,arg2:string,arg3:string):Promise<Array<string>>;
 

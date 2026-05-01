@@ -110,6 +110,10 @@ export function InspectRepo(arg1) {
   return window['go']['main']['App']['InspectRepo'](arg1);
 }
 
+export function IssueCost(arg1, arg2) {
+  return window['go']['main']['App']['IssueCost'](arg1, arg2);
+}
+
 export function KillSession(arg1) {
   return window['go']['main']['App']['KillSession'](arg1);
 }
@@ -176,6 +180,10 @@ export function OpenBundledSkill(arg1) {
 
 export function PickRepoPath() {
   return window['go']['main']['App']['PickRepoPath']();
+}
+
+export function PlanCostEstimate(arg1, arg2) {
+  return window['go']['main']['App']['PlanCostEstimate'](arg1, arg2);
 }
 
 export function ProbeProviderModels(arg1, arg2, arg3) {
