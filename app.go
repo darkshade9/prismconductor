@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	gh "github.com/google/go-github/v62/github"
 
+	"prismconductor/internal/archiver"
 	"prismconductor/internal/diagnose"
 	"prismconductor/internal/eventbus"
 	pcgit "prismconductor/internal/git"
@@ -318,6 +319,22 @@ func (a *App) startup(ctx context.Context) {
 		} else if n > 0 {
 			log.Printf("reconciled %d closed issues to DONE\n", n)
 		}
+
+		// Issue #107: auto-archive DONE cards per workspace config. Run once at
+		// startup and then on a 24-hour tick so long-running sessions stay clean.
+		go func() {
+			a.runAutoArchiveAll()
+			t := time.NewTicker(24 * time.Hour)
+			defer t.Stop()
+			for {
+				select {
+				case <-a.ctx.Done():
+					return
+				case <-t.C:
+					a.runAutoArchiveAll()
+				}
+			}
+		}()
 	}
 
 	// GitHub poller (#2). Uses the existing `gh` CLI auth — no OAuth App
@@ -784,6 +801,56 @@ func (a *App) ArchiveDone(workspaceID string) (int, error) {
 		return 0, fmt.Errorf("store unavailable")
 	}
 	n, err := a.store.ArchiveDone(workspaceID)
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 && a.bus != nil {
+		a.bus.Publish(eventbus.EvtIssuesArchived, map[string]any{
+			"workspace_id": workspaceID,
+			"count":        n,
+		})
+	}
+	return n, nil
+}
+
+// runAutoArchiveAll runs auto-archive for every workspace that has it enabled.
+// Publishes EvtIssuesArchived when any card is archived.
+func (a *App) runAutoArchiveAll() {
+	if a.store == nil || a.wsReg == nil {
+		return
+	}
+	total := 0
+	for _, ws := range a.wsReg.List() {
+		n, err := archiver.RunAutoArchive(a.ctx, a.store, ws)
+		if err != nil {
+			log.Printf("auto-archive workspace %q: %v", ws.ID, err)
+			continue
+		}
+		total += n
+	}
+	if total > 0 && a.bus != nil {
+		a.bus.Publish(eventbus.EvtIssuesArchived, map[string]any{
+			"workspace_id": "",
+			"count":        total,
+		})
+	}
+}
+
+// RunAutoArchiveNow immediately runs auto-archive for the given workspace and
+// returns the count of newly archived cards. Exposed to the frontend so the
+// Settings panel can trigger a manual run.
+func (a *App) RunAutoArchiveNow(workspaceID string) (int, error) {
+	if a.store == nil {
+		return 0, fmt.Errorf("store unavailable")
+	}
+	if a.wsReg == nil {
+		return 0, fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return 0, fmt.Errorf("workspace %q not found", workspaceID)
+	}
+	n, err := archiver.RunAutoArchive(a.ctx, a.store, ws)
 	if err != nil {
 		return 0, err
 	}
