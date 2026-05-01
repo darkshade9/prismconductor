@@ -85,7 +85,7 @@ jobs:
           pkill -9 Xvfb || true
       - name: upload trace on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-trace
           path: test-results/
