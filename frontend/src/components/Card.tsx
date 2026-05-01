@@ -14,6 +14,7 @@ import { LabelManagePopover } from "./LabelManagePopover";
 import { MidRunQuestionModal } from "./MidRunQuestionModal";
 import { ContinueModal } from "./ContinueModal";
 import { cn } from "../lib/cn";
+import { CopyMenu, CopyAction, toQuotedBlock } from "./CopyMenu";
 
 export type CardProps = {
   issue: types.Issue;
@@ -102,6 +103,13 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
 
   const [midRunOpen, setMidRunOpen] = useState(false);
   const [continueOpen, setContinueOpen] = useState(false);
+  const [cardMenu, setCardMenu] = useState<{ x: number; y: number; actions: CopyAction[] } | null>(null);
+
+  function openCardMenu(e: React.MouseEvent, actions: CopyAction[]) {
+    e.preventDefault();
+    e.stopPropagation();
+    setCardMenu({ x: e.clientX, y: e.clientY, actions });
+  }
 
   return (
     <div
@@ -166,6 +174,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
               }}
               onMouseDown={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
+              onContextMenu={(e) => openCardMenu(e, [{ label: "Copy PR URL", text: issue.pr_url! }])}
               className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-700/40 text-emerald-200 border border-emerald-700 hover:bg-emerald-700/60"
               title={`Open ${issue.pr_url}`}
             >
@@ -175,7 +184,10 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
           {issue.priority ? <span className="text-slate-500">P{issue.priority.toFixed(2)}</span> : null}
         </span>
       </div>
-      <div className="text-sm text-slate-100 mt-1 line-clamp-2">{issue.title}</div>
+      <div
+        className="text-sm text-slate-100 mt-1 line-clamp-2"
+        onContextMenu={(e) => openCardMenu(e, [{ label: "Copy title", text: issue.title }])}
+      >{issue.title}</div>
 
       <StatusRow
         activeSession={activeSession}
@@ -220,6 +232,14 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
           workspaceID={issue.workspace_id}
           issueNumber={issue.number}
           prNumber={issue.pr_number}
+        />
+      )}
+      {cardMenu && (
+        <CopyMenu
+          x={cardMenu.x}
+          y={cardMenu.y}
+          actions={cardMenu.actions}
+          onClose={() => setCardMenu(null)}
         />
       )}
     </div>
@@ -324,18 +344,36 @@ function StatusRow({
   prNumber: number | null;
   onContinue: () => void;
 }) {
+  const [menu, setMenu] = useState<{ x: number; y: number; actions: CopyAction[] } | null>(null);
+
+  function openMenu(e: React.MouseEvent, actions: CopyAction[]) {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({ x: e.clientX, y: e.clientY, actions });
+  }
+
+  const menuEl = menu ? (
+    <CopyMenu x={menu.x} y={menu.y} actions={menu.actions} onClose={() => setMenu(null)} />
+  ) : null;
+
   if (pausedSession) {
     return (
-      <div className="text-[11px] mt-1.5 flex items-center gap-1.5 flex-wrap">
-        <Pulse className="bg-amber-400" />
-        <span className="text-amber-300">❓ awaiting answer</span>
-        <span className="text-slate-500">— click to answer</span>
-      </div>
+      <>
+        <div className="text-[11px] mt-1.5 flex items-center gap-1.5 flex-wrap">
+          <Pulse className="bg-amber-400" />
+          <span className="text-amber-300">❓ awaiting answer</span>
+          <span className="text-slate-500">— click to answer</span>
+        </div>
+        {menuEl}
+      </>
     );
   }
   if (activeSession) {
     const planMode = activeSession.mode === "plan";
     const isBlocked = activeSession.state === "blocked";
+    const blockedReason = isBlocked
+      ? (activeSession.blocked_reason || "BLOCKED: (no reason given)")
+      : null;
     const label = isBlocked
       ? "blocked"
       : activeSession.state === "waiting_for_input"
@@ -347,22 +385,29 @@ function StatusRow({
       : "working";
     const dotCls = isBlocked ? "bg-red-400" : planMode ? "bg-sky-400" : "bg-purple-400";
     const textCls = isBlocked ? "text-red-300" : planMode ? "text-sky-300" : "text-purple-300";
-    const tooltipReason = isBlocked
-      ? truncateForTooltip(activeSession.blocked_reason || "BLOCKED: (no reason given)")
-      : undefined;
     return (
-      <div className="text-[11px] mt-1.5 space-y-0.5">
-        <div className="flex items-center gap-1.5" title={tooltipReason}>
-          <Pulse className={dotCls} />
-          <span className={textCls}>{label}</span>
-          {activity && activity.tool_count > 0 && (
-            <span className="text-slate-500 ml-1">· {activity.tool_count} actions</span>
+      <>
+        <div className="text-[11px] mt-1.5 space-y-0.5">
+          <div
+            className="flex items-center gap-1.5"
+            title={blockedReason ? truncateForTooltip(blockedReason) : undefined}
+            onContextMenu={blockedReason ? (e) => openMenu(e, [
+              { label: "Copy reason", text: blockedReason },
+              { label: "Copy as quoted block", text: toQuotedBlock(blockedReason) },
+            ]) : undefined}
+          >
+            <Pulse className={dotCls} />
+            <span className={textCls}>{label}</span>
+            {activity && activity.tool_count > 0 && (
+              <span className="text-slate-500 ml-1">· {activity.tool_count} actions</span>
+            )}
+          </div>
+          {activity && activity.last_action && (
+            <ActivityHint activity={activity} />
           )}
         </div>
-        {activity && activity.last_action && (
-          <ActivityHint activity={activity} />
-        )}
-      </div>
+        {menuEl}
+      </>
     );
   }
   if (!activeSession && waitingForPool) {
@@ -373,74 +418,92 @@ function StatusRow({
         ? `waiting for an available agent pool — ${poolNames.join(", ")}`
         : "no agent pools configured — add one in Settings → Pools";
     return (
-      <div className="text-[11px] mt-1.5 flex items-center gap-1.5 flex-wrap" title={tooltip}>
-        <Pulse className="bg-pink-400" />
-        <span className="text-pink-300">waiting for available agent pool…</span>
-      </div>
+      <>
+        <div className="text-[11px] mt-1.5 flex items-center gap-1.5 flex-wrap" title={tooltip}>
+          <Pulse className="bg-pink-400" />
+          <span className="text-pink-300">waiting for available agent pool…</span>
+        </div>
+        {menuEl}
+      </>
     );
   }
   if (lastFailure) {
     const reason = lastFailure.blocked_reason || "session ended without success";
     return (
-      <div className="text-[11px] mt-1.5 space-y-0.5" title={reason}>
-        <div className="flex items-center gap-1.5">
-          <Pulse className="bg-red-400" />
-          <span className="text-red-300">blocked</span>
-          <span className="text-slate-500">· {lastFailure.mode}</span>
+      <>
+        <div
+          className="text-[11px] mt-1.5 space-y-0.5"
+          onContextMenu={(e) => openMenu(e, [
+            { label: "Copy reason", text: reason },
+            { label: "Copy as quoted block", text: toQuotedBlock(reason) },
+          ])}
+        >
+          <div className="flex items-center gap-1.5">
+            <Pulse className="bg-red-400" />
+            <span className="text-red-300">blocked</span>
+            <span className="text-slate-500">· {lastFailure.mode}</span>
+          </div>
+          <div className="text-slate-400 break-words" title={reason}>⚠ {reason}</div>
         </div>
-        <div className="text-slate-400 break-words">⚠ {reason}</div>
-      </div>
+        {menuEl}
+      </>
     );
   }
   if (planReady) {
     return (
-      <div className="text-[11px] mt-1.5 flex items-center gap-1.5 flex-wrap">
-        <span className="text-amber-300">⏸ Plan ready (rev {planReady.revision})</span>
-        <span className="text-slate-500">— click to review</span>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            Replan(workspaceID, issueNumber).catch((err: any) => alert(String(err?.message ?? err)));
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onPointerDown={(e) => e.stopPropagation()}
-          className="ml-auto px-1.5 py-0.5 rounded text-[10px] border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500"
-          title="Discard the current plan and start a fresh planning pass"
-        >
-          ↻ Re-plan
-        </button>
-      </div>
+      <>
+        <div className="text-[11px] mt-1.5 flex items-center gap-1.5 flex-wrap">
+          <span className="text-amber-300">⏸ Plan ready (rev {planReady.revision})</span>
+          <span className="text-slate-500">— click to review</span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              Replan(workspaceID, issueNumber).catch((err: any) => alert(String(err?.message ?? err)));
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="ml-auto px-1.5 py-0.5 rounded text-[10px] border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500"
+            title="Discard the current plan and start a fresh planning pass"
+          >
+            ↻ Re-plan
+          </button>
+        </div>
+        {menuEl}
+      </>
     );
   }
   const showContinue = column === "review" && prNumber != null && !activeSession && !pausedSession && !waitingForPool;
   return (
-    <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
-      {isPrimitive && <span className="text-emerald-400">🔴 primitive</span>}
-      {blocked && (
-        <span className="text-amber-300">
-          🚫 blocked by {dependencies.map((n) => `#${n}`).join(", ")}
-        </span>
-      )}
-      <LabelChips
-        workspaceID={workspaceID}
-        issueNumber={issueNumber}
-        labels={labels}
-      />
-      {showContinue && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onContinue();
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onPointerDown={(e) => e.stopPropagation()}
-          className="ml-auto px-1.5 py-0.5 rounded text-[10px] border border-purple-700 text-purple-300 hover:border-purple-500 hover:text-purple-200"
-          title="Continue work on this PR branch"
-        >
-          ↻ Continue
-        </button>
-      )}
-    </div>
+    <>
+      <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
+        {isPrimitive && <span className="text-emerald-400">🔴 primitive</span>}
+        {blocked && (
+          <span className="text-amber-300">
+            🚫 blocked by {dependencies.map((n) => `#${n}`).join(", ")}
+          </span>
+        )}
+        <LabelChips
+          workspaceID={workspaceID}
+          issueNumber={issueNumber}
+          labels={labels}
+        />
+        {showContinue && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onContinue();
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="ml-auto px-1.5 py-0.5 rounded text-[10px] border border-purple-700 text-purple-300 hover:border-purple-500 hover:text-purple-200"
+            title="Continue work on this PR branch"
+          >
+            ↻ Continue
+          </button>
+        )}
+      </div>
+      {menuEl}
+    </>
   );
 }
 

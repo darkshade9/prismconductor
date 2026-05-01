@@ -6,9 +6,11 @@ import { FetchIssueDetail } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 import { useLabelsStore } from "../stores/labelsStore";
 import { getContrastText } from "../lib/contrast";
+import { CopyMenu, CopyAction } from "./CopyMenu";
 
 export function IssueSection({ issue }: { issue: types.Issue }) {
   const [detail, setDetail] = useState<types.Issue>(issue);
+  const [titleMenu, setTitleMenu] = useState<{ x: number; y: number; actions: CopyAction[] } | null>(null);
 
   useEffect(() => {
     setDetail(issue);
@@ -24,9 +26,19 @@ export function IssueSection({ issue }: { issue: types.Issue }) {
   return (
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-2">
-        <h2 className="text-base font-semibold text-slate-100 leading-snug">
+        <h2
+          className="text-base font-semibold text-slate-100 leading-snug"
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setTitleMenu({ x: e.clientX, y: e.clientY, actions: [{ label: "Copy title", text: `#${detail.number} — ${detail.title}` }] });
+          }}
+        >
           #{detail.number} — {detail.title}
         </h2>
+        {titleMenu && (
+          <CopyMenu x={titleMenu.x} y={titleMenu.y} actions={titleMenu.actions} onClose={() => setTitleMenu(null)} />
+        )}
         {detail.url && (
           <button
             type="button"
