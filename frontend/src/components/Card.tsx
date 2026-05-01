@@ -13,6 +13,7 @@ import { LabelManagePopover } from "./LabelManagePopover";
 import { MidRunQuestionModal } from "./MidRunQuestionModal";
 import { ContinueModal } from "./ContinueModal";
 import { AgentActivityStrip } from "./AgentActivityStrip";
+import { DiagnosticPopover } from "./DiagnosticPopover";
 import { cn } from "../lib/cn";
 import { CopyMenu, CopyAction, toQuotedBlock } from "./CopyMenu";
 
@@ -81,6 +82,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   const [midRunOpen, setMidRunOpen] = useState(false);
   const [continueOpen, setContinueOpen] = useState(false);
   const [cardMenu, setCardMenu] = useState<{ x: number; y: number; actions: CopyAction[] } | null>(null);
+  const [diagAnchor, setDiagAnchor] = useState<{ x: number; y: number } | null>(null);
 
   function openCardMenu(e: React.MouseEvent, actions: CopyAction[]) {
     e.preventDefault();
@@ -137,6 +139,19 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
           <span className="text-slate-500 truncate">{workspaceLabel ?? issue.workspace_id}</span>
         </span>
         <span className="flex items-center gap-1.5 shrink-0">
+          {/* Diagnostic info button (issue #100). */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setDiagAnchor({ x: e.clientX, y: e.clientY });
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="text-slate-600 hover:text-slate-300 text-[11px] leading-none"
+            title="Why is this stuck? — show system diagnostic"
+          >
+            ⓘ
+          </button>
           {/* Provider badge (issue #37): visible when any session has a known pool. */}
           {providerBadge && (
             <span
@@ -230,6 +245,14 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
           y={cardMenu.y}
           actions={cardMenu.actions}
           onClose={() => setCardMenu(null)}
+        />
+      )}
+      {diagAnchor && (
+        <DiagnosticPopover
+          workspaceID={issue.workspace_id}
+          issueNumber={issue.number}
+          anchor={diagAnchor}
+          onClose={() => setDiagAnchor(null)}
         />
       )}
     </div>
