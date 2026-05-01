@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	gh "github.com/google/go-github/v62/github"
 
+	"prismconductor/internal/diagnose"
 	"prismconductor/internal/eventbus"
 	pcgit "prismconductor/internal/git"
 	pcgithub "prismconductor/internal/github"
@@ -2584,4 +2585,123 @@ func (a *App) GetPoolUsage() ([]types.PoolUsage, error) {
 		return nil, nil
 	}
 	return a.store.ListPoolUsage()
+}
+
+// DiagnoseIssue walks a small decision tree of conductor invariants and returns
+// a plain-English explanation of the card's current state plus a suggested
+// next action. All checks are local and synchronous; no LLM calls are made.
+func (a *App) DiagnoseIssue(workspaceID string, issueNumber int) (*diagnose.IssueDiagnosis, error) {
+	if a.wsReg == nil {
+		return nil, fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return nil, fmt.Errorf("workspace %q not found", workspaceID)
+	}
+
+	issue, ok := a.findIssue(workspaceID, issueNumber)
+	if !ok {
+		return nil, fmt.Errorf("issue #%d not found", issueNumber)
+	}
+
+	// Gather persisted sessions newest-first.
+	var sessions []types.Session
+	if a.store != nil {
+		sessions, _ = a.store.ListSessionsForIssue(workspaceID, issueNumber)
+	}
+
+	// Find any live in-memory session.
+	var liveSession *types.Session
+	if a.mgr != nil {
+		for _, s := range a.mgr.Snapshot() {
+			if s.WorkspaceID == workspaceID && s.IssueNumber == issueNumber {
+				cp := s
+				liveSession = &cp
+				break
+			}
+		}
+	}
+
+	// Resolve pool metadata for the relevant session (live first, then last persisted).
+	poolActive, poolCap, poolName := 0, 0, ""
+	poolID := ""
+	if liveSession != nil {
+		poolID = liveSession.PoolID
+	} else if len(sessions) > 0 {
+		poolID = sessions[0].PoolID
+	}
+	if poolID != "" && a.poolReg != nil {
+		poolActive = a.poolReg.ActiveCount(poolID)
+		for _, ps := range a.poolReg.Snapshot() {
+			if ps.Pool.ID == poolID {
+				poolCap = ps.Pool.Capacity
+				poolName = ps.Pool.Name
+				break
+			}
+		}
+	}
+
+	// Check pending pool queue.
+	pendingPool := false
+	if a.store != nil {
+		if pending, err := a.store.ListPendingPools(200); err == nil {
+			for _, req := range pending {
+				if req.WorkspaceID == workspaceID && req.IssueNumber == issueNumber {
+					pendingPool = true
+					break
+				}
+			}
+		}
+	}
+
+	// Check worktree on disk.
+	worktreeDir := filepath.Join(ws.RepoPath, ".prismconductor", "worktrees",
+		fmt.Sprintf("%s-%d", workspaceID, issueNumber))
+	_, werr := os.Stat(worktreeDir)
+	worktreeOnDisk := werr == nil
+
+	// Check whether an answer file for a paused mid-run question exists.
+	answerPending := false
+	checkPendingQID := func(qid string) {
+		if qid == "" {
+			return
+		}
+		aPath := filepath.Join(ws.RepoPath, ".prismconductor", "answers", qid+".json")
+		if _, err := os.Stat(aPath); err == nil {
+			answerPending = true
+		}
+	}
+	if liveSession != nil {
+		checkPendingQID(liveSession.PendingQuestionID)
+	} else if len(sessions) > 0 {
+		checkPendingQID(sessions[0].PendingQuestionID)
+	}
+
+	// Check plan file on disk vs. in DB.
+	planOnDisk, planRevision := false, 0
+	if a.store != nil {
+		if latestPlan, err := a.store.LatestPlan(workspaceID, issueNumber); err == nil && latestPlan != nil {
+			planRevision = latestPlan.Revision
+			pPath := planio.PlanPath(ws.RepoPath, issueNumber, latestPlan.Revision)
+			if _, err2 := os.Stat(pPath); err2 == nil {
+				planOnDisk = true
+			}
+		}
+	}
+
+	snap := diagnose.Snapshot{
+		Issue:          issue,
+		Sessions:       sessions,
+		LiveSession:    liveSession,
+		PoolActive:     poolActive,
+		PoolCapacity:   poolCap,
+		PoolName:       poolName,
+		PendingPool:    pendingPool,
+		WorktreeOnDisk: worktreeOnDisk,
+		AnswerPending:  answerPending,
+		PlanOnDisk:     planOnDisk,
+		PlanRevision:   planRevision,
+	}
+	result := diagnose.Run(snap)
+	return &result, nil
 }
