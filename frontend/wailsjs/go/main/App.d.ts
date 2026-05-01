@@ -131,6 +131,8 @@ export function Replan(arg1:string,arg2:number):Promise<void>;
 
 export function ResetPoolCounters():Promise<number>;
 
+export function RunAutoArchiveNow(arg1:string):Promise<number>;
+
 export function RunOrchestrator():Promise<void>;
 
 export function SaveGoal(arg1:types.Goal):Promise<void>;

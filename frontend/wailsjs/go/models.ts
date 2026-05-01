@@ -1029,6 +1029,20 @@ export namespace store {
 
 export namespace types {
 	
+	export class AutoArchive {
+	    enabled: boolean;
+	    days_closed: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AutoArchive(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.days_closed = source["days_closed"];
+	    }
+	}
 	export class ConventionHints {
 	    test_command: string;
 	    build_command: string;
@@ -1255,6 +1269,8 @@ export namespace types {
 	    pr_url?: string;
 	    // Go type: time
 	    archived_at?: any;
+	    // Go type: time
+	    closed_at?: any;
 	    waiting_for_pool?: boolean;
 	    work_seconds?: number;
 	    work_seconds_plan?: number;
@@ -1286,6 +1302,7 @@ export namespace types {
 	        this.pr_number = source["pr_number"];
 	        this.pr_url = source["pr_url"];
 	        this.archived_at = this.convertValues(source["archived_at"], null);
+	        this.closed_at = this.convertValues(source["closed_at"], null);
 	        this.waiting_for_pool = source["waiting_for_pool"];
 	        this.work_seconds = source["work_seconds"];
 	        this.work_seconds_plan = source["work_seconds_plan"];
@@ -1596,6 +1613,7 @@ export namespace types {
 	    skill_profile: SkillProfile;
 	    conventions: ConventionHints;
 	    enabled: boolean;
+	    auto_archive?: AutoArchive;
 	
 	    static createFrom(source: any = {}) {
 	        return new Workspace(source);
@@ -1614,6 +1632,7 @@ export namespace types {
 	        this.skill_profile = this.convertValues(source["skill_profile"], SkillProfile);
 	        this.conventions = this.convertValues(source["conventions"], ConventionHints);
 	        this.enabled = source["enabled"];
+	        this.auto_archive = this.convertValues(source["auto_archive"], AutoArchive);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
