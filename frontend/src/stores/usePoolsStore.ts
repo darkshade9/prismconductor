@@ -35,11 +35,18 @@ export const usePoolsStore = create<State>((set) => ({
   },
 }));
 
+export type PoolBudget = {
+  name: string;
+  max_input_tokens?: number;
+  max_turns?: number;
+};
+
 export type ProviderSummary = {
   kind: string;
   active: number;
   capacity: number;
   poolNames: string[];
+  budgets: PoolBudget[];
 };
 
 export type RoleSummary = {
@@ -71,17 +78,24 @@ export function getPoolSummaryByRole(pools: workerpool.PoolStatus[]): RoleSummar
     if (!(role in byRole)) continue;
     const kind = row.pool.provider || "generic";
     const map = byRole[role];
+    const budget: PoolBudget = {
+      name: row.pool.name,
+      max_input_tokens: row.pool.max_input_tokens,
+      max_turns: row.pool.max_turns,
+    };
     const existing = map.get(kind);
     if (existing) {
       existing.active += row.active ?? 0;
       existing.capacity += row.pool.capacity ?? 0;
       existing.poolNames.push(row.pool.name);
+      existing.budgets.push(budget);
     } else {
       map.set(kind, {
         kind,
         active: row.active ?? 0,
         capacity: row.pool.capacity ?? 0,
         poolNames: [row.pool.name],
+        budgets: [budget],
       });
     }
   }

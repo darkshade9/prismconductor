@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
-import { Replan, ClearIssueFailure, SelfHeal } from "../../wailsjs/go/main/App";
+import { Replan, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "../stores/sessionStore";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
@@ -206,6 +206,8 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         testsFailingInfo={testsFailingInfo}
         onContinue={() => setContinueOpen(true)}
         onClearFailure={() => ClearIssueFailure(issue.workspace_id, issue.number).catch((err: any) => alert(String(err?.message ?? err)))}
+        onCancelSession={activeSession ? () => CancelSession(activeSession.id).catch((err: any) => alert(String(err?.message ?? err))) : null}
+        onPlanNow={() => SpawnPlanForIssue(issue.workspace_id, issue.number).catch((err: any) => alert(String(err?.message ?? err)))}
       />
       {activeSession && activeSession.state === "running" && (
         <AgentActivityStrip
@@ -391,6 +393,8 @@ function StatusRow({
   testsFailingInfo,
   onContinue,
   onClearFailure,
+  onCancelSession,
+  onPlanNow,
 }: {
   activeSession: types.Session | null;
   activity: SessionActivity | null;
@@ -409,6 +413,8 @@ function StatusRow({
   testsFailingInfo: TestsFailingInfo | null;
   onContinue: () => void;
   onClearFailure: () => void;
+  onCancelSession: (() => void) | null;
+  onPlanNow: () => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number; actions: CopyAction[] } | null>(null);
 
@@ -478,6 +484,17 @@ function StatusRow({
             <span className={textCls}>{label}</span>
             {activity && activity.tool_count > 0 && (
               <span className="text-slate-500 ml-1">· {activity.tool_count} actions</span>
+            )}
+            {onCancelSession && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onCancelSession(); }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="ml-auto px-1.5 py-0.5 rounded text-[10px] border border-slate-700 text-slate-500 hover:border-red-700 hover:text-red-400"
+                title="Cancel this session"
+              >
+                ✕ Cancel
+              </button>
             )}
           </div>
           {activity && activity.last_action && (
@@ -628,6 +645,7 @@ function StatusRow({
     );
   }
   const showContinue = column === "review" && prNumber != null && !activeSession && !pausedSession && !waitingForPool;
+  const showPlanNow = !blocked && (column === "todo" || column === "plan");
   return (
     <>
       <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
@@ -642,6 +660,20 @@ function StatusRow({
           issueNumber={issueNumber}
           labels={labels}
         />
+        {showPlanNow && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onPlanNow();
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="ml-auto px-1.5 py-0.5 rounded text-[10px] border border-sky-700 text-sky-400 hover:border-sky-500 hover:text-sky-300"
+            title="Start a planning pass for this issue"
+          >
+            ⚡ Plan now
+          </button>
+        )}
         {showContinue && (
           <button
             onClick={(e) => {
