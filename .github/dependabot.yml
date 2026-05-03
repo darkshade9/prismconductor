@@ -17,6 +17,38 @@ updates:
     labels:
       - dependencies
       - frontend
+    # Group companion packages so a major bump arrives with its peers in
+    # ONE PR. Without this, dependabot opens (e.g.) react@19 and
+    # @types/react@19 separately; the first PR fails ERESOLVE because the
+    # second one hasn't merged yet, and we waste cycles fighting npm peer
+    # resolution. Each group below has packages that must travel together.
+    groups:
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+      vite:
+        patterns:
+          - "vite"
+          - "@vitejs/*"
+          - "vitest"
+          - "@vitest/*"
+          - "esbuild"
+      typescript:
+        patterns:
+          - "typescript"
+          - "@types/node"
+      tailwind:
+        patterns:
+          - "tailwindcss"
+          - "@tailwindcss/*"
+          - "autoprefixer"
+          - "postcss"
+      dnd:
+        patterns:
+          - "@dnd-kit/*"
 
   - package-ecosystem: npm
     directory: /tests
