@@ -808,6 +808,24 @@ export namespace githubauth {
 
 export namespace issueview {
 	
+	export class ConflictsInfo {
+	    pr_number: number;
+	    base: string;
+	    head: string;
+	    conflicting_files: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ConflictsInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pr_number = source["pr_number"];
+	        this.base = source["base"];
+	        this.head = source["head"];
+	        this.conflicting_files = source["conflicting_files"];
+	    }
+	}
 	export class TestsFailingInfo {
 	    failing_jobs: string[];
 	    failing_check_run_urls: string[];
@@ -852,9 +870,11 @@ export namespace issueview {
 	    active_session?: types.Session;
 	    paused_session?: types.Session;
 	    last_failure?: types.Session;
+	    last_session?: types.Session;
 	    pool_badge?: PoolBadge;
 	    derived_column: string;
 	    tests_failing_info?: TestsFailingInfo;
+	    conflicts_info?: ConflictsInfo;
 	
 	    static createFrom(source: any = {}) {
 	        return new IssueView(source);
@@ -867,9 +887,11 @@ export namespace issueview {
 	        this.active_session = this.convertValues(source["active_session"], types.Session);
 	        this.paused_session = this.convertValues(source["paused_session"], types.Session);
 	        this.last_failure = this.convertValues(source["last_failure"], types.Session);
+	        this.last_session = this.convertValues(source["last_session"], types.Session);
 	        this.pool_badge = this.convertValues(source["pool_badge"], PoolBadge);
 	        this.derived_column = source["derived_column"];
 	        this.tests_failing_info = this.convertValues(source["tests_failing_info"], TestsFailingInfo);
+	        this.conflicts_info = this.convertValues(source["conflicts_info"], ConflictsInfo);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -992,6 +1014,20 @@ export namespace main {
 	        this.model = source["model"];
 	    }
 	}
+	export class GoalSpendResult {
+	    total_usd: number;
+	    run_count: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new GoalSpendResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.total_usd = source["total_usd"];
+	        this.run_count = source["run_count"];
+	    }
+	}
 	export class LabelFilterState {
 	    labels: string[];
 	    mode: string;
@@ -1040,6 +1076,22 @@ export namespace main {
 	        this.default_endpoint = source["default_endpoint"];
 	        this.needs_api_key = source["needs_api_key"];
 	        this.can_spawn = source["can_spawn"];
+	    }
+	}
+	export class SpawnEstimate {
+	    tokens: number;
+	    cost_cents: number;
+	    model: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SpawnEstimate(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.tokens = source["tokens"];
+	        this.cost_cents = source["cost_cents"];
+	        this.model = source["model"];
 	    }
 	}
 
@@ -1525,6 +1577,9 @@ export namespace types {
 	    pending_question_id?: string;
 	    pool_id?: string;
 	    acknowledged_at?: number;
+	    input_tokens?: number;
+	    output_tokens?: number;
+	    estimated_cost_cents?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
@@ -1545,6 +1600,9 @@ export namespace types {
 	        this.pending_question_id = source["pending_question_id"];
 	        this.pool_id = source["pool_id"];
 	        this.acknowledged_at = source["acknowledged_at"];
+	        this.input_tokens = source["input_tokens"];
+	        this.output_tokens = source["output_tokens"];
+	        this.estimated_cost_cents = source["estimated_cost_cents"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

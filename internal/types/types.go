@@ -341,6 +341,13 @@ type Session struct {
 	// last fully-processed line (issue #54). Lives on the sessions column,
 	// excluded from the JSON blob to keep external snapshots schema-stable.
 	TranscriptOffset int64 `json:"-"`
+
+	// Issue #101: per-session token counts and estimated cost persisted at
+	// session end. Claude sessions get these from the result event; harness
+	// sessions from the budgetState accumulator.
+	InputTokens        int64   `json:"input_tokens,omitempty"`
+	OutputTokens       int64   `json:"output_tokens,omitempty"`
+	EstimatedCostCents float64 `json:"estimated_cost_cents,omitempty"`
 }
 
 // MidRunAnswer is the §6.4-shaped answer payload for a mid-run question

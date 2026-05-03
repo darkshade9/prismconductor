@@ -62,6 +62,9 @@ type Persister interface {
 	AccumulateIssueWork(workspaceID string, number int, mode types.SessionMode, seconds int64) error
 	// AccumulateIssueCost adds LLM cost to the issue's cost_usd counter (issue #47).
 	AccumulateIssueCost(workspaceID string, number int, costUSD float64) error
+	// UpdateSessionUsage persists per-session token counts and estimated cost
+	// to the dedicated columns and JSON blob (issue #101).
+	UpdateSessionUsage(sess *types.Session, transcriptPath string) error
 }
 
 // StateChangeHandler is fired on every state transition. Used by the App layer
@@ -148,6 +151,15 @@ type runtimeSession struct {
 	// context cancel without requiring the harness to bubble through PTY
 	// stdout.
 	harnessErr error
+
+	// Issue #101: pool model name captured at spawn time so ResolveUsage can
+	// look up per-token rates when computing estimated cost for harness sessions.
+	poolModel string
+	// harnessInputTokens / harnessOutputTokens accumulate token counts from
+	// the harness OnTurnUsage callback. Zero for subprocess (Claude) sessions
+	// where CostData from the stream parser is authoritative.
+	harnessInputTokens  int64
+	harnessOutputTokens int64
 }
 
 // sessionCmd is the §10.5 abstraction over both spawn strategies. The
@@ -551,6 +563,7 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 		repoPath:       ws.RepoPath,
 		poolID:         pool.ID,
 		poolName:       pool.Name,
+		poolModel:      pool.Model,
 	}
 
 	if len(argv) > 0 {
@@ -607,8 +620,14 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 				UserPrompt:    prompt,
 				Skills:        bundle.FS,
 				EnvVars:       envSpecToSlice(ws.AgentEnv),
-				Budget:        harness.DefaultBudget(),
+				Budget:        poolBudget(pool),
 				Out:           tf,
+				OnTurnUsage: func(in, out int) {
+					rs.actMu.Lock()
+					rs.harnessInputTokens = int64(in)
+					rs.harnessOutputTokens = int64(out)
+					rs.actMu.Unlock()
+				},
 			})
 		}()
 	}
@@ -727,10 +746,26 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 				_ = m.store.AccumulateIssueWork(rs.sess.WorkspaceID, rs.sess.IssueNumber, rs.sess.Mode, secs)
 			}
 		}
+		// Persist per-session token counts and estimated cost (issue #101).
+		// Claude subprocess sessions get data from the stream-parser result
+		// event; harness sessions from the OnTurnUsage accumulator.
+		rs.actMu.Lock()
+		hIn := rs.harnessInputTokens
+		hOut := rs.harnessOutputTokens
+		rs.actMu.Unlock()
+		inputTok, outputTok, costCents := ResolveUsage(rs.parser.LastCost(), hIn, hOut, rs.poolModel)
+		rs.sess.InputTokens = inputTok
+		rs.sess.OutputTokens = outputTok
+		rs.sess.EstimatedCostCents = costCents
+		_ = m.store.UpdateSessionUsage(rs.sess, rs.transcriptPath)
 		// Accumulate LLM cost from Claude stream-json result event (issue #47).
 		// Only Claude subprocess sessions emit this; harness sessions don't.
-		if cd := rs.parser.LastCost(); cd != nil && cd.TotalCostUSD > 0 {
+		cd := rs.parser.LastCost()
+		if cd != nil && cd.TotalCostUSD > 0 {
 			_ = m.store.AccumulateIssueCost(rs.sess.WorkspaceID, rs.sess.IssueNumber, cd.TotalCostUSD)
+		} else if costCents > 0 {
+			// Harness sessions: accumulate estimated cost so the card chip shows spend.
+			_ = m.store.AccumulateIssueCost(rs.sess.WorkspaceID, rs.sess.IssueNumber, costCents/100)
 		}
 	}
 	if m.onStateChange != nil && prev != rs.sess.State {

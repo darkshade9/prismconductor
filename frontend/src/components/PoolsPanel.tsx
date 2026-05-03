@@ -20,6 +20,8 @@ import {
   SavePool,
   DeletePool,
   ResetPoolCounters,
+  PoolSpendToday,
+  PoolSpendThisWeek,
 } from "../../wailsjs/go/main/App";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 import { main, types, workerpool } from "../../wailsjs/go/models";
@@ -40,12 +42,24 @@ export function PoolsPanel() {
   const [editing, setEditing] = useState<types.Pool | null>(null);
   const [adding, setAdding] = useState(false);
   const [deleteErr, setDeleteErr] = useState<Record<string, string>>({});
+  const [spendToday, setSpendToday] = useState<Record<string, number>>({});
+  const [spendWeek, setSpendWeek] = useState<Record<string, number>>({});
 
   async function refresh() {
     try {
       const [ps, pv] = await Promise.all([ListPools(), ListProviders()]);
       setPools(ps ?? []);
       setProviders(pv ?? []);
+      // Fetch spend for each pool in parallel.
+      const ids = (ps ?? []).map((r) => r.pool.id);
+      if (ids.length > 0) {
+        const [todayResults, weekResults] = await Promise.all([
+          Promise.all(ids.map((id) => PoolSpendToday(id).then((v) => [id, v] as const))),
+          Promise.all(ids.map((id) => PoolSpendThisWeek(id).then((v) => [id, v] as const))),
+        ]);
+        setSpendToday(Object.fromEntries(todayResults));
+        setSpendWeek(Object.fromEntries(weekResults));
+      }
     } catch (err) {
       console.error("PoolsPanel refresh", err);
     }
@@ -192,6 +206,8 @@ export function PoolsPanel() {
                       isLast={idx === rows.length - 1}
                       providerByKind={providerByKind}
                       deleteErr={deleteErr[row.pool.id]}
+                      spendToday={spendToday[row.pool.id] ?? 0}
+                      spendWeek={spendWeek[row.pool.id] ?? 0}
                       onToggleEnabled={onToggleEnabled}
                       onEdit={() => setEditing(row.pool)}
                       onRemove={() => onRemove(row.pool)}
@@ -210,6 +226,8 @@ export function PoolsPanel() {
                     providerByKind={providerByKind}
                     deleteErr={err}
                     dragHandle={null}
+                    spendToday={spendToday[row.pool.id] ?? 0}
+                    spendWeek={spendWeek[row.pool.id] ?? 0}
                     onToggleEnabled={onToggleEnabled}
                     onEdit={() => setEditing(row.pool)}
                     onRemove={() => onRemove(row.pool)}
@@ -267,6 +285,8 @@ function SortablePoolRow({
   isLast,
   providerByKind,
   deleteErr,
+  spendToday,
+  spendWeek,
   onToggleEnabled,
   onEdit,
   onRemove,
@@ -277,6 +297,8 @@ function SortablePoolRow({
   isLast: boolean;
   providerByKind: Map<string, main.ProviderInfo>;
   deleteErr?: string;
+  spendToday: number;
+  spendWeek: number;
   onToggleEnabled: (p: types.Pool, next: boolean) => void;
   onEdit: () => void;
   onRemove: () => void;
@@ -309,6 +331,8 @@ function SortablePoolRow({
         deleteErr={deleteErr}
         dragHandle={dragHandle}
         preferenceHint={hint ?? undefined}
+        spendToday={spendToday}
+        spendWeek={spendWeek}
         onToggleEnabled={onToggleEnabled}
         onEdit={onEdit}
         onRemove={onRemove}
@@ -324,6 +348,8 @@ function PoolRow({
   deleteErr,
   dragHandle,
   preferenceHint,
+  spendToday,
+  spendWeek,
   onToggleEnabled,
   onEdit,
   onRemove,
@@ -334,6 +360,8 @@ function PoolRow({
   deleteErr?: string;
   dragHandle: React.ReactNode;
   preferenceHint?: string;
+  spendToday: number;
+  spendWeek: number;
   onToggleEnabled: (p: types.Pool, next: boolean) => void;
   onEdit: () => void;
   onRemove: () => void;
@@ -361,6 +389,14 @@ function PoolRow({
         {role !== "orchestrator" && (
           <div className="font-mono text-slate-300 text-xs">
             {row.active}/{row.pool.capacity}
+          </div>
+        )}
+        {(spendToday > 0 || spendWeek > 0) && (
+          <div
+            className="text-[10px] text-slate-500 font-mono tabular-nums"
+            title={`Today: $${spendToday.toFixed(2)} · This week: $${spendWeek.toFixed(2)}`}
+          >
+            ${spendToday.toFixed(2)}/day
           </div>
         )}
         <label className="flex items-center gap-1 text-xs">

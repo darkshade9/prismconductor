@@ -34,6 +34,12 @@ type checkStateCacheEntry struct {
 	anyFailed bool
 }
 
+// conflictStateCacheEntry is stored per (wsID, prNumber) to detect conflict
+// falling-edge transitions across poller ticks (issue #124).
+type conflictStateCacheEntry struct {
+	mergeableState string // "clean", "dirty", "blocked", "unknown", or ""
+}
+
 // Poller fans out per-workspace fetches every Interval. Each tick:
 //   - Pulls open issues from GitHub for every enabled workspace (parallel,
 //     bounded by maxConcurrency).
@@ -60,6 +66,11 @@ type Poller struct {
 	// the poller can detect failing-edge transitions (issue #116).
 	// Key: "wsID#prNumber". Value: checkStateCacheEntry.
 	checkStateCache sync.Map
+
+	// conflictStateCache tracks the previous mergeable_state per PR to detect
+	// conflict falling-edge transitions (issue #124).
+	// Key: "wsID#prNumber". Value: conflictStateCacheEntry.
+	conflictStateCache sync.Map
 }
 
 // NewPoller constructs a Poller with sensible defaults.
@@ -230,8 +241,10 @@ func (p *Poller) pollOne(ctx context.Context, ws types.Workspace) error {
 				continue
 			}
 			p.publishPR(eventbus.EvtPRMerged, ws, iss)
-			// Clear check-run cache on merge — no longer relevant.
-			p.checkStateCache.Delete(ws.ID + "#" + strconv.Itoa(*iss.PRNumber))
+			// Clear caches on merge — no longer relevant.
+			cacheKey := ws.ID + "#" + strconv.Itoa(*iss.PRNumber)
+			p.checkStateCache.Delete(cacheKey)
+			p.conflictStateCache.Delete(cacheKey)
 			continue
 		case pr.ClosedAt != nil:
 			if err := p.Store.MarkPRClosedUnmerged(ws.ID, iss.Number); err != nil {
@@ -239,13 +252,17 @@ func (p *Poller) pollOne(ctx context.Context, ws types.Workspace) error {
 				continue
 			}
 			p.publishPR(eventbus.EvtPRClosedUnmerged, ws, iss)
-			p.checkStateCache.Delete(ws.ID + "#" + strconv.Itoa(*iss.PRNumber))
+			cacheKey := ws.ID + "#" + strconv.Itoa(*iss.PRNumber)
+			p.checkStateCache.Delete(cacheKey)
+			p.conflictStateCache.Delete(cacheKey)
 			continue
 		}
-		// PR is still open — probe check runs for CI failure detection (#116).
+		// PR is still open — probe check runs for CI failure detection (#116)
+		// and conflict detection (#124).
 		if pr.HeadSHA != "" {
 			p.probeCheckRuns(ctx, ws, iss, *iss.PRNumber, pr.HeadSHA)
 		}
+		p.probeConflicts(ctx, ws, iss, *iss.PRNumber, pr)
 	}
 
 	// Piggy-back label fetch on the same tick. Failures are logged and don't
@@ -344,6 +361,48 @@ func (p *Poller) probeCheckRuns(ctx context.Context, ws types.Workspace, iss typ
 			IssueNumber: iss.Number,
 			PRNumber:    prNumber,
 			HeadSHA:     headSHA,
+		})
+	}
+}
+
+// probeConflicts checks the PR's mergeable_state and emits EvtPRConflictsDetected
+// on a falling-edge transition to "dirty" (not-dirty → dirty). Emits
+// EvtPRConflictsResolved when the state transitions back to a non-dirty value.
+// Issue #124.
+func (p *Poller) probeConflicts(ctx context.Context, ws types.Workspace, iss types.Issue, prNumber int, pr *PRState) {
+	if p.Bus == nil {
+		return
+	}
+	cacheKey := ws.ID + "#" + strconv.Itoa(prNumber)
+	prev, hasPrev := p.conflictStateCache.Load(cacheKey)
+	prevState := ""
+	if hasPrev {
+		prevState = prev.(conflictStateCacheEntry).mergeableState
+	}
+
+	p.conflictStateCache.Store(cacheKey, conflictStateCacheEntry{mergeableState: pr.MergeableState})
+
+	switch {
+	case pr.MergeableState == "dirty" && prevState != "dirty":
+		// Falling edge: PR became conflicted. Fetch changed files for context.
+		files, err := p.Client.FetchPRFiles(ctx, ws, prNumber)
+		if err != nil {
+			log.Printf("pr files %s#%d (pr %d): %v", ws.ID, iss.Number, prNumber, err)
+		}
+		p.Bus.Publish(eventbus.EvtPRConflictsDetected, eventbus.PRConflictsDetected{
+			WorkspaceID:      ws.ID,
+			IssueNumber:      iss.Number,
+			PRNumber:         prNumber,
+			Base:             pr.BaseBranch,
+			Head:             pr.HeadRef,
+			ConflictingFiles: files,
+		})
+	case pr.MergeableState != "dirty" && pr.MergeableState != "" && pr.MergeableState != "unknown" && prevState == "dirty":
+		// Recovery edge: conflicts cleared (clean, blocked, etc.).
+		p.Bus.Publish(eventbus.EvtPRConflictsResolved, eventbus.PRConflictsResolved{
+			WorkspaceID: ws.ID,
+			IssueNumber: iss.Number,
+			PRNumber:    prNumber,
 		})
 	}
 }

@@ -22,6 +22,13 @@ type checkFailEntry struct {
 	maxReached bool
 }
 
+// conflictEntry is the in-memory state the Assembler keeps per issue for
+// PR merge-conflict state. Set on EvtPRConflictsDetected, cleared on
+// EvtPRConflictsResolved / EvtPRMerged / EvtPRClosedUnmerged (#124).
+type conflictEntry struct {
+	info eventbus.PRConflictsDetected
+}
+
 // issueStore is the subset of *store.Store that the Assembler needs.
 type issueStore interface {
 	LoadIssue(workspaceID string, number int) (types.Issue, error)
@@ -37,18 +44,20 @@ type Assembler struct {
 	store issueStore
 	bus   *eventbus.Bus
 
-	mu           sync.Mutex
-	cache        map[string]string          // "wsID#num" → last-emitted JSON
-	checkFails   map[string]*checkFailEntry // "wsID#num" → latest check failure
+	mu            sync.Mutex
+	cache         map[string]string           // "wsID#num" → last-emitted JSON
+	checkFails    map[string]*checkFailEntry  // "wsID#num" → latest check failure
+	conflictFails map[string]*conflictEntry   // "wsID#num" → latest conflict state
 }
 
 // New wires the Assembler to the bus. Call once at startup after the store is ready.
 func New(bus *eventbus.Bus, st issueStore) *Assembler {
 	a := &Assembler{
-		store:      st,
-		bus:        bus,
-		cache:      make(map[string]string),
-		checkFails: make(map[string]*checkFailEntry),
+		store:         st,
+		bus:           bus,
+		cache:         make(map[string]string),
+		checkFails:    make(map[string]*checkFailEntry),
+		conflictFails: make(map[string]*conflictEntry),
 	}
 	bus.Subscribe(a.handleEvent)
 	return a
@@ -72,6 +81,8 @@ var issueRelevantEvents = map[eventbus.EventType]bool{
 	eventbus.EvtPendingPoolDequeued: true,
 	eventbus.EvtPRChecksFailed:      true,
 	eventbus.EvtPRChecksRecovered:   true,
+	eventbus.EvtPRConflictsDetected: true,
+	eventbus.EvtPRConflictsResolved: true,
 }
 
 func (a *Assembler) handleEvent(e eventbus.Event) {
@@ -103,6 +114,21 @@ func (a *Assembler) handleEvent(e eventbus.Event) {
 			key := wsID + "#" + strconv.Itoa(issueNum)
 			a.mu.Lock()
 			delete(a.checkFails, key)
+			delete(a.conflictFails, key)
+			a.mu.Unlock()
+		}
+	case eventbus.EvtPRConflictsDetected:
+		if p, ok := e.Payload.(eventbus.PRConflictsDetected); ok {
+			key := p.WorkspaceID + "#" + strconv.Itoa(p.IssueNumber)
+			a.mu.Lock()
+			a.conflictFails[key] = &conflictEntry{info: p}
+			a.mu.Unlock()
+		}
+	case eventbus.EvtPRConflictsResolved:
+		if wsID != "" && issueNum != 0 {
+			key := wsID + "#" + strconv.Itoa(issueNum)
+			a.mu.Lock()
+			delete(a.conflictFails, key)
 			a.mu.Unlock()
 		}
 	}
@@ -140,7 +166,7 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 	plan, _ := a.store.LatestPlan(workspaceID, issueNumber)
 	sessions, _ := a.store.ListSessionsForIssue(workspaceID, issueNumber)
 
-	active, paused, lastFail := selectSessions(iss, sessions)
+	active, paused, lastFail, lastSession := selectSessions(iss, sessions)
 
 	var poolBadge *PoolBadge
 	// Resolve pool badge from most-recent session that has a pool_id.
@@ -163,6 +189,7 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 	key := workspaceID + "#" + strconv.Itoa(issueNumber)
 	a.mu.Lock()
 	cfEntry := a.checkFails[key]
+	conflEntry := a.conflictFails[key]
 	a.mu.Unlock()
 
 	var testsFailingInfo *TestsFailingInfo
@@ -177,15 +204,27 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		}
 	}
 
+	var conflictsInfo *ConflictsInfo
+	if conflEntry != nil {
+		conflictsInfo = &ConflictsInfo{
+			PRNumber:         conflEntry.info.PRNumber,
+			Base:             conflEntry.info.Base,
+			Head:             conflEntry.info.Head,
+			ConflictingFiles: conflEntry.info.ConflictingFiles,
+		}
+	}
+
 	return IssueView{
 		Issue:            iss,
 		LatestPlan:       plan,
 		ActiveSession:    active,
 		PausedSession:    paused,
 		LastFailure:      lastFail,
+		LastSession:      lastSession,
 		PoolBadge:        poolBadge,
 		DerivedColumn:    derivedColumn(iss, plan, active),
 		TestsFailingInfo: testsFailingInfo,
+		ConflictsInfo:    conflictsInfo,
 	}, nil
 }
 
@@ -226,9 +265,11 @@ func (a *Assembler) ListForWorkspace(workspaceID string) ([]IssueView, error) {
 }
 
 // selectSessions walks the session list (newest-first) and returns the
-// canonical (active, paused, lastFailure) tuple. Mirrors the selection logic
-// from Card.tsx so backend and frontend derive identical state.
-func selectSessions(iss types.Issue, sessions []types.Session) (active, paused, lastFail *types.Session) {
+// canonical (active, paused, lastFailure, lastSession) tuple. Mirrors the
+// selection logic from Card.tsx so backend and frontend derive identical state.
+// lastSession is the most recent terminal session (any outcome) for use by the
+// CostChip token-breakdown tooltip (issue #101).
+func selectSessions(iss types.Issue, sessions []types.Session) (active, paused, lastFail, lastSession *types.Session) {
 	var mostRecentCompleted *types.Session
 
 	for i := range sessions {
@@ -264,18 +305,28 @@ func selectSessions(iss types.Issue, sessions []types.Session) (active, paused, 
 			if lastFail == nil || m.StartedAt.After(lastFail.StartedAt) {
 				lastFail = m
 			}
-			continue
 		}
 
 		// Blocked-without-reason: still terminal, just no captured reason.
 		// Don't surface as active (would falsely glow); skip silently.
 		if m.State == types.StateBlocked {
+			if lastSession == nil || m.StartedAt.After(lastSession.StartedAt) {
+				lastSession = m
+			}
 			continue
 		}
 
 		if m.State == types.StateCompleted {
 			if mostRecentCompleted == nil || m.StartedAt.After(mostRecentCompleted.StartedAt) {
 				mostRecentCompleted = m
+			}
+		}
+
+		// Track the most recent terminal session (completed, failed, blocked)
+		// for the cost-chip token breakdown tooltip.
+		if m.State == types.StateCompleted || m.State == types.StateFailed {
+			if lastSession == nil || m.StartedAt.After(lastSession.StartedAt) {
+				lastSession = m
 			}
 		}
 	}
@@ -290,7 +341,7 @@ func selectSessions(iss types.Issue, sessions []types.Session) (active, paused, 
 		lastFail = nil
 	}
 
-	return active, paused, lastFail
+	return active, paused, lastFail, lastSession
 }
 
 // derivedColumn computes the canonical column from issue state and session state.
@@ -334,6 +385,10 @@ func extractIssueKey(e eventbus.Event) (wsID string, issueNum int) {
 	case eventbus.PRChecksFailed:
 		return p.WorkspaceID, p.IssueNumber
 	case eventbus.PRChecksRecovered:
+		return p.WorkspaceID, p.IssueNumber
+	case eventbus.PRConflictsDetected:
+		return p.WorkspaceID, p.IssueNumber
+	case eventbus.PRConflictsResolved:
 		return p.WorkspaceID, p.IssueNumber
 	case map[string]any:
 		wsID, _ = p["workspace_id"].(string)

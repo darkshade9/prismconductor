@@ -58,6 +58,10 @@ export function DiscoverWorkspaceSkills(arg1) {
   return window['go']['main']['App']['DiscoverWorkspaceSkills'](arg1);
 }
 
+export function EstimateSpawnCost(arg1, arg2, arg3) {
+  return window['go']['main']['App']['EstimateSpawnCost'](arg1, arg2, arg3);
+}
+
 export function FetchIssueDetail(arg1, arg2) {
   return window['go']['main']['App']['FetchIssueDetail'](arg1, arg2);
 }
@@ -120,6 +124,10 @@ export function GitHubLoginStart() {
 
 export function GitHubLogout() {
   return window['go']['main']['App']['GitHubLogout']();
+}
+
+export function GoalSpendToday(arg1) {
+  return window['go']['main']['App']['GoalSpendToday'](arg1);
 }
 
 export function InspectRepo(arg1) {
@@ -206,6 +214,14 @@ export function PlanCostEstimate(arg1, arg2) {
   return window['go']['main']['App']['PlanCostEstimate'](arg1, arg2);
 }
 
+export function PoolSpendThisWeek(arg1) {
+  return window['go']['main']['App']['PoolSpendThisWeek'](arg1);
+}
+
+export function PoolSpendToday(arg1) {
+  return window['go']['main']['App']['PoolSpendToday'](arg1);
+}
+
 export function ProbeProviderModels(arg1, arg2, arg3) {
   return window['go']['main']['App']['ProbeProviderModels'](arg1, arg2, arg3);
 }
@@ -244,6 +260,10 @@ export function Replan(arg1, arg2) {
 
 export function ResetPoolCounters() {
   return window['go']['main']['App']['ResetPoolCounters']();
+}
+
+export function ResolveConflicts(arg1, arg2) {
+  return window['go']['main']['App']['ResolveConflicts'](arg1, arg2);
 }
 
 export function RunAutoArchiveNow(arg1) {
@@ -324,6 +344,10 @@ export function UpdateLabel(arg1, arg2, arg3) {
 
 export function UpdateWorkspace(arg1) {
   return window['go']['main']['App']['UpdateWorkspace'](arg1);
+}
+
+export function WorkspaceSpendToday(arg1) {
+  return window['go']['main']['App']['WorkspaceSpendToday'](arg1);
 }
 
 export function WriteAnswersOnly(arg1) {
