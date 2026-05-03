@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useIssueStore } from "../stores/issueStore";
 
-const DEBOUNCE_MS = 80;
+const DEBOUNCE_MS = 200;
 
 export function TitleSearch() {
   const setSearchQuery = useIssueStore((s) => s.setSearchQuery);

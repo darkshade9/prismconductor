@@ -124,7 +124,7 @@ export function GoalPane() {
         </div>
         {/* Right cluster: usage bars + history toggle */}
         <div className="flex items-center gap-3 shrink-0">
-          {poolUsage.length > 0 && <GoalRowStats pools={poolUsage} maxVisible={3} />}
+          {poolUsage.length > 0 && <GoalRowStats pools={poolUsage} maxVisible={3} goalID={active?.id} />}
           <button onClick={() => setHistoryOpen((v) => !v)} className="text-xs text-slate-500 hover:text-slate-300 whitespace-nowrap">
             {historyOpen ? "Hide history" : `History (${past.length})`}
           </button>

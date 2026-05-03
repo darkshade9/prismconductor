@@ -66,7 +66,18 @@ function ProviderEntry({ entry }: { entry: ProviderSummary }) {
   const icon = resolveProviderIcon(entry.kind);
   const isSaturated = entry.capacity > 0 && entry.active >= entry.capacity;
   const countClass = isSaturated ? "text-amber-400" : "text-slate-300";
-  const tooltip = `${entry.active}/${entry.capacity} — pools: ${entry.poolNames.join(", ")}`;
+  const budgetLines = entry.budgets
+    .filter((b) => b.max_input_tokens || b.max_turns)
+    .map((b) => {
+      const parts: string[] = [];
+      if (b.max_input_tokens) parts.push(`${b.max_input_tokens.toLocaleString()} tok in`);
+      if (b.max_turns) parts.push(`${b.max_turns} turns`);
+      return `  ${b.name}: ${parts.join(", ")}`;
+    });
+  const tooltip = [
+    `${entry.active}/${entry.capacity} — pools: ${entry.poolNames.join(", ")}`,
+    ...budgetLines,
+  ].join("\n");
   const ariaLabel = `${icon.label} providers: ${entry.active} of ${entry.capacity} active`;
 
   return (

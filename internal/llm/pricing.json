@@ -1,0 +1,20 @@
+{
+  "_comment": "USD per million tokens. Update this file when provider pricing changes. Runtime uses LookupRates from pricing.go (sourced from these values).",
+  "anthropic:claude-opus-4":    { "input_per_million": 15.0,  "output_per_million": 75.0  },
+  "anthropic:claude-sonnet-4":  { "input_per_million": 3.0,   "output_per_million": 15.0  },
+  "anthropic:claude-haiku-4":   { "input_per_million": 0.25,  "output_per_million": 1.25  },
+  "anthropic:claude-opus-3-5":  { "input_per_million": 15.0,  "output_per_million": 75.0  },
+  "anthropic:claude-sonnet-3-5":{ "input_per_million": 3.0,   "output_per_million": 15.0  },
+  "anthropic:claude-haiku-3-5": { "input_per_million": 0.8,   "output_per_million": 4.0   },
+  "openai:gpt-4.1":             { "input_per_million": 2.0,   "output_per_million": 8.0   },
+  "openai:gpt-4.1-mini":        { "input_per_million": 0.4,   "output_per_million": 1.6   },
+  "openai:gpt-4.1-nano":        { "input_per_million": 0.1,   "output_per_million": 0.4   },
+  "openai:gpt-4o":              { "input_per_million": 2.5,   "output_per_million": 10.0  },
+  "openai:gpt-4o-mini":         { "input_per_million": 0.15,  "output_per_million": 0.6   },
+  "openai:gpt-4":               { "input_per_million": 30.0,  "output_per_million": 60.0  },
+  "openai:o3":                  { "input_per_million": 10.0,  "output_per_million": 40.0  },
+  "openai:o4-mini":             { "input_per_million": 1.1,   "output_per_million": 4.4   },
+  "google:gemini-2.5-pro":      { "input_per_million": 1.25,  "output_per_million": 10.0  },
+  "google:gemini-2.5-flash":    { "input_per_million": 0.15,  "output_per_million": 0.6   },
+  "google:gemini-2.0-flash":    { "input_per_million": 0.1,   "output_per_million": 0.4   }
+}

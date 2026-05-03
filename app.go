@@ -25,6 +25,7 @@ import (
 	"prismconductor/internal/eventbus"
 	pcgit "prismconductor/internal/git"
 	pcgithub "prismconductor/internal/github"
+	"prismconductor/internal/handlers"
 	"prismconductor/internal/issueview"
 	"prismconductor/internal/logbuffer"
 	"prismconductor/internal/goalfilter"
@@ -272,6 +273,10 @@ func (a *App) startup(ctx context.Context) {
 		// Issue #116: auto-spawn self-heal and toast on CI check failures.
 		a.bus.Subscribe(a.handlePRChecksFailed)
 		a.bus.Subscribe(a.handlePRChecksRecovered)
+
+		// Issue #124: PR merge-conflict detection and resolution worker.
+		a.bus.Subscribe(a.handlePRConflictsDetected)
+		a.bus.Subscribe(a.handlePRConflictsResolved)
 	}
 
 	// Issue #17: answer-file watcher. Polls each enabled workspace's
@@ -2229,12 +2234,37 @@ func (a *App) ApprovePlan(workspaceID string, issueNumber, revision int) error {
 		a.poolReg.ReleaseByPool(pool.ID)
 		return err
 	}
+	// Issue #101 Q3: pre-flight estimate toast so the user sees expected spend
+	// before the worker actually incurs it.
+	est := a.EstimateSpawnCost(workspaceID, issueNumber, pool.ID)
+	if est.Tokens > 0 {
+		var costStr string
+		if est.CostCents > 0 {
+			costStr = fmt.Sprintf(", est. $%.2f", est.CostCents/100)
+		}
+		a.emitToast("info", toastWorkspaceName(a.wsReg, workspaceID),
+			fmt.Sprintf("#%d execute spawned on %s (~%s tok%s)",
+				issueNumber, pool.Model,
+				formatTokenCount(est.Tokens), costStr),
+			map[string]any{"workspace_id": workspaceID, "issue_number": issueNumber, "action": "focus_card"})
+	}
 	a.bus.Publish(eventbus.EvtPlanApproved, map[string]any{
 		"workspace_id": workspaceID,
 		"issue_number": issueNumber,
 		"revision":     revision,
 	})
 	return nil
+}
+
+// formatTokenCount formats a token count as a human-readable string.
+func formatTokenCount(n int64) string {
+	if n >= 1_000_000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	}
+	if n >= 1_000 {
+		return fmt.Sprintf("%.1fK", float64(n)/1_000)
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 // ContinueWork spawns an execute worker to continue existing PR work after
@@ -2414,6 +2444,68 @@ func (a *App) handlePRChecksRecovered(e eventbus.Event) {
 				"action":       "focus_card",
 			})
 	}
+}
+
+// handlePRConflictsDetected handles EvtPRConflictsDetected (#124): emits a toast
+// so the user sees the red glow immediately even before the next frontend poll.
+func (a *App) handlePRConflictsDetected(e eventbus.Event) {
+	if e.Type != eventbus.EvtPRConflictsDetected {
+		return
+	}
+	p, ok := e.Payload.(eventbus.PRConflictsDetected)
+	if !ok {
+		return
+	}
+	if !a.notificationsSuppressed() {
+		title := toastWorkspaceName(a.wsReg, p.WorkspaceID)
+		a.emitToast("error", title,
+			fmt.Sprintf("#%d MERGE CONFLICT — PR #%d cannot be merged into %s", p.IssueNumber, p.PRNumber, p.Base),
+			map[string]any{
+				"workspace_id": p.WorkspaceID,
+				"issue_number": p.IssueNumber,
+				"action":       "focus_card",
+			})
+	}
+}
+
+// handlePRConflictsResolved handles EvtPRConflictsResolved (#124): emits a
+// success toast when a previously-conflicted PR becomes mergeable again.
+func (a *App) handlePRConflictsResolved(e eventbus.Event) {
+	if e.Type != eventbus.EvtPRConflictsResolved {
+		return
+	}
+	p, ok := e.Payload.(eventbus.PRConflictsResolved)
+	if !ok {
+		return
+	}
+	if !a.notificationsSuppressed() {
+		title := toastWorkspaceName(a.wsReg, p.WorkspaceID)
+		a.emitToast("success", title,
+			fmt.Sprintf("#%d merge conflicts resolved — PR #%d is mergeable", p.IssueNumber, p.PRNumber),
+			map[string]any{
+				"workspace_id": p.WorkspaceID,
+				"issue_number": p.IssueNumber,
+				"action":       "focus_card",
+			})
+	}
+}
+
+// ResolveConflicts spawns a Continue-Work session pre-populated with conflict
+// context from the most recent EvtPRConflictsDetected event (#124).
+func (a *App) ResolveConflicts(workspaceID string, issueNumber int) error {
+	if a.assembler == nil {
+		return fmt.Errorf("assembler unavailable")
+	}
+	view, err := a.assembler.Assemble(workspaceID, issueNumber)
+	if err != nil {
+		return fmt.Errorf("assemble issue view: %w", err)
+	}
+	ci := view.ConflictsInfo
+	if ci == nil {
+		return fmt.Errorf("no merge conflict recorded for issue #%d", issueNumber)
+	}
+	note := handlers.BuildConflictResolveNote(ci)
+	return a.ContinueWork(workspaceID, issueNumber, note)
 }
 
 // buildSelfHealNote constructs the Continue-Work note for the self-heal worker.
@@ -2975,4 +3067,116 @@ func (a *App) DiagnoseIssue(workspaceID string, issueNumber int) (*diagnose.Issu
 	}
 	result := diagnose.Run(snap)
 	return &result, nil
+}
+
+// --- Issue #101: cost / token visibility helpers ---
+
+// PoolSpendToday returns the estimated spend in USD for the given pool since
+// midnight UTC. Returns 0 on error or when no data is available.
+func (a *App) PoolSpendToday(poolID string) float64 {
+	if a.store == nil {
+		return 0
+	}
+	since := todayUTC()
+	cents, err := a.store.PoolSpendCents(poolID, since)
+	if err != nil {
+		log.Printf("PoolSpendToday %s: %v", poolID, err)
+		return 0
+	}
+	return cents / 100
+}
+
+// PoolSpendThisWeek returns the estimated spend in USD for the given pool
+// since the start of the current ISO week (Monday 00:00 UTC).
+func (a *App) PoolSpendThisWeek(poolID string) float64 {
+	if a.store == nil {
+		return 0
+	}
+	since := thisWeekUTC()
+	cents, err := a.store.PoolSpendCents(poolID, since)
+	if err != nil {
+		log.Printf("PoolSpendThisWeek %s: %v", poolID, err)
+		return 0
+	}
+	return cents / 100
+}
+
+// WorkspaceSpendToday returns the estimated spend in USD across all sessions
+// for the given workspace since midnight UTC.
+func (a *App) WorkspaceSpendToday(workspaceID string) float64 {
+	if a.store == nil {
+		return 0
+	}
+	cents, err := a.store.WorkspaceSpendCents(workspaceID, todayUTC())
+	if err != nil {
+		log.Printf("WorkspaceSpendToday %s: %v", workspaceID, err)
+		return 0
+	}
+	return cents / 100
+}
+
+// GoalSpendResult is the per-goal spend summary returned by GoalSpendToday.
+type GoalSpendResult struct {
+	TotalUSD float64 `json:"total_usd"`
+	RunCount int     `json:"run_count"`
+}
+
+// GoalSpendToday returns the estimated spend in USD and the number of terminal
+// sessions for the given goal since midnight UTC.
+func (a *App) GoalSpendToday(goalID string) GoalSpendResult {
+	if a.store == nil {
+		return GoalSpendResult{}
+	}
+	cents, count, err := a.store.GoalSpendCents(goalID, todayUTC())
+	if err != nil {
+		log.Printf("GoalSpendToday %s: %v", goalID, err)
+		return GoalSpendResult{}
+	}
+	return GoalSpendResult{TotalUSD: cents / 100, RunCount: count}
+}
+
+// SpawnEstimate holds a pre-flight cost estimate for a plan-approve spawn.
+type SpawnEstimate struct {
+	Tokens    int64   `json:"tokens"`
+	CostCents float64 `json:"cost_cents"`
+	Model     string  `json:"model"`
+}
+
+// EstimateSpawnCost returns a cheap pre-flight token and cost estimate for an
+// execute spawn (issue #101, Q3=yes). Uses the chars/4 heuristic against the
+// pool's model pricing. Returns zero values when pool or pricing is unknown.
+func (a *App) EstimateSpawnCost(workspaceID string, issueNumber int, poolID string) SpawnEstimate {
+	if a.store == nil || a.poolReg == nil {
+		return SpawnEstimate{}
+	}
+	pool, err := a.store.GetPool(poolID)
+	if err != nil {
+		return SpawnEstimate{}
+	}
+	issue, err := a.store.LoadIssue(workspaceID, issueNumber)
+	if err != nil {
+		return SpawnEstimate{}
+	}
+	plan, _ := a.store.LatestPlan(workspaceID, issueNumber)
+	promptText := issue.Body
+	if plan != nil {
+		promptText += "\n" + plan.PlanMarkdown
+	}
+	tokens, costCents := llm.EstimatePromptCost(promptText, pool.Model)
+	return SpawnEstimate{Tokens: tokens, CostCents: costCents, Model: pool.Model}
+}
+
+func todayUTC() time.Time {
+	now := time.Now().UTC()
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+func thisWeekUTC() time.Time {
+	now := time.Now().UTC()
+	weekday := int(now.Weekday())
+	if weekday == 0 {
+		weekday = 7 // Sunday → 7 so Monday is day 1
+	}
+	monday := now.AddDate(0, 0, -(weekday - 1))
+	return time.Date(monday.Year(), monday.Month(), monday.Day(), 0, 0, 0, 0, time.UTC)
 }

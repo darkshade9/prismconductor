@@ -83,7 +83,7 @@ var (
 func TestSelectSessions_ActiveRunning(t *testing.T) {
 	sessions := []types.Session{makeSession(types.StateRunning, t1, "", false)}
 	iss := types.Issue{Column: types.ColInProgress}
-	active, paused, lastFail := selectSessions(iss, sessions)
+	active, paused, lastFail, _ := selectSessions(iss, sessions)
 	if active == nil || active.State != types.StateRunning {
 		t.Fatalf("expected active running, got %v", active)
 	}
@@ -96,7 +96,7 @@ func TestSelectSessions_PausedTracked(t *testing.T) {
 	s := makeSession(types.StatePausedForQuestion, t1, "", false)
 	s.PendingQuestionID = "q1"
 	iss := types.Issue{Column: types.ColInProgress}
-	_, paused, _ := selectSessions(iss, []types.Session{s})
+	_, paused, _, _ := selectSessions(iss, []types.Session{s})
 	if paused == nil || paused.State != types.StatePausedForQuestion {
 		t.Fatal("expected paused session")
 	}
@@ -104,7 +104,7 @@ func TestSelectSessions_PausedTracked(t *testing.T) {
 
 func TestSelectSessions_LastFailureTracked(t *testing.T) {
 	sessions := []types.Session{makeSession(types.StateFailed, t1, "BLOCKED: reason", false)}
-	_, _, lastFail := selectSessions(types.Issue{Column: types.ColTodo}, sessions)
+	_, _, lastFail, _ := selectSessions(types.Issue{Column: types.ColTodo}, sessions)
 	if lastFail == nil || lastFail.BlockedReason != "BLOCKED: reason" {
 		t.Fatalf("expected lastFail with reason, got %v", lastFail)
 	}
@@ -112,7 +112,7 @@ func TestSelectSessions_LastFailureTracked(t *testing.T) {
 
 func TestSelectSessions_LastFailureSuppressedInReview(t *testing.T) {
 	sessions := []types.Session{makeSession(types.StateFailed, t1, "BLOCKED: x", false)}
-	_, _, lastFail := selectSessions(types.Issue{Column: types.ColReview}, sessions)
+	_, _, lastFail, _ := selectSessions(types.Issue{Column: types.ColReview}, sessions)
 	if lastFail != nil {
 		t.Error("lastFail should be suppressed in review")
 	}
@@ -120,7 +120,7 @@ func TestSelectSessions_LastFailureSuppressedInReview(t *testing.T) {
 
 func TestSelectSessions_LastFailureSuppressedInDone(t *testing.T) {
 	sessions := []types.Session{makeSession(types.StateFailed, t1, "BLOCKED: x", false)}
-	_, _, lastFail := selectSessions(types.Issue{Column: types.ColDone}, sessions)
+	_, _, lastFail, _ := selectSessions(types.Issue{Column: types.ColDone}, sessions)
 	if lastFail != nil {
 		t.Error("lastFail should be suppressed in done")
 	}
@@ -131,7 +131,7 @@ func TestSelectSessions_LastFailureSuppressedByLaterSuccess(t *testing.T) {
 		makeSession(types.StateCompleted, t3, "", false),
 		makeSession(types.StateFailed, t1, "BLOCKED: old", false),
 	}
-	_, _, lastFail := selectSessions(types.Issue{Column: types.ColPlan}, sessions)
+	_, _, lastFail, _ := selectSessions(types.Issue{Column: types.ColPlan}, sessions)
 	if lastFail != nil {
 		t.Error("lastFail should be suppressed by later completed session")
 	}
@@ -139,7 +139,7 @@ func TestSelectSessions_LastFailureSuppressedByLaterSuccess(t *testing.T) {
 
 func TestSelectSessions_AcknowledgedFailureIgnored(t *testing.T) {
 	sessions := []types.Session{makeSession(types.StateFailed, t1, "BLOCKED: acked", true)}
-	_, _, lastFail := selectSessions(types.Issue{Column: types.ColTodo}, sessions)
+	_, _, lastFail, _ := selectSessions(types.Issue{Column: types.ColTodo}, sessions)
 	if lastFail != nil {
 		t.Error("acknowledged failure should not surface as lastFail")
 	}
@@ -150,7 +150,7 @@ func TestSelectSessions_MostRecentFailureWins(t *testing.T) {
 		makeSession(types.StateFailed, t2, "newer", false),
 		makeSession(types.StateFailed, t1, "older", false),
 	}
-	_, _, lastFail := selectSessions(types.Issue{Column: types.ColTodo}, sessions)
+	_, _, lastFail, _ := selectSessions(types.Issue{Column: types.ColTodo}, sessions)
 	if lastFail == nil || lastFail.BlockedReason != "newer" {
 		t.Errorf("expected newer reason, got %v", lastFail)
 	}
@@ -158,7 +158,7 @@ func TestSelectSessions_MostRecentFailureWins(t *testing.T) {
 
 func TestSelectSessions_NoReason_NotTrackedAsFailure(t *testing.T) {
 	sessions := []types.Session{makeSession(types.StateFailed, t1, "", false)}
-	_, _, lastFail := selectSessions(types.Issue{Column: types.ColTodo}, sessions)
+	_, _, lastFail, _ := selectSessions(types.Issue{Column: types.ColTodo}, sessions)
 	if lastFail != nil {
 		t.Error("failed session with no reason should not surface as lastFail")
 	}
@@ -381,6 +381,108 @@ func TestExtractIssueKey_UnknownPayload_ReturnsEmpty(t *testing.T) {
 	}
 }
 
+// --- PRConflictsDetected handling (#124) ---
+
+func TestAssembler_ConflictStoredOnDetected(t *testing.T) {
+	bus := eventbus.New()
+	st := &fakeStore{issues: map[int]types.Issue{10: {Number: 10, WorkspaceID: "ws1", Column: types.ColReview}}}
+	a := New(bus, st)
+
+	bus.Publish(eventbus.EvtPRConflictsDetected, eventbus.PRConflictsDetected{
+		WorkspaceID:      "ws1",
+		IssueNumber:      10,
+		PRNumber:         55,
+		Base:             "main",
+		Head:             "feat/foo",
+		ConflictingFiles: []string{"go.sum", "internal/foo/bar.go"},
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	view, err := a.Assemble("ws1", 10)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if view.ConflictsInfo == nil {
+		t.Fatal("expected ConflictsInfo populated after EvtPRConflictsDetected")
+	}
+	if view.ConflictsInfo.Base != "main" {
+		t.Errorf("want base=main, got %q", view.ConflictsInfo.Base)
+	}
+	if len(view.ConflictsInfo.ConflictingFiles) != 2 {
+		t.Errorf("want 2 conflicting files, got %d", len(view.ConflictsInfo.ConflictingFiles))
+	}
+}
+
+func TestAssembler_ConflictClearedOnResolved(t *testing.T) {
+	bus := eventbus.New()
+	st := &fakeStore{issues: map[int]types.Issue{11: {Number: 11, WorkspaceID: "ws1", Column: types.ColReview}}}
+	a := New(bus, st)
+
+	bus.Publish(eventbus.EvtPRConflictsDetected, eventbus.PRConflictsDetected{
+		WorkspaceID: "ws1", IssueNumber: 11, PRNumber: 56, Base: "main", Head: "feat/bar",
+		ConflictingFiles: []string{"README.md"},
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	bus.Publish(eventbus.EvtPRConflictsResolved, eventbus.PRConflictsResolved{
+		WorkspaceID: "ws1", IssueNumber: 11, PRNumber: 56,
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	view, err := a.Assemble("ws1", 11)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if view.ConflictsInfo != nil {
+		t.Errorf("expected ConflictsInfo cleared after EvtPRConflictsResolved, got %+v", view.ConflictsInfo)
+	}
+}
+
+func TestAssembler_ConflictClearedOnMerge(t *testing.T) {
+	bus := eventbus.New()
+	st := &fakeStore{issues: map[int]types.Issue{12: {Number: 12, WorkspaceID: "ws1", Column: types.ColReview}}}
+	a := New(bus, st)
+
+	bus.Publish(eventbus.EvtPRConflictsDetected, eventbus.PRConflictsDetected{
+		WorkspaceID: "ws1", IssueNumber: 12, PRNumber: 57, Base: "main", Head: "feat/baz",
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	bus.Publish(eventbus.EvtPRMerged, map[string]any{
+		"workspace_id": "ws1",
+		"issue_number": 12,
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	view, err := a.Assemble("ws1", 12)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if view.ConflictsInfo != nil {
+		t.Errorf("expected ConflictsInfo cleared after EvtPRMerged, got %+v", view.ConflictsInfo)
+	}
+}
+
+func TestExtractIssueKey_PRConflictsDetected(t *testing.T) {
+	e := makeEvent(eventbus.EvtPRConflictsDetected, eventbus.PRConflictsDetected{
+		WorkspaceID: "ws5", IssueNumber: 77, PRNumber: 20,
+	})
+	ws, num := extractIssueKey(e)
+	if ws != "ws5" || num != 77 {
+		t.Errorf("got ws=%q num=%d", ws, num)
+	}
+}
+
+func TestExtractIssueKey_PRConflictsResolved(t *testing.T) {
+	e := makeEvent(eventbus.EvtPRConflictsResolved, eventbus.PRConflictsResolved{
+		WorkspaceID: "ws5", IssueNumber: 78, PRNumber: 21,
+	})
+	ws, num := extractIssueKey(e)
+	if ws != "ws5" || num != 78 {
+		t.Errorf("got ws=%q num=%d", ws, num)
+	}
+}
+
 // --- cross-contamination / pointer aliasing ---
 
 // TestSelectSessions_DeepCopyPreventsAliasing verifies that two calls to
@@ -391,8 +493,8 @@ func TestSelectSessions_DeepCopyPreventsAliasing(t *testing.T) {
 	sessions := []types.Session{makeSession(types.StateRunning, t1, "", false)}
 	iss := types.Issue{Column: types.ColInProgress}
 
-	active1, _, _ := selectSessions(iss, sessions)
-	active2, _, _ := selectSessions(iss, sessions)
+	active1, _, _, _ := selectSessions(iss, sessions)
+	active2, _, _, _ := selectSessions(iss, sessions)
 	if active1 == nil || active2 == nil {
 		t.Fatal("both calls must return a non-nil active session")
 	}
@@ -465,7 +567,7 @@ func TestSelectSessions_BlockedInDoneIsSuppressed_ScenarioFromIssue113(t *testin
 		sessions[i].Mode = types.ModePlan
 	}
 	iss := types.Issue{Column: types.ColDone, PRNumber: &pn}
-	active, paused, lastFail := selectSessions(iss, sessions)
+	active, paused, lastFail, _ := selectSessions(iss, sessions)
 	if active != nil {
 		t.Errorf("DONE card with state=blocked must NOT have active session, got %+v", active)
 	}

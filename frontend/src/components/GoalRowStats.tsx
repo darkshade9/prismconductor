@@ -1,9 +1,11 @@
-import { useState } from "react";
-import { types } from "../../wailsjs/go/models";
+import { useEffect, useState } from "react";
+import { GoalSpendToday } from "../../wailsjs/go/main/App";
+import { main, types } from "../../wailsjs/go/models";
 
 interface Props {
   pools: types.PoolUsage[];
   maxVisible?: number;
+  goalID?: string;
 }
 
 function barColor(pct: number): string {
@@ -76,8 +78,18 @@ function UsageBar({ u }: { u: types.PoolUsage }) {
   );
 }
 
-export function GoalRowStats({ pools, maxVisible = 3 }: Props) {
+export function GoalRowStats({ pools, maxVisible = 3, goalID }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const [spend, setSpend] = useState<main.GoalSpendResult | null>(null);
+  const [spendDismissed, setSpendDismissed] = useState(false);
+
+  useEffect(() => {
+    if (!goalID) return;
+    setSpendDismissed(false);
+    GoalSpendToday(goalID)
+      .then((r) => setSpend(r ?? null))
+      .catch(() => {});
+  }, [goalID]);
 
   const visible = expanded ? pools : pools.slice(0, maxVisible);
   const overflow = pools.length - maxVisible;
@@ -102,6 +114,18 @@ export function GoalRowStats({ pools, maxVisible = 3 }: Props) {
         >
           show less
         </button>
+      )}
+      {!spendDismissed && spend && spend.run_count > 0 && (
+        <span className="flex items-center gap-1 text-[10px] font-mono text-slate-500 whitespace-nowrap">
+          Today: ${spend.total_usd.toFixed(2)} across {spend.run_count} run{spend.run_count !== 1 ? "s" : ""}
+          <button
+            onClick={() => setSpendDismissed(true)}
+            className="text-slate-600 hover:text-slate-400 ml-0.5 leading-none"
+            title="Dismiss"
+          >
+            ×
+          </button>
+        </span>
       )}
     </div>
   );

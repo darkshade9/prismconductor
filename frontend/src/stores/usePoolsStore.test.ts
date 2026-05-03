@@ -9,6 +9,8 @@ type FakePool = {
     role: string;
     capacity: number;
     enabled: boolean;
+    max_input_tokens?: number;
+    max_turns?: number;
   };
   active: number;
 };
@@ -97,5 +99,34 @@ describe("getPoolSummaryByRole", () => {
       { pool: { id: "a", name: "p", provider: "claude", role: "", capacity: 2, enabled: true }, active: 1 },
     ]);
     expect(result[0].role).toBe("work");
+  });
+
+  it("includes budgets array with one entry per pool", () => {
+    const result = make([
+      { pool: { id: "a", name: "main", provider: "claude", role: "work", capacity: 3, enabled: true, max_input_tokens: 100000, max_turns: 50 }, active: 1 },
+    ]);
+    expect(result[0].providers[0].budgets).toHaveLength(1);
+    expect(result[0].providers[0].budgets[0]).toMatchObject({ name: "main", max_input_tokens: 100000, max_turns: 50 });
+  });
+
+  it("accumulates budgets across multiple pools in the same provider group", () => {
+    const result = make([
+      { pool: { id: "a", name: "claude-a", provider: "claude", role: "work", capacity: 3, enabled: true, max_input_tokens: 80000 }, active: 1 },
+      { pool: { id: "b", name: "claude-b", provider: "claude", role: "work", capacity: 2, enabled: true, max_turns: 40 }, active: 0 },
+    ]);
+    const budgets = result[0].providers[0].budgets;
+    expect(budgets).toHaveLength(2);
+    expect(budgets.find((b) => b.name === "claude-a")).toMatchObject({ max_input_tokens: 80000 });
+    expect(budgets.find((b) => b.name === "claude-b")).toMatchObject({ max_turns: 40 });
+  });
+
+  it("includes budget entry even when no budget fields are set", () => {
+    const result = make([
+      { pool: { id: "a", name: "p", provider: "claude", role: "work", capacity: 2, enabled: true }, active: 1 },
+    ]);
+    expect(result[0].providers[0].budgets).toHaveLength(1);
+    expect(result[0].providers[0].budgets[0].name).toBe("p");
+    expect(result[0].providers[0].budgets[0].max_input_tokens).toBeUndefined();
+    expect(result[0].providers[0].budgets[0].max_turns).toBeUndefined();
   });
 });

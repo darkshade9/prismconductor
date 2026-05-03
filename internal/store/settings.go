@@ -75,6 +75,27 @@ func (s *Store) SetLabelFilter(workspaceID string, labels []string, mode string)
 	return s.SetSetting("label_filter:"+workspaceID+":mode", mode)
 }
 
+// GetConflictResolutionRequiresApproval returns whether the workspace requires
+// human approval before the conflict-resolution worker pushes resolved changes.
+// Defaults to false (auto-push) if the key is absent (#124 q2).
+func (s *Store) GetConflictResolutionRequiresApproval(workspaceID string) (bool, error) {
+	v, err := s.GetSetting("conflict_resolution_requires_approval:" + workspaceID)
+	if err != nil {
+		return false, err
+	}
+	return v == "true", nil
+}
+
+// SetConflictResolutionRequiresApproval persists the human-approval gate for
+// conflict resolution on a per-workspace basis.
+func (s *Store) SetConflictResolutionRequiresApproval(workspaceID string, requires bool) error {
+	v := "false"
+	if requires {
+		v = "true"
+	}
+	return s.SetSetting("conflict_resolution_requires_approval:"+workspaceID, v)
+}
+
 // AllSettings returns the full kv table as a map.
 func (s *Store) AllSettings() (map[string]string, error) {
 	if s == nil || s.DB == nil {
