@@ -1993,17 +1993,42 @@ func (a *App) handlePROpened(sess types.Session, prURL string) {
 		"pr_number":    n,
 		"pr_url":       prURL,
 	})
-	if a.notificationsSuppressed() {
-		return
+	if !a.notificationsSuppressed() {
+		a.emitToast("success", toastWorkspaceName(a.wsReg, sess.WorkspaceID),
+			fmt.Sprintf("#%d opened PR #%d", sess.IssueNumber, n),
+			map[string]any{
+				"workspace_id": sess.WorkspaceID,
+				"issue_number": sess.IssueNumber,
+				"pr_url":       prURL,
+				"action":       "open_pr",
+			})
 	}
-	a.emitToast("success", toastWorkspaceName(a.wsReg, sess.WorkspaceID),
-		fmt.Sprintf("#%d opened PR #%d", sess.IssueNumber, n),
-		map[string]any{
-			"workspace_id": sess.WorkspaceID,
-			"issue_number": sess.IssueNumber,
-			"pr_url":       prURL,
-			"action":       "open_pr",
-		})
+	// Auto-kill the execute worker now that the PR is open (#118). The
+	// worktree is preserved (session lands in Completed) so Continue Work can
+	// resume. Emit a toast only when the kill succeeded so we surface real impact.
+	killID, killStart, costCents, killed := a.mgr.KillAfterPROpened(sess.WorkspaceID, sess.IssueNumber)
+	if killed {
+		dur := time.Since(killStart).Round(time.Second)
+		mins := int(dur.Minutes())
+		secs := int(dur.Seconds()) % 60
+		var durStr string
+		if mins > 0 {
+			durStr = fmt.Sprintf("%dm %ds", mins, secs)
+		} else {
+			durStr = fmt.Sprintf("%ds", secs)
+		}
+		log.Printf("auto-cancel: PR #%d opened; killing execute session %s for issue #%d (was running %s)",
+			n, killID, sess.IssueNumber, durStr)
+		if !a.notificationsSuppressed() {
+			a.emitToast("info", toastWorkspaceName(a.wsReg, sess.WorkspaceID),
+				fmt.Sprintf("#%d: PR opened — stopping execute worker (was running %s, ~$%.2f)",
+					sess.IssueNumber, durStr, costCents/100),
+				map[string]any{
+					"workspace_id": sess.WorkspaceID,
+					"issue_number": sess.IssueNumber,
+				})
+		}
+	}
 }
 
 // notifyOnPRStateChange fires an in-app toast when the poller publishes

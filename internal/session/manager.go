@@ -184,6 +184,12 @@ type runtimeSession struct {
 	// tailAndParse. Initialised to the session start time so new sessions
 	// aren't immediately considered stale by the watchdog. Protected by actMu.
 	lastLineAt time.Time
+
+	// autoKilledForPROpen is set by KillAfterPROpened before the kill signal
+	// is sent. tailAndParse uses it to override StateFailed → StateCompleted
+	// so the worktree is preserved on the normal Completed cleanup path.
+	// Protected by actMu.
+	autoKilledForPROpen bool
 }
 
 // sessionCmd is the §10.5 abstraction over both spawn strategies. The
@@ -842,6 +848,16 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 		waitErr = <-done
 	}
 	rs.sess.State = mapTerminalState(rs.sess.State, waitErr)
+	rs.actMu.Lock()
+	autoKilled := rs.autoKilledForPROpen
+	rs.actMu.Unlock()
+	if autoKilled && rs.sess.State == types.StateFailed {
+		// Worker was killed by KillAfterPROpened after emitting PR_OPENED.
+		// Treat as Completed so the worktree is preserved on the normal path.
+		log.Printf("auto-cancel: PR opened; execute session %s for issue #%d completed after %.0fs",
+			rs.sess.ID, rs.sess.IssueNumber, time.Since(rs.sess.StartedAt).Seconds())
+		rs.sess.State = types.StateCompleted
+	}
 	end := time.Now()
 	rs.sess.EndedAt = &end
 	if m.store != nil {
@@ -1205,6 +1221,40 @@ func (m *Manager) KillGraceful(sessionID string) error {
 		_ = proc.Kill()
 	}()
 	return nil
+}
+
+// KillAfterPROpened finds the running or waiting execute session for
+// (workspaceID, issueNumber), marks it as auto-killed so tailAndParse will
+// record it as Completed (preserving the worktree), kills the process, and
+// returns the session ID, start time, and a best-effort estimated cost in
+// cents. Returns found=false when no active execute session exists (safe to
+// call concurrently). Issue #118.
+func (m *Manager) KillAfterPROpened(workspaceID string, issueNumber int) (id string, startedAt time.Time, estimatedCostCents float64, found bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, rs := range m.sessions {
+		s := rs.sess
+		if s.WorkspaceID != workspaceID || s.IssueNumber != issueNumber || s.Mode != types.ModeExecute {
+			continue
+		}
+		if s.State != types.StateRunning && s.State != types.StateWaitingForInput {
+			continue
+		}
+		rs.actMu.Lock()
+		rs.autoKilledForPROpen = true
+		hIn := rs.harnessInputTokens
+		hOut := rs.harnessOutputTokens
+		rs.actMu.Unlock()
+		_, _, costCents := ResolveUsage(rs.parser.LastCost(), hIn, hOut, rs.poolModel)
+		if rs.cancel != nil {
+			rs.cancel()
+		}
+		if rs.cmd != nil {
+			_ = rs.cmd.Kill()
+		}
+		return s.ID, s.StartedAt, costCents, true
+	}
+	return "", time.Time{}, 0, false
 }
 
 // SendInput is a no-op since #54. The spawn path no longer allocates a PTY,

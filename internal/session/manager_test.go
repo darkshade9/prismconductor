@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -332,6 +333,160 @@ func TestSpawnPersistsPoolID(t *testing.T) {
 	saved := store.saves[0]
 	if saved.PoolID != "pool-xyz" {
 		t.Errorf("persisted PoolID = %q, want %q", saved.PoolID, "pool-xyz")
+	}
+}
+
+// fakeKillCmd is a sessionCmd stub that records whether Kill was called.
+type fakeKillCmd struct {
+	killed bool
+}
+
+func (f *fakeKillCmd) Wait() error { return nil }
+func (f *fakeKillCmd) Kill() error { f.killed = true; return nil }
+func (f *fakeKillCmd) Pid() int    { return 0 }
+
+// TestKillAfterPROpened verifies that KillAfterPROpened finds a running
+// execute session, marks it autoKilledForPROpen, kills the process, and
+// returns found=true with the session id and start time (issue #118).
+func TestKillAfterPROpened(t *testing.T) {
+	fakeCmd := &fakeKillCmd{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startedAt := time.Now().Add(-30 * time.Second)
+	m := &Manager{sessions: map[string]*runtimeSession{}, inFlight: map[string]bool{}}
+	rs := &runtimeSession{
+		sess: &types.Session{
+			ID:          "sess-pr118",
+			WorkspaceID: "ws-118",
+			IssueNumber: 118,
+			Mode:        types.ModeExecute,
+			State:       types.StateRunning,
+			StartedAt:   startedAt,
+		},
+		parser: NewStreamParser(),
+		cmd:    fakeCmd,
+		cancel: cancel,
+	}
+	m.mu.Lock()
+	m.sessions["sess-pr118"] = rs
+	m.mu.Unlock()
+
+	id, start, _, found := m.KillAfterPROpened("ws-118", 118)
+	if !found {
+		t.Fatal("KillAfterPROpened returned found=false, want true")
+	}
+	if id != "sess-pr118" {
+		t.Errorf("id = %q, want sess-pr118", id)
+	}
+	if !start.Equal(startedAt) {
+		t.Errorf("startedAt mismatch: got %v, want %v", start, startedAt)
+	}
+	if !fakeCmd.killed {
+		t.Error("expected sessionCmd.Kill() to be called")
+	}
+	rs.actMu.Lock()
+	auto := rs.autoKilledForPROpen
+	rs.actMu.Unlock()
+	if !auto {
+		t.Error("expected autoKilledForPROpen to be set to true")
+	}
+	// ctx should be cancelled by the cancel call inside KillAfterPROpened.
+	select {
+	case <-ctx.Done():
+	default:
+		t.Error("expected session context to be cancelled")
+	}
+
+	// No-op on a session with a different issue number.
+	_, _, _, found2 := m.KillAfterPROpened("ws-118", 999)
+	if found2 {
+		t.Error("KillAfterPROpened for unknown issue should return found=false")
+	}
+
+	// No-op on a plan-mode session (different issue to avoid collision with the still-registered execute session above).
+	m.mu.Lock()
+	m.sessions["sess-plan-only"] = &runtimeSession{
+		sess: &types.Session{
+			ID:          "sess-plan-only",
+			WorkspaceID: "ws-118",
+			IssueNumber: 200,
+			Mode:        types.ModePlan,
+			State:       types.StateRunning,
+		},
+		parser: NewStreamParser(),
+		cmd:    &fakeKillCmd{},
+		cancel: func() {},
+	}
+	m.mu.Unlock()
+	_, _, _, found3 := m.KillAfterPROpened("ws-118", 200)
+	if found3 {
+		t.Error("KillAfterPROpened should ignore plan sessions")
+	}
+}
+
+// TestTailAndParseAutoKillLandsOnCompleted verifies the end-to-end auto-kill
+// flow: a running execute session that receives Kill via KillAfterPROpened
+// should record terminal state Completed (not Failed) so the worktree is
+// preserved (issue #118).
+func TestTailAndParseAutoKillLandsOnCompleted(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX-only")
+	}
+	tdir := t.TempDir()
+	store := &fakePersister{}
+	m := NewManager(nil, nil)
+	m.Configure(filepath.Join(tdir, "transcripts"), store, nil)
+
+	ws := types.Workspace{ID: "ws-118", RepoPath: tdir}
+	issue := types.Issue{Number: 118, WorkspaceID: ws.ID}
+
+	// Spawn a long-running execute session so tailAndParse is live.
+	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute,
+		[]string{"/bin/sh", "-c", "echo PR_OPENED: https://github.com/o/r/pull/1; sleep 10"},
+		"", "", "", types.Pool{}, "")
+	if err != nil {
+		t.Fatalf("spawnWithDir: %v", err)
+	}
+
+	// Give tailAndParse a moment to start reading.
+	time.Sleep(50 * time.Millisecond)
+
+	// Kill via the PR-opened path.
+	_, _, _, found := m.KillAfterPROpened(ws.ID, issue.Number)
+	if !found {
+		t.Fatal("KillAfterPROpened: session not found")
+	}
+
+	// Wait for tailAndParse to finish.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		m.mu.RLock()
+		_, still := m.sessions[sess.ID]
+		m.mu.RUnlock()
+		if !still {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	m.mu.RLock()
+	_, still := m.sessions[sess.ID]
+	m.mu.RUnlock()
+	if still {
+		t.Fatal("tailAndParse goroutine never exited")
+	}
+
+	// Terminal state must be completed, not failed.
+	foundCompleted := false
+	for _, upd := range store.stateUpd {
+		if upd == sess.ID+":completed" {
+			foundCompleted = true
+		}
+		if upd == sess.ID+":failed" {
+			t.Errorf("state was set to failed; auto-kill should override to completed")
+		}
+	}
+	if !foundCompleted {
+		t.Errorf("expected completed state update, got %v", store.stateUpd)
 	}
 }
 
