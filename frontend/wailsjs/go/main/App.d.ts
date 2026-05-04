@@ -11,6 +11,8 @@ import {store} from '../models';
 import {workerpool} from '../models';
 import {logbuffer} from '../models';
 
+export function AcknowledgeComment(arg1:string,arg2:number,arg3:number):Promise<void>;
+
 export function ActivateGoal(arg1:string):Promise<void>;
 
 export function AddManualIssue(arg1:string,arg2:number,arg3:string,arg4:string,arg5:Array<string>,arg6:string):Promise<types.Issue>;
@@ -103,6 +105,8 @@ export function ListIssues(arg1:string):Promise<Array<types.Issue>>;
 
 export function ListLabels(arg1:string):Promise<Array<types.Label>>;
 
+export function ListPRComments(arg1:string,arg2:number):Promise<Array<types.PRComment>>;
+
 export function ListPendingPlans():Promise<Array<store.PendingPlan>>;
 
 export function ListPlans(arg1:string,arg2:number):Promise<Array<types.Plan>>;
@@ -129,6 +133,8 @@ export function PoolSpendThisWeek(arg1:string):Promise<number>;
 
 export function PoolSpendToday(arg1:string):Promise<number>;
 
+export function PostPRComment(arg1:string,arg2:number,arg3:string,arg4:boolean):Promise<void>;
+
 export function ProbeProviderModels(arg1:types.Provider,arg2:string,arg3:string):Promise<Array<string>>;
 
 export function ReadTranscript(arg1:string):Promise<string>;
@@ -150,6 +156,8 @@ export function ReorderIssues(arg1:string,arg2:string,arg3:Array<number>):Promis
 export function Replan(arg1:string,arg2:number):Promise<void>;
 
 export function ReplanForce(arg1:string,arg2:number):Promise<void>;
+
+export function RequestFixForComments(arg1:string,arg2:number,arg3:Array<number>):Promise<void>;
 
 export function ResetPoolCounters():Promise<number>;
 

@@ -3572,6 +3572,147 @@ func (a *App) EstimateSpawnCost(workspaceID string, issueNumber int, poolID stri
 	return SpawnEstimate{Tokens: tokens, CostCents: costCents, Model: pool.Model}
 }
 
+// PostPRComment posts a comment to the GitHub PR thread for a REVIEW-column
+// issue. When requestFix is true it also spawns a Continue Work session so
+// the worker addresses the feedback. Issue #159.
+func (a *App) PostPRComment(workspaceID string, issueNumber int, body string, requestFix bool) error {
+	if a.wsReg == nil || a.store == nil || a.gh == nil {
+		return fmt.Errorf("registry/store/github unavailable")
+	}
+	if strings.TrimSpace(body) == "" {
+		return fmt.Errorf("comment body is required")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	iss, err := a.store.LoadIssue(workspaceID, issueNumber)
+	if err != nil {
+		return fmt.Errorf("load issue: %w", err)
+	}
+	if iss.PRNumber == nil {
+		return fmt.Errorf("issue #%d has no associated PR", issueNumber)
+	}
+
+	// Post to GitHub.
+	commentID, err := a.gh.PostIssueComment(a.ctx, ws, issueNumber, body)
+	if err != nil {
+		// Queue as pending_post so the UI shows a pending indicator; clear on next success.
+		_, _ = a.store.UpsertPRComment(types.PRComment{
+			WorkspaceID: workspaceID,
+			IssueNumber: issueNumber,
+			CommentID:   -time.Now().UnixNano(), // temporary negative ID to avoid clash
+			Author:      "me",
+			Body:        body,
+			Kind:        types.PRCommentKindConversation,
+			CreatedAt:   time.Now(),
+			PendingPost: true,
+		})
+		return fmt.Errorf("post comment: %w", err)
+	}
+
+	// Record in local store (no pending_post since it succeeded).
+	_, _ = a.store.UpsertPRComment(types.PRComment{
+		WorkspaceID: workspaceID,
+		IssueNumber: issueNumber,
+		CommentID:   commentID,
+		Author:      "me",
+		Body:        body,
+		Kind:        types.PRCommentKindConversation,
+		CreatedAt:   time.Now(),
+	})
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtPRCommentPosted, map[string]any{
+			"workspace_id": workspaceID,
+			"issue_number": issueNumber,
+			"comment_id":   commentID,
+		})
+	}
+
+	if !requestFix {
+		return nil
+	}
+
+	// Auto-continue: workspace setting auto_continue_on_comment defaults to true.
+	autoFix := ws.SkillProfile.AutoContinueOnComment == nil || *ws.SkillProfile.AutoContinueOnComment
+	if !autoFix {
+		// Caller (frontend) must show its own confirmation dialog; we don't
+		// spawn here. The request is fulfilled by a separate RequestFixForComments call.
+		return nil
+	}
+	note := fmt.Sprintf("PR comment feedback — please address the following:\n\n%s", body)
+	return a.ContinueWork(workspaceID, issueNumber, note)
+}
+
+// AcknowledgeComment marks a single PR comment as read. Issue #159.
+func (a *App) AcknowledgeComment(workspaceID string, issueNumber int, commentID int64) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.MarkPRCommentRead(workspaceID, issueNumber, commentID); err != nil {
+		return err
+	}
+	if a.assembler != nil {
+		a.assembler.Reassemble(workspaceID, issueNumber)
+	}
+	return nil
+}
+
+// RequestFixForComments marks the selected comments as read, builds a
+// consolidated note, and spawns a Continue Work session. Issue #159.
+func (a *App) RequestFixForComments(workspaceID string, issueNumber int, commentIDs []int64) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if len(commentIDs) == 0 {
+		return fmt.Errorf("no comments selected")
+	}
+
+	// Fetch the comment bodies to build the task note.
+	all, err := a.store.ListPRComments(workspaceID, issueNumber)
+	if err != nil {
+		return fmt.Errorf("list pr comments: %w", err)
+	}
+	idSet := make(map[int64]bool, len(commentIDs))
+	for _, id := range commentIDs {
+		idSet[id] = true
+	}
+
+	var noteLines []string
+	for _, c := range all {
+		if !idSet[c.CommentID] {
+			continue
+		}
+		entry := fmt.Sprintf("[%s] %s: %s", c.Kind, c.Author, c.Body)
+		if c.FilePath != "" {
+			entry = fmt.Sprintf("[%s:%d] %s: %s", c.FilePath, c.LineNumber, c.Author, c.Body)
+		}
+		noteLines = append(noteLines, entry)
+		_ = a.store.MarkPRCommentRead(workspaceID, issueNumber, c.CommentID)
+	}
+	if len(noteLines) == 0 {
+		return fmt.Errorf("selected comments not found")
+	}
+
+	note := "PR review feedback — please address in order:\n\n" + strings.Join(noteLines, "\n\n")
+	if err := a.ContinueWork(workspaceID, issueNumber, note); err != nil {
+		return err
+	}
+	if a.assembler != nil {
+		a.assembler.Reassemble(workspaceID, issueNumber)
+	}
+	return nil
+}
+
+// ListPRComments returns all stored PR comments for an issue (read + unread),
+// ordered oldest-first. Issue #159.
+func (a *App) ListPRComments(workspaceID string, issueNumber int) ([]types.PRComment, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store unavailable")
+	}
+	return a.store.ListPRComments(workspaceID, issueNumber)
+}
+
 func todayUTC() time.Time {
 	now := time.Now().UTC()
 	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)

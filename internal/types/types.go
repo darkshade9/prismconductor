@@ -92,6 +92,16 @@ type SkillProfile struct {
 	// SelfHealAttemptCap is the maximum number of consecutive auto-spawned
 	// self-heal sessions per PR HEAD SHA. 0 means use the default (3).
 	SelfHealAttemptCap int `json:"self_heal_attempt_cap,omitempty"`
+
+	// AutoContinueOnComment controls whether "Comment & Request Fix" auto-spawns
+	// a Continue Work session without a confirmation dialog (issue #159).
+	// Nil/absent means enabled (default true).
+	AutoContinueOnComment *bool `json:"auto_continue_on_comment,omitempty"`
+
+	// NotifyOnBotComments controls whether comments authored by known bot
+	// accounts surface as unread New Comment badges (issue #159).
+	// Nil/absent means disabled (default false).
+	NotifyOnBotComments *bool `json:"notify_on_bot_comments,omitempty"`
 }
 
 // SkillForStage returns the SkillRef configured for the given stage, if any.
@@ -489,6 +499,34 @@ type AgentTermSession struct {
 	SessionID   string `json:"session_id"`
 	AgentBin    string `json:"agent_bin"` // display name of the agent binary
 	PID         int    `json:"pid"`
+}
+
+// --- PR comments (issue #159) ---
+
+// PRCommentKind distinguishes conversation comments (on the issue thread)
+// from line-level review comments (attached to a diff hunk).
+type PRCommentKind string
+
+const (
+	PRCommentKindConversation PRCommentKind = "conversation"
+	PRCommentKindReview       PRCommentKind = "review"
+)
+
+// PRComment is a single GitHub PR comment, persisted in pr_comments.
+// Conversation comments come from issues/:num/comments; review comments
+// come from pulls/:num/comments (inline diff comments).
+type PRComment struct {
+	WorkspaceID string        `json:"workspace_id"`
+	IssueNumber int           `json:"issue_number"`
+	CommentID   int64         `json:"comment_id"`
+	Author      string        `json:"author"`
+	Body        string        `json:"body"`
+	Kind        PRCommentKind `json:"kind"`
+	FilePath    string        `json:"file_path,omitempty"`
+	LineNumber  int           `json:"line_number,omitempty"`
+	CreatedAt   time.Time     `json:"created_at"`
+	ReadAt      *time.Time    `json:"read_at,omitempty"`
+	PendingPost bool          `json:"pending_post,omitempty"`
 }
 
 // --- Pool usage / rate limits (issue #52) ---

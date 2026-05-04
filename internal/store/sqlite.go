@@ -270,6 +270,27 @@ CREATE TABLE IF NOT EXISTS pools (
 			}
 		}
 	}
+	// Issue #159: PR comment surface — persisted per (workspace, issue, comment_id).
+	// conversation = issue thread comments; review = PR inline diff comments.
+	if _, err := s.DB.Exec(`CREATE TABLE IF NOT EXISTS pr_comments (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id TEXT NOT NULL,
+    issue_number INTEGER NOT NULL,
+    comment_id   INTEGER NOT NULL,
+    author       TEXT NOT NULL,
+    body         TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    file_path    TEXT,
+    line_number  INTEGER,
+    created_at   INTEGER NOT NULL,
+    read_at      INTEGER,
+    pending_post INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(workspace_id, issue_number, comment_id)
+);
+CREATE INDEX IF NOT EXISTS idx_pr_comments_ws_issue ON pr_comments(workspace_id, issue_number);
+`); err != nil {
+		return err
+	}
 	return nil
 }
 

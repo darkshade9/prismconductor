@@ -70,4 +70,9 @@ type IssueView struct {
 	// NeedsPRInfo mirrors Issue.NeedsPRInfo for direct frontend access (#157).
 	// Set when the execute session completed the work but could not push.
 	NeedsPRInfo *types.NeedsPRInfo `json:"needs_pr_info,omitempty"`
+
+	// UnreadCommentCount is the number of unread PR comments on this issue
+	// (#159). Non-zero only for REVIEW-column cards. Drives the "New Comment
+	// (N)" badge.
+	UnreadCommentCount int `json:"unread_comment_count"`
 }

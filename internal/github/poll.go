@@ -23,6 +23,7 @@ type Store interface {
 	MarkPRMerged(workspaceID string, number int) error
 	MarkPRClosedUnmerged(workspaceID string, number int) error
 	SaveLabels(workspaceID string, labels []types.Label) error
+	UpsertPRComment(c types.PRComment) (bool, error)
 }
 
 // WorkspaceSource lets the poller pick up newly-added workspaces between ticks.
@@ -81,6 +82,16 @@ type Poller struct {
 	// conflict falling-edge transitions (issue #124).
 	// Key: "wsID#prNumber". Value: conflictStateCacheEntry.
 	conflictStateCache sync.Map
+
+	// commentSeenCache tracks the timestamp of the most-recently-seen comment
+	// per (wsID, prNumber) so the poller only emits EvtPRCommentReceived for
+	// new comments (#159). Key: "wsID#prNumber". Value: time.Time.
+	commentSeenCache sync.Map
+
+	// ghUserOnce / ghUser cache the authenticated GitHub login so the poller
+	// can filter out the conductor's own comments from the unread-badge signal.
+	ghUserOnce sync.Once
+	ghUser     string
 }
 
 // NewPoller constructs a Poller with sensible defaults.
@@ -298,12 +309,13 @@ func (p *Poller) pollOne(ctx context.Context, ws types.Workspace) error {
 			p.conflictStateCache.Delete(cacheKey)
 			continue
 		}
-		// PR is still open — probe check runs for CI failure detection (#116)
-		// and conflict detection (#124).
+		// PR is still open — probe check runs for CI failure detection (#116),
+		// conflict detection (#124), and comment polling (#159).
 		if pr.HeadSHA != "" {
 			p.probeCheckRuns(ctx, ws, iss, *iss.PRNumber, pr.HeadSHA)
 		}
 		p.probeConflicts(ctx, ws, iss, *iss.PRNumber, pr)
+		p.probeComments(ctx, ws, iss, *iss.PRNumber)
 	}
 
 	// NEEDS_PR PR detection (#157): for every issue with NeedsPRInfo but no PR
@@ -556,6 +568,91 @@ func sameStringSet(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// probeComments fetches conversation and review comments for a REVIEW-column
+// PR, upserts each into the store, and emits EvtPRCommentReceived for any
+// newly-seen comment not authored by the conductor itself or known bots (#159).
+func (p *Poller) probeComments(ctx context.Context, ws types.Workspace, iss types.Issue, prNumber int) {
+	if p.Bus == nil || p.Client == nil || p.Store == nil {
+		return
+	}
+	// Resolve the conductor's own gh user once per process lifetime.
+	p.ghUserOnce.Do(func() {
+		if login, err := p.Client.GetAuthenticatedUser(ctx); err == nil {
+			p.ghUser = login
+		}
+	})
+
+	cacheKey := ws.ID + "#" + strconv.Itoa(prNumber)
+	var since time.Time
+	if v, ok := p.commentSeenCache.Load(cacheKey); ok {
+		since = v.(time.Time)
+	}
+
+	conv, err := p.Client.FetchIssueComments(ctx, ws, iss.Number, since)
+	if err != nil {
+		log.Printf("issue comments %s#%d: %v", ws.ID, iss.Number, err)
+	}
+	rev, err := p.Client.FetchPRReviewComments(ctx, ws, prNumber, since)
+	if err != nil {
+		log.Printf("review comments %s#%d (pr %d): %v", ws.ID, iss.Number, prNumber, err)
+	}
+
+	all := append(conv, rev...)
+	var newest time.Time
+	for _, cm := range all {
+		if cm.CreatedAt.After(newest) {
+			newest = cm.CreatedAt
+		}
+		isNew, err := p.Store.UpsertPRComment(cm)
+		if err != nil {
+			log.Printf("upsert pr comment %s#%d id %d: %v", ws.ID, iss.Number, cm.CommentID, err)
+			continue
+		}
+		if !isNew {
+			continue
+		}
+		if isBotOrSelf(cm.Author, p.ghUser) {
+			continue
+		}
+		p.Bus.Publish(eventbus.EvtPRCommentReceived, eventbus.PRCommentReceived{
+			WorkspaceID: ws.ID,
+			IssueNumber: iss.Number,
+			PRNumber:    prNumber,
+			CommentID:   cm.CommentID,
+			Author:      cm.Author,
+		})
+	}
+	if !newest.IsZero() {
+		p.commentSeenCache.Store(cacheKey, newest)
+	}
+}
+
+// knownBotSuffixes are GitHub login suffixes that identify bot accounts.
+var knownBotSuffixes = []string{"[bot]"}
+
+// knownBotLogins are well-known bot account exact logins.
+var knownBotLogins = map[string]bool{
+	"dependabot":     true,
+	"renovate":       true,
+	"github-actions": true,
+}
+
+// isBotOrSelf returns true when the author login should be silenced.
+func isBotOrSelf(author, selfLogin string) bool {
+	if selfLogin != "" && author == selfLogin {
+		return true
+	}
+	if knownBotLogins[author] {
+		return true
+	}
+	for _, suffix := range knownBotSuffixes {
+		if len(author) > len(suffix) && author[len(author)-len(suffix):] == suffix {
+			return true
+		}
+	}
+	return false
 }
 
 func sameLabels(a, b []string) bool {

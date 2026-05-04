@@ -14,6 +14,7 @@ import { getContrastText } from "../lib/contrast";
 import { LabelManagePopover } from "./LabelManagePopover";
 import { MidRunQuestionModal } from "./MidRunQuestionModal";
 import { ContinueModal } from "./ContinueModal";
+import { PRCommentReviewModal } from "./PRCommentReviewModal";
 import { AgentActivityStrip } from "./AgentActivityStrip";
 import { DiagnosticPopover } from "./DiagnosticPopover";
 import { cn } from "../lib/cn";
@@ -87,6 +88,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
 
   const [midRunOpen, setMidRunOpen] = useState(false);
   const [continueOpen, setContinueOpen] = useState(false);
+  const [prCommentOpen, setPrCommentOpen] = useState(false);
   const [cardMenu, setCardMenu] = useState<{ x: number; y: number; actions: CopyAction[] } | null>(null);
   const [diagAnchor, setDiagAnchor] = useState<{ x: number; y: number } | null>(null);
 
@@ -197,6 +199,21 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
             </button>
           )}
           {issue.priority ? <span className="text-slate-500">P{issue.priority.toFixed(2)}</span> : null}
+          {/* New Comment badge (#159): orange, shown for REVIEW cards with unread PR comments. */}
+          {issue.column === "review" && (view?.unread_comment_count ?? 0) > 0 && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setPrCommentOpen(true);
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-700/40 text-orange-200 border border-orange-600 hover:bg-orange-700/60 whitespace-nowrap"
+              title="New PR comments — click to review"
+            >
+              New Comment ({view!.unread_comment_count})
+            </button>
+          )}
         </span>
       </div>
       <div
@@ -266,6 +283,15 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
           workspaceID={issue.workspace_id}
           issueNumber={issue.number}
           prNumber={issue.pr_number}
+        />
+      )}
+      {issue.column === "review" && (
+        <PRCommentReviewModal
+          open={prCommentOpen}
+          onClose={() => setPrCommentOpen(false)}
+          workspaceID={issue.workspace_id}
+          issueNumber={issue.number}
+          autoContinue={true}
         />
       )}
       {cardMenu && (
