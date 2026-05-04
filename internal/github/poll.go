@@ -38,9 +38,16 @@ type checkStateCacheEntry struct {
 }
 
 // conflictStateCacheEntry is stored per (wsID, prNumber) to detect conflict
-// falling-edge transitions across poller ticks (issue #124).
+// falling-edge transitions across poller ticks (issue #124) AND to hold the
+// last conflict-file list so we can detect when the set of conflicting
+// files CHANGES while the PR remains in dirty state (e.g. main moves and
+// new files start conflicting). Without that diff, a PR locked in
+// `dirty` keeps the original ConflictingFiles list forever even if the
+// list is now wrong — and a binary upgrade that fixes the file-detection
+// algorithm (#167) doesn't take effect on already-dirty PRs.
 type conflictStateCacheEntry struct {
-	mergeableState string // "clean", "dirty", "blocked", "unknown", or ""
+	mergeableState string   // "clean", "dirty", "blocked", "unknown", or ""
+	files          []string // last-emitted conflicting files, sorted
 }
 
 // Poller fans out per-workspace fetches every Interval. Each tick:
@@ -426,79 +433,129 @@ func (p *Poller) probeCheckRuns(ctx context.Context, ws types.Workspace, iss typ
 	}
 }
 
-// probeConflicts checks the PR's mergeable_state and emits EvtPRConflictsDetected
-// on a falling-edge transition to "dirty" (not-dirty → dirty). Emits
-// EvtPRConflictsResolved when the state transitions back to a non-dirty value.
-// Issue #124.
+// probeConflicts checks the PR's mergeable_state and emits
+// EvtPRConflictsDetected when:
+//   - falling edge: PR transitions into dirty state, OR
+//   - PR is already dirty AND the precise conflicting-files list has
+//     changed since the last emit (main moved, conductor was upgraded,
+//     etc.)
+//
+// Emits EvtPRConflictsResolved on the recovery edge. Issue #124, plus
+// the freshness fix that prevents a stale conflict-file list from
+// being pinned forever.
 func (p *Poller) probeConflicts(ctx context.Context, ws types.Workspace, iss types.Issue, prNumber int, pr *PRState) {
 	if p.Bus == nil {
 		return
 	}
 	cacheKey := ws.ID + "#" + strconv.Itoa(prNumber)
 	prev, hasPrev := p.conflictStateCache.Load(cacheKey)
-	prevState := ""
+	var prevState string
+	var prevFiles []string
 	if hasPrev {
-		prevState = prev.(conflictStateCacheEntry).mergeableState
+		prevEntry := prev.(conflictStateCacheEntry)
+		prevState = prevEntry.mergeableState
+		prevFiles = prevEntry.files
 	}
 
-	p.conflictStateCache.Store(cacheKey, conflictStateCacheEntry{mergeableState: pr.MergeableState})
-
 	switch {
-	case pr.MergeableState == "dirty" && prevState != "dirty":
-		// Falling edge: PR became conflicted. Determine the ACTUAL
-		// conflicting files via `git merge-tree` (3-way merge simulation,
-		// no worktree mutation). The earlier implementation listed every
-		// file the PR touched — misleading because most PR files don't
-		// actually conflict. We try the local-git path first; fall back
-		// to the full PR-files API only if git is too old (< 2.38) or
-		// the local repo's refs aren't fetched.
-		var files []string
-		if ws.RepoPath != "" {
-			// Make sure base + head refs are present locally. Best effort;
-			// merge-tree errors will trip the fallback if not.
-			_, _ = pcgit.RunInDir(ws.RepoPath, "git", "fetch", "origin",
-				pr.BaseBranch+":refs/remotes/origin/"+pr.BaseBranch,
-				pr.HeadRef+":refs/remotes/origin/"+pr.HeadRef)
-			conflictFiles, mtErr := pcgit.MergeConflictFiles(
-				ws.RepoPath,
-				"origin/"+pr.BaseBranch,
-				"origin/"+pr.HeadRef,
-			)
-			if mtErr == nil {
-				files = conflictFiles
-			} else {
-				log.Printf("merge-tree %s#%d (pr %d): %v — falling back to PR file list",
-					ws.ID, iss.Number, prNumber, mtErr)
-			}
+	case pr.MergeableState == "dirty":
+		// Compute the current conflict-file list every poll. This makes
+		// the file detection RE-RUN even when the PR has been dirty for
+		// a while — needed because (a) the conflict set can change as
+		// main moves, and (b) a binary upgrade that fixes the detection
+		// algorithm (#167's switch from FetchPRFiles to git merge-tree)
+		// only takes effect on dirty PRs if the post-upgrade poll
+		// re-detects, not just on the original falling edge.
+		files := p.detectConflictFiles(ctx, ws, iss, prNumber, pr)
+
+		// Emit only when something CHANGED — falling edge into dirty,
+		// or same-dirty-state with a different file list. Avoids
+		// flooding the bus with no-op events on every 5min tick.
+		fileSetChanged := !sameStringSet(prevFiles, files)
+		fellingEdge := prevState != "dirty"
+		if fellingEdge || fileSetChanged {
+			p.Bus.Publish(eventbus.EvtPRConflictsDetected, eventbus.PRConflictsDetected{
+				WorkspaceID:      ws.ID,
+				IssueNumber:      iss.Number,
+				PRNumber:         prNumber,
+				Base:             pr.BaseBranch,
+				Head:             pr.HeadRef,
+				ConflictingFiles: files,
+			})
 		}
-		if files == nil {
-			// Fallback: list every file the PR touches. Less precise but
-			// always available regardless of git version. The Card UI
-			// should label this list as "files modified by PR" rather
-			// than "conflicting files" when this fallback fired (caller
-			// concern; not signaled in the event payload yet — TODO).
-			fallback, err := p.Client.FetchPRFiles(ctx, ws, prNumber)
-			if err != nil {
-				log.Printf("pr files %s#%d (pr %d): %v", ws.ID, iss.Number, prNumber, err)
-			}
-			files = fallback
-		}
-		p.Bus.Publish(eventbus.EvtPRConflictsDetected, eventbus.PRConflictsDetected{
-			WorkspaceID:      ws.ID,
-			IssueNumber:      iss.Number,
-			PRNumber:         prNumber,
-			Base:             pr.BaseBranch,
-			Head:             pr.HeadRef,
-			ConflictingFiles: files,
+		p.conflictStateCache.Store(cacheKey, conflictStateCacheEntry{
+			mergeableState: pr.MergeableState,
+			files:          files,
 		})
-	case pr.MergeableState != "dirty" && pr.MergeableState != "" && pr.MergeableState != "unknown" && prevState == "dirty":
+
+	case pr.MergeableState != "" && pr.MergeableState != "unknown" && prevState == "dirty":
 		// Recovery edge: conflicts cleared (clean, blocked, etc.).
 		p.Bus.Publish(eventbus.EvtPRConflictsResolved, eventbus.PRConflictsResolved{
 			WorkspaceID: ws.ID,
 			IssueNumber: iss.Number,
 			PRNumber:    prNumber,
 		})
+		p.conflictStateCache.Store(cacheKey, conflictStateCacheEntry{
+			mergeableState: pr.MergeableState,
+		})
+
+	default:
+		// Not dirty, not transitioning out of dirty — just refresh the
+		// state cache. No emit.
+		p.conflictStateCache.Store(cacheKey, conflictStateCacheEntry{
+			mergeableState: pr.MergeableState,
+		})
 	}
+}
+
+// detectConflictFiles runs the precise `git merge-tree` 3-way merge
+// simulation in the workspace's local repo and returns the conflicting
+// paths sorted alphabetically. Falls back to the GitHub PR-files API
+// (full PR changeset, less precise) when the local-git path errors —
+// e.g. git too old, or the workspace doesn't have a RepoPath.
+func (p *Poller) detectConflictFiles(ctx context.Context, ws types.Workspace, iss types.Issue, prNumber int, pr *PRState) []string {
+	var files []string
+	if ws.RepoPath != "" {
+		_, _ = pcgit.RunInDir(ws.RepoPath, "git", "fetch", "origin",
+			pr.BaseBranch+":refs/remotes/origin/"+pr.BaseBranch,
+			pr.HeadRef+":refs/remotes/origin/"+pr.HeadRef)
+		conflictFiles, mtErr := pcgit.MergeConflictFiles(
+			ws.RepoPath,
+			"origin/"+pr.BaseBranch,
+			"origin/"+pr.HeadRef,
+		)
+		if mtErr == nil {
+			files = conflictFiles
+		} else {
+			log.Printf("merge-tree %s#%d (pr %d): %v — falling back to PR file list",
+				ws.ID, iss.Number, prNumber, mtErr)
+		}
+	}
+	if files == nil {
+		fallback, err := p.Client.FetchPRFiles(ctx, ws, prNumber)
+		if err != nil {
+			log.Printf("pr files %s#%d (pr %d): %v", ws.ID, iss.Number, prNumber, err)
+		}
+		files = fallback
+	}
+	sort.Strings(files)
+	return files
+}
+
+// sameStringSet reports whether two []string slices contain the same
+// elements regardless of order. Both inputs must already be sorted for
+// the simple slice-compare; detectConflictFiles sorts before storing
+// in the cache so this is the cheap path.
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func sameLabels(a, b []string) bool {
