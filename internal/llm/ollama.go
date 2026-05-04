@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	"prismconductor/internal/types"
 )
@@ -18,7 +17,7 @@ type ollamaProvider struct {
 }
 
 func NewOllamaProvider() Provider {
-	return ollamaProvider{client: &http.Client{Timeout: 5 * time.Minute}}
+	return ollamaProvider{client: NewHTTPClient(DefaultHTTPTimeout)}
 }
 
 func (ollamaProvider) Kind() types.Provider    { return types.ProviderOllama }

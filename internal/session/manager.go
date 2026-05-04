@@ -173,6 +173,17 @@ type runtimeSession struct {
 	// where CostData from the stream parser is authoritative.
 	harnessInputTokens  int64
 	harnessOutputTokens int64
+
+	// slotReleased is set to true the first time EvtWorkerSlotFreed is
+	// published for this session. Guards against double-release when both the
+	// normal tailAndParse cleanup path and the safety-net defer race to free
+	// the pool slot. Protected by actMu.
+	slotReleased bool
+
+	// lastLineAt is the time of the most recent transcript line consumed by
+	// tailAndParse. Initialised to the session start time so new sessions
+	// aren't immediately considered stale by the watchdog. Protected by actMu.
+	lastLineAt time.Time
 }
 
 // sessionCmd is the §10.5 abstraction over both spawn strategies. The
@@ -633,6 +644,7 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 		poolID:         pool.ID,
 		poolName:       pool.Name,
 		poolModel:      pool.Model,
+		lastLineAt:     time.Now(),
 	}
 
 	if len(argv) > 0 {
@@ -673,32 +685,8 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 			cancel()
 			return nil, fmt.Errorf("session manager: unknown provider %q for pool %s", pool.Provider, pool.ID)
 		}
-		done := make(chan struct{})
+		done := m.spawnHarness(ctx, rs, prov, ws, pool, prompt, skillMarkdown)
 		rs.cmd = &synthCmd{done: done, err: &rs.harnessErr, cancel: cancel}
-		go func() {
-			defer close(done)
-			rs.harnessErr = harness.Execute(ctx, harness.Run{
-				SessionID:     sessID,
-				RepoPath:      ws.RepoPath,
-				WorktreeDir:   worktreeDir,
-				Mode:          mode,
-				SkillMode:     ws.SkillProfile.Mode,
-				SkillMarkdown: skillMarkdown,
-				Pool:          pool,
-				Provider:      prov,
-				UserPrompt:    prompt,
-				Skills:        bundle.FS,
-				EnvVars:       envSpecToSlice(ws.AgentEnv),
-				Budget:        poolBudget(pool),
-				Out:           tf,
-				OnTurnUsage: func(in, out int) {
-					rs.actMu.Lock()
-					rs.harnessInputTokens = int64(in)
-					rs.harnessOutputTokens = int64(out)
-					rs.actMu.Unlock()
-				},
-			})
-		}()
 	}
 
 	if m.store != nil {
@@ -716,12 +704,58 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 	return sess, nil
 }
 
+// releaseSlot publishes EvtWorkerSlotFreed for rs exactly once (idempotent via
+// slotReleased). Safe to call from both the normal tailAndParse cleanup path
+// and the safety-net defer — whichever fires first wins and the other is a
+// no-op.
+func (m *Manager) releaseSlot(rs *runtimeSession) {
+	rs.actMu.Lock()
+	released := rs.slotReleased
+	rs.slotReleased = true
+	rs.actMu.Unlock()
+	if released {
+		return
+	}
+	if m.bus != nil {
+		m.bus.Publish(eventbus.EvtWorkerSlotFreed, eventbus.WorkerSlotFreed{
+			SessionID: rs.sess.ID,
+			PoolID:    rs.poolID,
+		})
+	}
+}
+
 // tailAndParse polls the transcript file for new lines, feeds each through
 // the per-session parser, and routes the resulting display lines to emit /
 // matchPatterns / recordActivity. Issue #54 replaces the old PTY byte-stream
 // reader with a file tail because the worker's stdout IS the transcript file
 // now (so the conductor exiting doesn't break the worker's writes).
 func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
+	// Safety-net (issue #152): registered first so it fires last in LIFO order,
+	// after the transcript-close defer below. Guarantees that regardless of how
+	// this goroutine exits — including a panic in the function body — the pool
+	// slot is released and the session is removed from m.sessions. On the normal
+	// (no-panic) path every call here is a no-op: the function body already ran
+	// the same cleanup, and releaseSlot is idempotent via slotReleased.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("tailAndParse panic: session %s: %v", rs.sess.ID, r)
+			end := time.Now()
+			if rs.sess.EndedAt == nil {
+				rs.sess.EndedAt = &end
+			}
+			if rs.sess.State == types.StateRunning || rs.sess.State == types.StateWaitingForInput {
+				rs.sess.State = types.StateFailed
+			}
+			if m.store != nil {
+				_ = m.store.UpdateSessionState(rs.sess.ID, rs.sess.State)
+			}
+		}
+		m.releaseSlot(rs)
+		m.mu.Lock()
+		delete(m.sessions, rs.sess.ID)
+		m.mu.Unlock()
+	}()
+
 	defer func() {
 		// Conductor's handle on the transcript file. Closing it here doesn't
 		// affect the worker — the worker has its own fd via fork+exec dup.
@@ -752,6 +786,9 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 			}
 			line, rerr := reader.ReadString('\n')
 			if len(line) > 0 {
+				rs.actMu.Lock()
+				rs.lastLineAt = time.Now()
+				rs.actMu.Unlock()
 				m.feedLine(rs, strings.TrimRight(line, "\r\n"))
 				rs.transcriptOffset += int64(len(line))
 				if m.store != nil && time.Since(lastFlush) >= 2*time.Second {
@@ -769,6 +806,9 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 					for {
 						line, rerr := reader.ReadString('\n')
 						if len(line) > 0 {
+							rs.actMu.Lock()
+							rs.lastLineAt = time.Now()
+							rs.actMu.Unlock()
 							m.feedLine(rs, strings.TrimRight(line, "\r\n"))
 							rs.transcriptOffset += int64(len(line))
 						}
@@ -840,12 +880,7 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 	if m.onStateChange != nil && prev != rs.sess.State {
 		m.onStateChange(*rs.sess, prev)
 	}
-	if m.bus != nil {
-		m.bus.Publish(eventbus.EvtWorkerSlotFreed, eventbus.WorkerSlotFreed{
-			SessionID: rs.sess.ID,
-			PoolID:    rs.poolID,
-		})
-	}
+	m.releaseSlot(rs)
 
 	// Issue #22: per-execute worktree teardown.
 	//   q2=A: Blocked/Failed → immediate `git worktree remove --force`. The

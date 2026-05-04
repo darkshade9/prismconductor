@@ -8,7 +8,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"time"
 
 	"prismconductor/internal/types"
 )
@@ -20,7 +19,7 @@ type litellmProvider struct {
 }
 
 func NewLiteLLMProvider() Provider {
-	return litellmProvider{client: &http.Client{Timeout: 5 * time.Minute}}
+	return litellmProvider{client: NewHTTPClient(DefaultHTTPTimeout)}
 }
 
 func (litellmProvider) Kind() types.Provider    { return types.ProviderLiteLLM }
