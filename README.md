@@ -203,6 +203,10 @@ Open issues are tracked at [github.com/darkshade9/prismconductor/issues](https:/
 
 PRs welcome; please ensure `go test ./...` and `npx tsc --noEmit` pass.
 
+## Why the name "PrismConductor"?
+
+I thought the idea that multiple sources (Humans, LLMs, Ideas, Data, etc.) were represented as multiple colors converging into a Prism and the output is whatever the Orchestrator (you!) want.  This means it doesn't matter which model you use, with provider, where the idea came from, which data sources you use, it all comes together here and you make what you want out of it.
+
 ## License
 
 PrismConductor is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. See [`LICENSE`](LICENSE) for the full text.
