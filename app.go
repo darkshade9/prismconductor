@@ -453,6 +453,27 @@ func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionSta
 	if prev == sess.State {
 		return
 	}
+
+	// When an execute session COMPLETES on a card that had merge conflicts
+	// recorded, optimistically clear the conflict info so the card doesn't
+	// stay glowing red after the resolver demonstrably finished. The
+	// poller's next cycle will re-detect via probeConflicts if the
+	// resolver actually didn't fix it. Without this, the badge persists
+	// for up to 5 minutes after the resolver session terminates because
+	// EvtPRConflictsResolved only fires when GitHub's mergeable_state
+	// transitions out of "dirty" — which the conductor only learns about
+	// at the next poll tick. Witnessed on issue #177.
+	if sess.Mode == types.ModeExecute && sess.State == types.StateCompleted &&
+		a.assembler != nil && a.assembler.HasConflictsInfo(sess.WorkspaceID, sess.IssueNumber) {
+		a.assembler.ClearConflictsInfo(sess.WorkspaceID, sess.IssueNumber)
+		// Kick the poller for definitive verification on the next cycle.
+		// If the conflict actually persists, probeConflicts will re-fire
+		// EvtPRConflictsDetected and the badge comes back. If it's gone,
+		// nothing happens and the badge stays cleared.
+		if a.poller != nil {
+			a.poller.PokeNow()
+		}
+	}
 	switch sess.State {
 	case types.StateWaitingForInput, types.StatePausedForQuestion, types.StateBlocked, types.StateCompleted, types.StateFailed:
 		// One notification per transition; dedupe identical kicks within 2s.
