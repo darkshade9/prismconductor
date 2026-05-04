@@ -890,6 +890,7 @@ export namespace issueview {
 	    tests_failing_info?: TestsFailingInfo;
 	    conflicts_info?: ConflictsInfo;
 	    orphan_question?: OrphanQuestionInfo;
+	    needs_pr_info?: types.NeedsPRInfo;
 	
 	    static createFrom(source: any = {}) {
 	        return new IssueView(source);
@@ -908,6 +909,7 @@ export namespace issueview {
 	        this.tests_failing_info = this.convertValues(source["tests_failing_info"], TestsFailingInfo);
 	        this.conflicts_info = this.convertValues(source["conflicts_info"], ConflictsInfo);
 	        this.orphan_question = this.convertValues(source["orphan_question"], OrphanQuestionInfo);
+	        this.needs_pr_info = this.convertValues(source["needs_pr_info"], types.NeedsPRInfo);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1273,6 +1275,24 @@ export namespace types {
 		    return a;
 		}
 	}
+	export class NeedsPRInfo {
+	    branch: string;
+	    worktree_dir: string;
+	    reason: string;
+	    kind: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new NeedsPRInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.branch = source["branch"];
+	        this.worktree_dir = source["worktree_dir"];
+	        this.reason = source["reason"];
+	        this.kind = source["kind"];
+	    }
+	}
 	export class Question {
 	    id: string;
 	    type: string;
@@ -1387,6 +1407,7 @@ export namespace types {
 	    work_seconds_plan?: number;
 	    work_seconds_execute?: number;
 	    cost_usd?: number;
+	    needs_pr_info?: NeedsPRInfo;
 	
 	    static createFrom(source: any = {}) {
 	        return new Issue(source);
@@ -1422,6 +1443,7 @@ export namespace types {
 	        this.work_seconds_plan = source["work_seconds_plan"];
 	        this.work_seconds_execute = source["work_seconds_execute"];
 	        this.cost_usd = source["cost_usd"];
+	        this.needs_pr_info = this.convertValues(source["needs_pr_info"], NeedsPRInfo);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1475,6 +1497,7 @@ export namespace types {
 	        this.multi = source["multi"];
 	    }
 	}
+	
 	export class SkillRef {
 	    path: string;
 	    source: string;

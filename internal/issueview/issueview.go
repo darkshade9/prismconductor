@@ -67,4 +67,7 @@ type IssueView struct {
 	// the corresponding question file is missing from disk (#153). The
 	// frontend renders a BLOCKED badge and a Recover action.
 	OrphanQuestion *OrphanQuestionInfo `json:"orphan_question,omitempty"`
+	// NeedsPRInfo mirrors Issue.NeedsPRInfo for direct frontend access (#157).
+	// Set when the execute session completed the work but could not push.
+	NeedsPRInfo *types.NeedsPRInfo `json:"needs_pr_info,omitempty"`
 }

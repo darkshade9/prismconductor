@@ -292,6 +292,24 @@ type Issue struct {
 	// (issue #47). Accumulated from Claude stream-json result events; preserved
 	// across GitHub poll re-saves like WorkSeconds.
 	CostUSD float64 `json:"cost_usd,omitempty"`
+
+	// NeedsPRInfo is set when an execute session completed the work but could
+	// not push (signing failure, auth error, branch protection, etc.). The UI
+	// renders a "manual push needed" badge; the poller polls GitHub for any PR
+	// opened against NeedsPRInfo.Branch and auto-attaches it (#157).
+	// Cleared by MarkPROpened.
+	NeedsPRInfo *NeedsPRInfo `json:"needs_pr_info,omitempty"`
+}
+
+// NeedsPRInfo holds the context needed to display the NEEDS_PR badge and poll
+// GitHub for a matching PR (#157).
+type NeedsPRInfo struct {
+	Branch      string `json:"branch"`
+	WorktreeDir string `json:"worktree_dir"`
+	Reason      string `json:"reason"`
+	// Kind is "commit_signing" when the commit itself failed, or "push" when
+	// commits landed locally but the remote push was rejected.
+	Kind string `json:"kind"`
 }
 
 type BoardColumn string
@@ -444,12 +462,16 @@ const (
 type SessionState string
 
 const (
-	StateRunning            SessionState = "running"
-	StateWaitingForInput    SessionState = "waiting_for_input"
-	StateBlocked            SessionState = "blocked"
-	StateCompleted          SessionState = "completed"
-	StateFailed             SessionState = "failed"
-	StatePausedForQuestion  SessionState = "paused_for_question"
+	StateRunning           SessionState = "running"
+	StateWaitingForInput   SessionState = "waiting_for_input"
+	StateBlocked           SessionState = "blocked"
+	StateCompleted         SessionState = "completed"
+	StateFailed            SessionState = "failed"
+	StatePausedForQuestion SessionState = "paused_for_question"
+	// StateNeedsPR is a terminal state for execute sessions that completed the
+	// work (code + commit) but could not push due to signing/auth/protection
+	// rules. The card moves to REVIEW with NeedsPRInfo on the Issue (#157).
+	StateNeedsPR SessionState = "needs_pr"
 )
 
 // --- Pool usage / rate limits (issue #52) ---

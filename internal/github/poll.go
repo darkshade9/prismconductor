@@ -18,6 +18,7 @@ type Store interface {
 	ListIssues(workspaceID string) ([]types.Issue, error)
 	SaveIssue(iss types.Issue) (bool, error)
 	MarkIssueClosed(workspaceID string, number int) error
+	MarkPROpened(workspaceID string, number int, prNumber int, prURL string) error
 	MarkPRMerged(workspaceID string, number int) error
 	MarkPRClosedUnmerged(workspaceID string, number int) error
 	SaveLabels(workspaceID string, labels []types.Label) error
@@ -295,6 +296,33 @@ func (p *Poller) pollOne(ctx context.Context, ws types.Workspace) error {
 			p.probeCheckRuns(ctx, ws, iss, *iss.PRNumber, pr.HeadSHA)
 		}
 		p.probeConflicts(ctx, ws, iss, *iss.PRNumber, pr)
+	}
+
+	// NEEDS_PR PR detection (#157): for every issue with NeedsPRInfo but no PR
+	// yet, ask GitHub whether any open PR targets the conductor's branch. If one
+	// is found, attach it via MarkPROpened (same path as the sentinel handler).
+	// Bounded by the number of NEEDS_PR cards (typically 0–2), so the extra
+	// API calls are negligible relative to the per-PR state probes above.
+	for _, iss := range prev {
+		if iss.NeedsPRInfo == nil {
+			continue
+		}
+		if iss.PRNumber != nil {
+			continue // PR already attached; MarkPROpened cleared NeedsPRInfo on next save
+		}
+		prNum, prURL, err := p.Client.FetchOpenPRsForBranch(ctx, ws, iss.NeedsPRInfo.Branch)
+		if err != nil {
+			log.Printf("needs_pr poll %s#%d: %v", ws.ID, iss.Number, err)
+			continue
+		}
+		if prNum == 0 {
+			continue // no PR yet
+		}
+		if err := p.Store.MarkPROpened(ws.ID, iss.Number, prNum, prURL); err != nil {
+			log.Printf("needs_pr: mark pr opened %s#%d: %v", ws.ID, iss.Number, err)
+			continue
+		}
+		p.publishPR(eventbus.EvtPROpened, ws, iss)
 	}
 
 	// Piggy-back label fetch on the same tick. Failures are logged and don't

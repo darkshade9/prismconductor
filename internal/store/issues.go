@@ -96,6 +96,11 @@ func (s *Store) SaveIssue(iss types.Issue) (bool, error) {
 			if prev.WaitingForPool {
 				iss.WaitingForPool = true
 			}
+			// Preserve NeedsPRInfo: a GitHub poll has no opinion on whether
+			// the push succeeded. MarkPROpened is the only caller that clears it.
+			if prev.NeedsPRInfo != nil {
+				iss.NeedsPRInfo = prev.NeedsPRInfo
+			}
 		}
 	}
 	iss.Column = col
@@ -565,6 +570,49 @@ func (s *Store) MarkPROpened(workspaceID string, number int, prNumber int, prURL
 	}
 	iss.PRNumber = &prNumber
 	iss.PRURL = prURL
+	iss.Column = types.ColReview
+	iss.NeedsPRInfo = nil // clear the NEEDS_PR badge now that a PR is attached
+	b, _ := json.Marshal(iss)
+
+	var maxOrder sql.NullInt64
+	if err := tx.QueryRow(
+		`SELECT COALESCE(MAX(manual_order), -1) FROM issues WHERE workspace_id = ? AND column_name = ?`,
+		workspaceID, string(types.ColReview),
+	).Scan(&maxOrder); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`UPDATE issues SET column_name = ?, manual_order = ?, json = ? WHERE workspace_id = ? AND number = ?`,
+		string(types.ColReview), maxOrder.Int64+1, string(b), workspaceID, number,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// MarkNeedsPR sets NeedsPRInfo on the issue and moves the card to REVIEW (#157).
+// Called when an execute session emits the NEEDS_PR: sentinel (code committed
+// locally, push failed). MarkPROpened clears the NeedsPRInfo once a PR appears.
+func (s *Store) MarkNeedsPR(workspaceID string, number int, info types.NeedsPRInfo) error {
+	if s == nil || s.DB == nil {
+		return errors.New("store unavailable")
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var raw string
+	if err := tx.QueryRow(`SELECT json FROM issues WHERE workspace_id = ? AND number = ?`,
+		workspaceID, number).Scan(&raw); err != nil {
+		return err
+	}
+	var iss types.Issue
+	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+		return err
+	}
+	iss.NeedsPRInfo = &info
 	iss.Column = types.ColReview
 	b, _ := json.Marshal(iss)
 

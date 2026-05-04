@@ -273,6 +273,28 @@ func (c *Client) FetchPRFiles(ctx context.Context, ws types.Workspace, prNumber 
 	return files, nil
 }
 
+// FetchOpenPRsForBranch returns the first open PR against the given branch
+// (head ref), or (0, "", nil) if none exists. Used by the NEEDS_PR poller to
+// auto-attach a PR when the user pushes and opens one manually (#157).
+func (c *Client) FetchOpenPRsForBranch(ctx context.Context, ws types.Workspace, branch string) (prNumber int, prURL string, err error) {
+	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {
+		return 0, "", fmt.Errorf("workspace %q missing github_owner / github_repo", ws.ID)
+	}
+	opts := &gh.PullRequestListOptions{
+		State:       "open",
+		Head:        ws.GitHubOwner + ":" + branch,
+		ListOptions: gh.ListOptions{PerPage: 1},
+	}
+	prs, _, err := c.api.PullRequests.List(ctx, ws.GitHubOwner, ws.GitHubRepo, opts)
+	if err != nil {
+		return 0, "", err
+	}
+	if len(prs) == 0 {
+		return 0, "", nil
+	}
+	return prs[0].GetNumber(), prs[0].GetHTMLURL(), nil
+}
+
 // SetIssueLabels replaces an issue's labels with the given set.
 func (c *Client) SetIssueLabels(ctx context.Context, ws types.Workspace, issueNumber int, names []string) error {
 	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {

@@ -195,6 +195,7 @@ func (a *App) startup(ctx context.Context) {
 	a.mgr.SetProviders(a.providers)
 	a.mgr.SetOnPlanReady(a.handlePlanReady)
 	a.mgr.SetOnPROpened(a.handlePROpened)
+	a.mgr.SetOnNeedsPR(a.handleNeedsPR)
 	a.mgr.SetOnActivity(func(act types.SessionActivity) {
 		wruntime.EventsEmit(a.ctx, "session.activity", act)
 	})
@@ -1997,6 +1998,86 @@ func (a *App) handlePROpened(sess types.Session, prURL string) {
 			"pr_url":       prURL,
 			"action":       "open_pr",
 		})
+}
+
+// handleNeedsPR is called when an execute worker emits the NEEDS_PR: sentinel
+// (#157). Persists NeedsPRInfo on the issue, moves the card to REVIEW, and
+// emits a toast so the user knows to push manually.
+func (a *App) handleNeedsPR(sess types.Session, branch, worktreeDir, reason string) {
+	if a.store == nil {
+		return
+	}
+	// Derive kind from reason text: prefer "commit_signing" when the reason
+	// mentions a signing/gpg failure; fall through to "push" for everything else.
+	kind := "push"
+	for _, sig := range []string{"gpg", "signing", "sign", "secret key", "no secret key"} {
+		if strings.Contains(strings.ToLower(reason), sig) {
+			kind = "commit_signing"
+			break
+		}
+	}
+	info := types.NeedsPRInfo{
+		Branch:      branch,
+		WorktreeDir: worktreeDir,
+		Reason:      reason,
+		Kind:        kind,
+	}
+	if err := a.store.MarkNeedsPR(sess.WorkspaceID, sess.IssueNumber, info); err != nil {
+		log.Printf("NEEDS_PR: MarkNeedsPR failed for #%d: %v", sess.IssueNumber, err)
+		return
+	}
+	a.bus.Publish(eventbus.EvtNeedsPR, eventbus.NeedsPREvent{
+		WorkspaceID: sess.WorkspaceID,
+		IssueNumber: sess.IssueNumber,
+		Branch:      branch,
+		WorktreeDir: worktreeDir,
+		Reason:      reason,
+		Kind:        kind,
+	})
+	if a.notificationsSuppressed() {
+		return
+	}
+	a.emitToast("warning", toastWorkspaceName(a.wsReg, sess.WorkspaceID),
+		fmt.Sprintf("#%d needs manual push — commits ready in worktree", sess.IssueNumber),
+		map[string]any{
+			"workspace_id": sess.WorkspaceID,
+			"issue_number": sess.IssueNumber,
+			"action":       "focus_card",
+		})
+}
+
+// AttachManualPR allows the user to paste a PR URL for a NEEDS_PR card,
+// immediately attaching it without waiting for the next poll cycle (#157).
+// The PR is validated against the GitHub API before persisting.
+func (a *App) AttachManualPR(workspaceID string, issueNumber int, prURL string) error {
+	if a.store == nil || a.wsReg == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	prURL = strings.TrimSpace(prURL)
+	n, ok := pullNumberFromURL(prURL)
+	if !ok {
+		return fmt.Errorf("could not parse PR number from %q", prURL)
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	// Validate the PR exists on GitHub before persisting.
+	if a.gh != nil {
+		if _, err := a.gh.FetchPRState(a.ctx, ws, n); err != nil {
+			return fmt.Errorf("PR not found on GitHub: %w", err)
+		}
+	}
+	if err := a.store.MarkPROpened(workspaceID, issueNumber, n, prURL); err != nil {
+		return fmt.Errorf("attach PR: %w", err)
+	}
+	a.bus.Publish(eventbus.EvtPROpened, map[string]any{
+		"workspace_id": workspaceID,
+		"issue_number": issueNumber,
+		"pr_number":    n,
+		"pr_url":       prURL,
+	})
+	return nil
 }
 
 // notifyOnPRStateChange fires an in-app toast when the poller publishes

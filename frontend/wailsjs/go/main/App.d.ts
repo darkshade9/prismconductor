@@ -21,6 +21,8 @@ export function ApprovePlan(arg1:string,arg2:number,arg3:number):Promise<void>;
 
 export function ArchiveDone(arg1:string):Promise<number>;
 
+export function AttachManualPR(arg1:string,arg2:number,arg3:string):Promise<void>;
+
 export function CancelSession(arg1:string):Promise<void>;
 
 export function ClearIssueFailure(arg1:string,arg2:number):Promise<void>;
