@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"prismconductor/internal/eventbus"
+	pcgit "prismconductor/internal/git"
 	"prismconductor/internal/types"
 )
 
@@ -416,10 +417,43 @@ func (p *Poller) probeConflicts(ctx context.Context, ws types.Workspace, iss typ
 
 	switch {
 	case pr.MergeableState == "dirty" && prevState != "dirty":
-		// Falling edge: PR became conflicted. Fetch changed files for context.
-		files, err := p.Client.FetchPRFiles(ctx, ws, prNumber)
-		if err != nil {
-			log.Printf("pr files %s#%d (pr %d): %v", ws.ID, iss.Number, prNumber, err)
+		// Falling edge: PR became conflicted. Determine the ACTUAL
+		// conflicting files via `git merge-tree` (3-way merge simulation,
+		// no worktree mutation). The earlier implementation listed every
+		// file the PR touched — misleading because most PR files don't
+		// actually conflict. We try the local-git path first; fall back
+		// to the full PR-files API only if git is too old (< 2.38) or
+		// the local repo's refs aren't fetched.
+		var files []string
+		if ws.RepoPath != "" {
+			// Make sure base + head refs are present locally. Best effort;
+			// merge-tree errors will trip the fallback if not.
+			_, _ = pcgit.RunInDir(ws.RepoPath, "git", "fetch", "origin",
+				pr.BaseBranch+":refs/remotes/origin/"+pr.BaseBranch,
+				pr.HeadRef+":refs/remotes/origin/"+pr.HeadRef)
+			conflictFiles, mtErr := pcgit.MergeConflictFiles(
+				ws.RepoPath,
+				"origin/"+pr.BaseBranch,
+				"origin/"+pr.HeadRef,
+			)
+			if mtErr == nil {
+				files = conflictFiles
+			} else {
+				log.Printf("merge-tree %s#%d (pr %d): %v — falling back to PR file list",
+					ws.ID, iss.Number, prNumber, mtErr)
+			}
+		}
+		if files == nil {
+			// Fallback: list every file the PR touches. Less precise but
+			// always available regardless of git version. The Card UI
+			// should label this list as "files modified by PR" rather
+			// than "conflicting files" when this fallback fired (caller
+			// concern; not signaled in the event payload yet — TODO).
+			fallback, err := p.Client.FetchPRFiles(ctx, ws, prNumber)
+			if err != nil {
+				log.Printf("pr files %s#%d (pr %d): %v", ws.ID, iss.Number, prNumber, err)
+			}
+			files = fallback
 		}
 		p.Bus.Publish(eventbus.EvtPRConflictsDetected, eventbus.PRConflictsDetected{
 			WorkspaceID:      ws.ID,

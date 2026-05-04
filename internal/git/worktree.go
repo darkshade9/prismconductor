@@ -106,6 +106,67 @@ func WorktreeIsEmpty(worktreeDir string) bool {
 	return false
 }
 
+// MergeConflictFiles returns the subset of paths that would actually
+// conflict on a 3-way merge of `headRef` into `baseRef`, computed via
+// `git merge-tree --name-only --merge-base $(merge-base) head base`.
+// Returns the conflicting paths only — NOT every path touched by the
+// branch — so the UI can show a focused list.
+//
+// Why this exists: the previous conflict UI listed every file the PR
+// modified (via the GitHub PR-files API), implying every file was
+// conflicting when usually only a couple actually are. Real merge-
+// conflict detection requires asking git itself; the GitHub API
+// doesn't expose per-file conflict status.
+//
+// Implementation uses `git merge-tree` in plumbing mode (no worktree
+// mutation, no working-directory state). The `--name-only --merge-base`
+// flags require git 2.38 (Oct 2022) or newer. On older git the call
+// returns an error; the caller should fall back to a less-precise
+// signal (e.g. the full PR file list) and surface a hint.
+//
+// repoPath is the main repo directory; baseRef and headRef are
+// resolvable refs (e.g. "origin/main", "origin/feat/issue-N-...").
+// The caller is responsible for `git fetch`ing first so both refs
+// exist locally; this function does not mutate refs.
+func MergeConflictFiles(repoPath, baseRef, headRef string) ([]string, error) {
+	if repoPath == "" || baseRef == "" || headRef == "" {
+		return nil, fmt.Errorf("MergeConflictFiles: repoPath/baseRef/headRef all required")
+	}
+	// `git merge-tree --name-only --merge-base=<base> <head> <other>` writes
+	// one path per line for files that conflict during the simulated
+	// 3-way merge. Empty stdout = no conflicts. Non-zero exit = error
+	// running the merge (e.g. unrelated histories) or git too old to
+	// support these flags.
+	mergeBase, err := run(repoPath, "git", "merge-base", baseRef, headRef)
+	if err != nil {
+		return nil, fmt.Errorf("merge-base %s %s: %w", baseRef, headRef, err)
+	}
+	mergeBase = strings.TrimSpace(mergeBase)
+	if mergeBase == "" {
+		return nil, fmt.Errorf("merge-base returned empty for %s..%s", baseRef, headRef)
+	}
+	out, err := run(repoPath, "git",
+		"merge-tree",
+		"--name-only",
+		"--merge-base="+mergeBase,
+		baseRef, headRef)
+	if err != nil {
+		// Older git or unrelated histories: surface a typed error so the
+		// caller can fall back rather than treating an empty list as
+		// "no conflicts."
+		return nil, fmt.Errorf("merge-tree %s %s: %w", baseRef, headRef, err)
+	}
+	var files []string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		files = append(files, line)
+	}
+	return files, nil
+}
+
 // HasSubmodules reports whether the worktree has a .gitmodules file at its
 // root. Called after Add (q4=D) so InitSubmodules only fires on repos that
 // actually use submodules.
@@ -123,6 +184,15 @@ func InitSubmodules(worktreeDir string) error {
 		return fmt.Errorf("submodule init: %w (output: %s)", err, out)
 	}
 	return nil
+}
+
+// RunInDir is the public version of the package's run helper. Lets callers
+// outside this package execute git commands in a specific directory and
+// receive (combinedStdout, error) without spawning their own exec wiring.
+// Used by the GitHub poller to fetch refs into the local repo before
+// asking MergeConflictFiles to compute conflicts.
+func RunInDir(dir, name string, args ...string) (string, error) {
+	return run(dir, name, args...)
 }
 
 func parseWorktreeList(out string) []Entry {
