@@ -432,6 +432,39 @@ func (s *Store) RemoveIssue(workspaceID string, number int) error {
 	return err
 }
 
+// ReconcileStaleRunningSessions marks any session row whose state is still
+// `running` or `waiting_for_input` but whose corresponding issue is in
+// REVIEW (PR open) or DONE (PR merged) as failed. Self-healing pass for
+// harness sessions whose goroutine died/hung mid-run without updating its
+// DB row, leaving the IssueView assembler picking the stale row as
+// `active_session` and Card.tsx rendering a glow on a card whose work has
+// demonstrably shipped. Witnessed on issue #109. Returns the number of
+// rows reconciled.
+func (s *Store) ReconcileStaleRunningSessions() (int, error) {
+	if s == nil || s.DB == nil {
+		return 0, errors.New("store unavailable")
+	}
+	res, err := s.DB.Exec(`
+UPDATE sessions
+   SET state = 'failed',
+       json  = json_set(json,
+                 '$.state', 'failed',
+                 '$.blocked_reason', 'reconciled at startup: session left state=running while issue is in review/done')
+ WHERE state IN ('running','waiting_for_input')
+   AND EXISTS (
+       SELECT 1
+         FROM issues
+        WHERE issues.workspace_id = sessions.workspace_id
+          AND issues.number       = sessions.issue_number
+          AND issues.column_name IN ('review','done')
+   )`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // ReconcileClosedIssues routes any issue that's already state=closed in its
 // JSON but stuck in a non-done column over to DONE. Self-healing pass for
 // rows left half-migrated by an earlier buggy poll. Returns the number of

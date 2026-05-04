@@ -341,6 +341,19 @@ func selectSessions(iss types.Issue, sessions []types.Session) (active, paused, 
 		lastFail = nil
 	}
 
+	// Suppress active when card is in DONE (work demonstrably shipped, PR
+	// merged → moved to DONE by the merge handler). Any session row left in
+	// state=running for a DONE card is by definition stale state from a
+	// harness goroutine that died/hung without cleaning up its DB row, OR
+	// from a worker the conductor was killed mid-process. Witnessed live on
+	// issue #109 — DONE column with PR #149 merged, but a state=running plan
+	// row from before the merge made the card glow blue as if planning. The
+	// stuck row needs separate cleanup (TODO: startup reconciler), but the
+	// UI must NEVER claim a shipped card is actively being worked on.
+	if active != nil && iss.Column == types.ColDone {
+		active = nil
+	}
+
 	return active, paused, lastFail, lastSession
 }
 

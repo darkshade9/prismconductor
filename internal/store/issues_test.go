@@ -633,6 +633,109 @@ func TestMarkIssueClosedSkipsArchived(t *testing.T) {
 	}
 }
 
+// ReconcileStaleRunningSessions finds session rows whose state is still
+// running (or waiting_for_input) but whose owning issue is already in
+// REVIEW or DONE. Those rows can only exist when a harness goroutine died
+// without updating its DB state — the IssueView assembler then surfaces
+// them as `active_session` and the card glows blue/purple in REVIEW/DONE
+// forever. The reconciler marks them failed at startup so the UI clears.
+func TestReconcileStaleRunningSessions(t *testing.T) {
+	s := newTestStore(t)
+	// Issue #1 is DONE with a PR merged. A stale running session sits on it.
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      1,
+		State:       "closed",
+		Column:      types.ColDone,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stale := &types.Session{
+		ID:          "sess-stale-done",
+		WorkspaceID: "ws1",
+		IssueNumber: 1,
+		Mode:        types.ModePlan,
+		State:       types.StateRunning,
+		StartedAt:   time.Now(),
+	}
+	if err := s.SaveSession(stale, ""); err != nil {
+		t.Fatalf("SaveSession stale: %v", err)
+	}
+	// Issue #2 is in REVIEW with a stale running execute session.
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      2,
+		State:       "open",
+		Column:      types.ColReview,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	staleRev := &types.Session{
+		ID:          "sess-stale-review",
+		WorkspaceID: "ws1",
+		IssueNumber: 2,
+		Mode:        types.ModeExecute,
+		State:       types.StateRunning,
+		StartedAt:   time.Now(),
+	}
+	if err := s.SaveSession(staleRev, ""); err != nil {
+		t.Fatalf("SaveSession stale review: %v", err)
+	}
+	// Issue #3 is in PLAN with a legitimately running plan session — must NOT be touched.
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      3,
+		State:       "open",
+		Column:      types.ColPlan,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	live := &types.Session{
+		ID:          "sess-live",
+		WorkspaceID: "ws1",
+		IssueNumber: 3,
+		Mode:        types.ModePlan,
+		State:       types.StateRunning,
+		StartedAt:   time.Now(),
+	}
+	if err := s.SaveSession(live, ""); err != nil {
+		t.Fatalf("SaveSession live: %v", err)
+	}
+
+	n, err := s.ReconcileStaleRunningSessions()
+	if err != nil {
+		t.Fatalf("ReconcileStaleRunningSessions: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("reconciled %d sessions, want 2 (the DONE + REVIEW stale rows)", n)
+	}
+
+	// Verify both indexed state column AND $.state JSON blob got updated for stale rows.
+	for _, id := range []string{"sess-stale-done", "sess-stale-review"} {
+		var col, jstate string
+		if err := s.DB.QueryRow(
+			`SELECT state, json_extract(json,'$.state') FROM sessions WHERE id = ?`, id,
+		).Scan(&col, &jstate); err != nil {
+			t.Fatalf("read %s: %v", id, err)
+		}
+		if col != "failed" {
+			t.Errorf("%s: indexed state=%q, want failed", id, col)
+		}
+		if jstate != "failed" {
+			t.Errorf("%s: json.state=%q, want failed", id, jstate)
+		}
+	}
+
+	// The live PLAN session must still be running.
+	var liveState string
+	if err := s.DB.QueryRow(`SELECT state FROM sessions WHERE id = 'sess-live'`).Scan(&liveState); err != nil {
+		t.Fatalf("read live: %v", err)
+	}
+	if liveState != "running" {
+		t.Errorf("live PLAN session was wrongly reconciled, state=%q", liveState)
+	}
+}
+
 func TestReconcileClosedIssuesSkipsArchived(t *testing.T) {
 	s := newTestStore(t)
 	// Closed issue stuck in TODO — should be reconciled.
