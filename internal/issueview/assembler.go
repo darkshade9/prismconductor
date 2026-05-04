@@ -139,6 +139,27 @@ func (a *Assembler) handleEvent(e eventbus.Event) {
 			a.mu.Unlock()
 		}
 	}
+	// Session-state changes are LOAD-BEARING for the frontend's glow ladder
+	// (running execute → purple, blocked → red, etc). The cache-diff gate
+	// in reassembleAndEmit can suppress an emit if the marshaled JSON
+	// happens to equal the cache — possible after edge cases like
+	// rapid-fire state ping-pongs or recovery from a missed earlier event.
+	// Force-emit on these to guarantee the frontend converges.
+	//
+	// For non-state events (poll re-emits where nothing changed), the
+	// diff gate stays in effect to avoid spamming the bus.
+	switch e.Type {
+	case eventbus.EvtSessionStateChanged,
+		eventbus.EvtPRChecksFailed,
+		eventbus.EvtPRChecksRecovered,
+		eventbus.EvtPRConflictsDetected,
+		eventbus.EvtPRConflictsResolved,
+		eventbus.EvtPROpened,
+		eventbus.EvtPRMerged,
+		eventbus.EvtPRClosedUnmerged:
+		a.reassembleAndForceEmit(wsID, issueNum)
+		return
+	}
 	a.reassembleAndEmit(wsID, issueNum)
 }
 
@@ -155,7 +176,26 @@ func (a *Assembler) SetWorkspacePathFn(fn func(workspaceID string) string) {
 // the Clear Failure handler can force the frontend's IssueView to
 // converge with backend truth even when nothing in the DB changed.
 func (a *Assembler) Reassemble(wsID string, issueNum int) {
-	a.reassembleAndEmit(wsID, issueNum)
+	a.reassembleAndForceEmit(wsID, issueNum)
+}
+
+// reassembleAndForceEmit runs Assemble + Publish unconditionally.
+// Used when the caller knows a load-bearing state change occurred and
+// can't trust the cache-diff to detect it — e.g. session state
+// transitions, where a reused JSON shape could mask a real change to
+// what the frontend's glow ladder reads.
+func (a *Assembler) reassembleAndForceEmit(wsID string, issueNum int) {
+	view, err := a.Assemble(wsID, issueNum)
+	if err != nil {
+		log.Printf("issueview: assemble %s#%d: %v", wsID, issueNum, err)
+		return
+	}
+	b, _ := json.Marshal(view)
+	key := wsID + "#" + strconv.Itoa(issueNum)
+	a.mu.Lock()
+	a.cache[key] = string(b)
+	a.mu.Unlock()
+	a.bus.Publish(eventbus.EvtIssueViewUpdated, view)
 }
 
 func (a *Assembler) reassembleAndEmit(wsID string, issueNum int) {
