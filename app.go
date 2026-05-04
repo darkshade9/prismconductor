@@ -1928,6 +1928,23 @@ func (a *App) notifyOnPRStateChange(e eventbus.Event) {
 		toastPayload["pr_url"] = prURL
 	}
 	a.emitToast(level, title, body, toastPayload)
+
+	// Auto-kill any running execute session that opened this PR (#113).
+	if a.mgr != nil {
+		if sessID, startedAt, ok := a.mgr.FindActiveExecuteSession(wsID, issNum); ok {
+			elapsed := time.Since(startedAt).Round(time.Second)
+			var autoBody string
+			switch e.Type {
+			case eventbus.EvtPRMerged:
+				autoBody = fmt.Sprintf("#%d: PR merged — stopping execute worker (was running %s)", issNum, elapsed)
+			case eventbus.EvtPRClosedUnmerged:
+				autoBody = fmt.Sprintf("#%d: PR closed — stopping execute worker (was running %s)", issNum, elapsed)
+			}
+			log.Printf("auto-cancel: PR event %s; killing execute session %s for issue #%d (ran %s)", e.Type, sessID, issNum, elapsed)
+			_ = a.mgr.Kill(sessID)
+			a.emitToast("info", title, autoBody, toastPayload)
+		}
+	}
 }
 
 // GetIssueView returns the canonical IssueView for a single issue (#98).
