@@ -270,6 +270,21 @@ func (a *App) startup(ctx context.Context) {
 		// whenever any contributing source changes.
 		a.assembler = issueview.New(a.bus, a.store)
 
+		// Pool counter self-heal: on every terminal session-state event,
+		// re-derive every pool's `active` counter from the DB count of
+		// running sessions. This makes the registry counter a cache of
+		// authoritative DB state instead of a hand-maintained ledger that
+		// leaks slots on every acquire-without-release path. The hot
+		// AcquireForPlan / AcquireForWork path still uses the in-memory
+		// counter (synchronous, no DB round-trip), but we promise to keep
+		// it correct on the next event tick.
+		a.bus.Subscribe(func(e eventbus.Event) {
+			switch e.Type {
+			case eventbus.EvtSessionStateChanged, eventbus.EvtWorkerSlotFreed:
+				a.reconcilePoolActiveCounters(string(e.Type))
+			}
+		})
+
 		// Issue #116: auto-spawn self-heal and toast on CI check failures.
 		a.bus.Subscribe(a.handlePRChecksFailed)
 		a.bus.Subscribe(a.handlePRChecksRecovered)
@@ -335,6 +350,15 @@ func (a *App) startup(ctx context.Context) {
 		} else if n > 0 {
 			log.Printf("reconciled %d stale running sessions to failed\n", n)
 		}
+
+		// Reconcile pool registry's in-memory `active` counter against DB
+		// truth. The hand-maintained TryAcquire/Release counter leaks on
+		// any acquire-without-matching-release (witnessed: planner 1/2
+		// with zero plan sessions running). DB count is authoritative;
+		// registry becomes a cache derived from it. Subsequent terminal
+		// session-state events keep it fresh via the bus subscriber wired
+		// in startup.go.
+		a.reconcilePoolActiveCounters("startup")
 
 		// Issue #107: auto-archive DONE cards per workspace config. Run once at
 		// startup and then on a 24-hour tick so long-running sessions stay clean.
@@ -2791,6 +2815,28 @@ func (a *App) acquirePool(reserve func() (string, bool)) (types.Pool, bool) {
 		return types.Pool{}, false
 	}
 	return pool, true
+}
+
+// reconcilePoolActiveCounters re-derives every pool's in-memory `active`
+// counter from the authoritative DB count of running sessions. Called at
+// startup AND on every terminal session-state-changed / worker-slot-freed
+// event so any acquire-without-matching-release leak self-corrects within
+// one event tick.
+//
+// Without this, the in-memory counter is a hand-maintained ledger that
+// drifts whenever ANY spawn-error path forgets to release. Witnessed live
+// as Planners 1/2 with zero plan sessions actually running. The "Reset
+// counters" UI button was the only fix; now drift heals automatically.
+func (a *App) reconcilePoolActiveCounters(reason string) {
+	if a.poolReg == nil || a.store == nil {
+		return
+	}
+	counts, err := a.store.CountRunningSessionsByPool()
+	if err != nil {
+		log.Printf("reconcile pool counters (reason=%s): %v", reason, err)
+		return
+	}
+	a.poolReg.ReconcileActive(counts)
 }
 
 // SpawnPlanForIssue spawns a plan-mode worker for the given issue in the given workspace.

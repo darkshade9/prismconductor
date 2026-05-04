@@ -222,3 +222,74 @@ func TestPriorityFallbackWhenPreferredFull(t *testing.T) {
 		t.Fatalf("second acquire = (%q, %v), want (fallback, true)", second, ok)
 	}
 }
+
+// TestReconcileActiveSelfHealsLeakedSlot verifies the self-heal contract:
+// a pool whose in-memory `active` counter has drifted ahead of DB truth
+// (e.g. a previous spawn acquired but errored before releasing) gets
+// pulled back into line by ReconcileActive(counts). This is the
+// permanent fix for the "Planners 1/2 with zero sessions running" ghost
+// — the registry trusts the DB count, not its own ledger.
+func TestReconcileActiveSelfHealsLeakedSlot(t *testing.T) {
+	r := NewRegistry(func(types.Provider) bool { return true })
+	r.Sync([]types.Pool{
+		{ID: "p1", Provider: types.ProviderClaude, Capacity: 2, Enabled: true, Role: types.RolePlan},
+	})
+	// Simulate a leak: acquire twice without releasing. Registry now thinks
+	// active=2 (full) but DB has zero running sessions on this pool.
+	if _, ok := r.AcquireForPlan(types.Workspace{}); !ok {
+		t.Fatal("first acquire should succeed")
+	}
+	if _, ok := r.AcquireForPlan(types.Workspace{}); !ok {
+		t.Fatal("second acquire should succeed")
+	}
+	if _, ok := r.AcquireForPlan(types.Workspace{}); ok {
+		t.Fatal("third acquire should fail (pool full per leaked counter)")
+	}
+
+	// DB truth says zero sessions are running on p1. Reconcile.
+	r.ReconcileActive(map[string]int{})
+
+	// Now a fresh acquire should succeed because the leak self-healed.
+	if _, ok := r.AcquireForPlan(types.Workspace{}); !ok {
+		t.Fatal("post-reconcile acquire should succeed (leak should have self-healed)")
+	}
+	r.mu.RLock()
+	got := r.pools["p1"].Active()
+	r.mu.RUnlock()
+	if got != 1 {
+		t.Errorf("post-reconcile-then-acquire active = %d, want 1", got)
+	}
+}
+
+// TestReconcileActiveAlignsWithDBCount confirms ReconcileActive sets the
+// counter to whatever the DB-derived map says, even if it's nonzero.
+func TestReconcileActiveAlignsWithDBCount(t *testing.T) {
+	r := NewRegistry(func(types.Provider) bool { return true })
+	r.Sync([]types.Pool{
+		{ID: "p1", Provider: types.ProviderClaude, Capacity: 5, Enabled: true, Role: types.RolePlan},
+		{ID: "p2", Provider: types.ProviderClaude, Capacity: 5, Enabled: true, Role: types.RoleWork},
+	})
+	r.ReconcileActive(map[string]int{"p1": 3, "p2": 1})
+
+	r.mu.RLock()
+	a1 := r.pools["p1"].Active()
+	a2 := r.pools["p2"].Active()
+	r.mu.RUnlock()
+
+	if a1 != 3 {
+		t.Errorf("p1 active = %d, want 3", a1)
+	}
+	if a2 != 1 {
+		t.Errorf("p2 active = %d, want 1", a2)
+	}
+
+	// A pool not present in the counts map is reset to 0.
+	r.ReconcileActive(map[string]int{"p1": 0})
+	r.mu.RLock()
+	a1 = r.pools["p1"].Active()
+	a2 = r.pools["p2"].Active()
+	r.mu.RUnlock()
+	if a1 != 0 || a2 != 0 {
+		t.Errorf("after empty-ish reconcile: p1=%d p2=%d, want 0/0", a1, a2)
+	}
+}
