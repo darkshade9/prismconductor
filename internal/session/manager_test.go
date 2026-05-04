@@ -215,6 +215,92 @@ func TestSpawnWritesToTranscriptFile(t *testing.T) {
 	}
 }
 
+// TestSpawnRefusesDuplicateForSameIssueAndMode locks down the
+// duplicate-spawn race fix. Pre-fix: two concurrent callers each pre-checked
+// hasActivePlanSession via Snapshot(), both saw no existing session (because
+// neither had registered yet), and both proceeded to spawn — producing two
+// running plan workers for the same issue and DOUBLING LLM cost. The
+// Manager-level guard now refuses the second one with ErrDuplicateSpawn so
+// the cost regression cannot happen even if a caller forgets to pre-check.
+func TestSpawnRefusesDuplicateForSameIssueAndMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX-only")
+	}
+	tdir := t.TempDir()
+	transcripts := filepath.Join(tdir, "transcripts")
+	store := &fakePersister{}
+	m := NewManager(nil, nil)
+	m.Configure(transcripts, store, nil)
+
+	ws := types.Workspace{ID: "ws-1", RepoPath: tdir}
+	issue := types.Issue{Number: 109, WorkspaceID: ws.ID}
+
+	// First spawn: a long-running shell that won't naturally exit during the
+	// test window, so its session stays registered in m.sessions.
+	first, err := m.spawnWithDir(ws, issue, types.ModePlan,
+		[]string{"/bin/sh", "-c", "sleep 5"},
+		"", "", "", types.Pool{}, "")
+	if err != nil {
+		t.Fatalf("first spawn: %v", err)
+	}
+	defer m.Kill(first.ID)
+
+	// Second spawn for the SAME (workspace, issue, mode) must be refused.
+	_, err = m.spawnWithDir(ws, issue, types.ModePlan,
+		[]string{"/bin/sh", "-c", "echo should-not-run; echo Work complete."},
+		"", "", "", types.Pool{}, "")
+	if !errors.Is(err, ErrDuplicateSpawn) {
+		t.Fatalf("second spawn for same (ws, issue, mode) returned err=%v, want ErrDuplicateSpawn", err)
+	}
+
+	// Sanity: only the first session is registered.
+	m.mu.RLock()
+	count := 0
+	for _, rs := range m.sessions {
+		if rs.sess != nil && rs.sess.IssueNumber == 109 {
+			count++
+		}
+	}
+	m.mu.RUnlock()
+	if count != 1 {
+		t.Errorf("expected exactly 1 registered plan session for issue #109, got %d", count)
+	}
+}
+
+// TestSpawnAllowsDifferentModeForSameIssue verifies the duplicate guard
+// scopes by mode, so a plan session and an execute session for the same
+// issue can coexist (e.g. a Continue Work session running while a fresh
+// re-plan is spawned).
+func TestSpawnAllowsDifferentModeForSameIssue(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX-only")
+	}
+	tdir := t.TempDir()
+	transcripts := filepath.Join(tdir, "transcripts")
+	store := &fakePersister{}
+	m := NewManager(nil, nil)
+	m.Configure(transcripts, store, nil)
+
+	ws := types.Workspace{ID: "ws-1", RepoPath: tdir}
+	issue := types.Issue{Number: 200, WorkspaceID: ws.ID}
+
+	planSess, err := m.spawnWithDir(ws, issue, types.ModePlan,
+		[]string{"/bin/sh", "-c", "sleep 5"},
+		"", "", "", types.Pool{}, "")
+	if err != nil {
+		t.Fatalf("plan spawn: %v", err)
+	}
+	defer m.Kill(planSess.ID)
+
+	execSess, err := m.spawnWithDir(ws, issue, types.ModeExecute,
+		[]string{"/bin/sh", "-c", "sleep 5"},
+		"", "", "", types.Pool{}, "")
+	if err != nil {
+		t.Fatalf("execute spawn for same issue but different mode unexpectedly refused: %v", err)
+	}
+	defer m.Kill(execSess.ID)
+}
+
 // TestSpawnPersistsPoolID verifies that PoolID from the spawning pool is
 // recorded on the session row (issue #37).
 func TestSpawnPersistsPoolID(t *testing.T) {

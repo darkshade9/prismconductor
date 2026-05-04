@@ -106,7 +106,20 @@ type Manager struct {
 
 	mu       sync.RWMutex
 	sessions map[string]*runtimeSession
+
+	// inFlight tracks (workspace, issue, mode) tuples whose spawn is currently
+	// mid-setup but not yet registered in `sessions`. Protects against a TOCTOU
+	// race where two concurrent callers both pre-check, both see no existing
+	// session, and both proceed to spawn — doubling LLM cost on the same issue.
+	// Key shape: "<workspaceID>:<issueNumber>:<mode>". Held under `mu` writes.
+	inFlight map[string]bool
 }
+
+// ErrDuplicateSpawn is returned by SpawnPlan / SpawnExecute when a worker
+// for the same (workspace, issue, mode) is already running, waiting, blocked,
+// or mid-setup. Caller MUST release any pool slot it acquired before calling.
+// Sentinel so callers can branch on it cleanly via errors.Is.
+var ErrDuplicateSpawn = errors.New("duplicate spawn refused: same (workspace, issue, mode) already in flight")
 
 type runtimeSession struct {
 	sess           *types.Session
@@ -225,7 +238,12 @@ func (s *synthCmd) Kill() error {
 func (s *synthCmd) Pid() int { return 0 }
 
 func NewManager(bus *eventbus.Bus, emit LineHandler) *Manager {
-	return &Manager{bus: bus, emit: emit, sessions: map[string]*runtimeSession{}}
+	return &Manager{
+		bus:      bus,
+		emit:     emit,
+		sessions: map[string]*runtimeSession{},
+		inFlight: map[string]bool{},
+	}
 }
 
 // Configure wires optional persistence + state-change side effects.
@@ -525,6 +543,57 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 	if len(argv) == 0 && prompt == "" {
 		return nil, fmt.Errorf("empty command")
 	}
+
+	// Atomic duplicate-spawn guard. Two concurrent callers — e.g. a manual
+	// drag-to-PLAN racing against the orchestrator's auto-pull drain, or two
+	// near-simultaneous bus events — used to both pre-check via
+	// hasActivePlanSession (reads m.Snapshot()), both see no existing session
+	// (because neither had registered yet), and both proceed to spawn. Two
+	// plan workers for the same issue → DOUBLE LLM cost. Witnessed live on
+	// issue #109 (two state=running plan rows, both pid=0 harness).
+	//
+	// Prevention: take the lock before any I/O, check both `inFlight` (a
+	// spawn is mid-setup but not yet registered in `sessions`) AND the
+	// `sessions` map for any non-terminal same-(workspace, issue, mode)
+	// session. Reserve the in-flight key under the same lock so a sibling
+	// goroutine arriving any time after this point bails.
+	//
+	// SpawnRaw uses Number=0 demo issues; skip the guard for those (multiple
+	// `claude --version` style probes are fine).
+	if issue.Number > 0 {
+		key := fmt.Sprintf("%s:%d:%s", ws.ID, issue.Number, mode)
+		m.mu.Lock()
+		if m.inFlight[key] {
+			m.mu.Unlock()
+			return nil, ErrDuplicateSpawn
+		}
+		for _, rs := range m.sessions {
+			if rs == nil || rs.sess == nil {
+				continue
+			}
+			if rs.sess.WorkspaceID != ws.ID || rs.sess.IssueNumber != issue.Number || rs.sess.Mode != mode {
+				continue
+			}
+			switch rs.sess.State {
+			case types.StateRunning, types.StateWaitingForInput, types.StatePausedForQuestion, types.StateBlocked:
+				m.mu.Unlock()
+				return nil, ErrDuplicateSpawn
+			}
+		}
+		m.inFlight[key] = true
+		m.mu.Unlock()
+
+		// Clear the reservation on every exit path. The successful path also
+		// clears it after registering the session in m.sessions; doing it here
+		// in defer is the belt-and-suspenders for early-error returns below
+		// (transcript create fails, harness build errors, etc.).
+		defer func() {
+			m.mu.Lock()
+			delete(m.inFlight, key)
+			m.mu.Unlock()
+		}()
+	}
+
 	if m.transcriptDir == "" {
 		// The transcript file is now load-bearing — it IS the worker's stdout.
 		// Without a transcript dir we have nowhere to point cmd.Stdout, so refuse.
