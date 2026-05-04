@@ -1085,6 +1085,13 @@ func (a *App) ClearIssueFailure(workspaceID string, issueNumber int) error {
 				SessionID:   sess.ID,
 			})
 		}
+	} else if a.assembler != nil {
+		// No row matched the acknowledge query — could be the issue's
+		// frontend view is stale and still shows lastFailure even though
+		// nothing in DB is unacknowledged. Force a reassemble so the
+		// frontend's IssueView gets rebuilt from scratch and the button
+		// at least makes the UI converge with backend truth.
+		a.assembler.Reassemble(workspaceID, issueNumber)
 	}
 	return nil
 }

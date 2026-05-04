@@ -847,21 +847,43 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 		})
 	}
 
-	// Issue #22: per-execute worktree teardown.
-	//   q2=A: Blocked/Failed → immediate `git worktree remove --force`. The
-	//         user loses post-mortem `cd` access to the worktree but gains
-	//         deterministic state with no goroutine fanout. A leftover from a
-	//         transient failure is reclaimed by the next startup Prune.
-	//   q3=A: Completed → leave on disk; the 24h GC walk reclaims it later.
-	// Issue #17: PausedForQuestion must also keep the worktree on disk so the
-	// resume worker can `git switch` back into it. The 24h GC reclaims if the
-	// user never answers.
+	// Worktree teardown policy.
+	//
+	// HISTORICAL (issue #22 q2=A): Blocked/Failed → immediate
+	// `git worktree remove --force`. That was a DATA-LOSS BUG: when a
+	// worker finished its edits but failed at `git commit -S` (GPG
+	// passphrase timeout, signing key missing, etc.), the diff lived
+	// only in the worktree's working directory and the cleanup nuked
+	// it. The user paid for the LLM work and got nothing.
+	//
+	// NEW POLICY: NEVER auto-remove a worktree that contains
+	// user-paid-for work. Specifically:
+	//   - Completed → keep on disk (24h GC walk reclaims later;
+	//     unchanged from before).
+	//   - PausedForQuestion → keep on disk so the resume worker can
+	//     `git switch` back into it (issue #17; unchanged).
+	//   - Blocked / Failed → keep on disk if there's ANY uncommitted
+	//     work, untracked files, or commits ahead of the base branch.
+	//     Only safe-remove when the worktree is verifiably empty.
+	//
+	// "Verifiably empty" means `git status --porcelain` returns no
+	// lines AND no commits exist ahead of the base. If git isn't even
+	// reachable (worktree corrupted), default to KEEP — better to leak
+	// a dir than wipe data we can't inspect.
+	//
+	// The 24h GC walk handles long-term cleanup of legitimately empty
+	// worktrees that were never resumed.
 	if rs.worktreeDir != "" {
 		switch rs.sess.State {
 		case types.StateBlocked, types.StateFailed:
-			if err := pcgit.Remove(rs.repoPath, rs.worktreeDir); err != nil {
-				log.Printf("worktree cleanup (terminal=%s) %s: %v",
-					rs.sess.State, rs.worktreeDir, err)
+			if pcgit.WorktreeIsEmpty(rs.worktreeDir) {
+				if err := pcgit.Remove(rs.repoPath, rs.worktreeDir); err != nil {
+					log.Printf("worktree cleanup (terminal=%s, empty) %s: %v",
+						rs.sess.State, rs.worktreeDir, err)
+				}
+			} else {
+				log.Printf("worktree preserved (terminal=%s) %s: contains uncommitted work; user can recover via `cd %s`",
+					rs.sess.State, rs.worktreeDir, rs.worktreeDir)
 			}
 		}
 	}

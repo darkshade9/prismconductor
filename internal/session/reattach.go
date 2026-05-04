@@ -245,15 +245,22 @@ func (m *Manager) classifyDeadWorker(rs *runtimeSession) {
 		m.onStateChange(*rs.sess, prev)
 	}
 
-	// Worktree teardown for the dead-worker terminal cases. Mirror manager.go's
-	// live-spawn cleanup: blocked / failed → immediate remove; completed and
-	// paused_for_question keep the dir on disk for post-mortem / resume.
+	// Worktree teardown for the dead-worker terminal cases. Mirror
+	// manager.go's live-spawn cleanup: NEVER auto-remove a worktree that
+	// contains user-paid-for work. Only safe-remove when the worktree is
+	// verifiably empty (no uncommitted changes, no commits ahead of base).
+	// See manager.go's tailAndParse cleanup for the full rationale.
 	if rs.worktreeDir != "" {
 		switch rs.sess.State {
 		case types.StateBlocked, types.StateFailed:
-			if err := pcgit.Remove(rs.repoPath, rs.worktreeDir); err != nil {
-				log.Printf("reattach: worktree cleanup (terminal=%s) %s: %v",
-					rs.sess.State, rs.worktreeDir, err)
+			if pcgit.WorktreeIsEmpty(rs.worktreeDir) {
+				if err := pcgit.Remove(rs.repoPath, rs.worktreeDir); err != nil {
+					log.Printf("reattach: worktree cleanup (terminal=%s, empty) %s: %v",
+						rs.sess.State, rs.worktreeDir, err)
+				}
+			} else {
+				log.Printf("reattach: worktree preserved (terminal=%s) %s: contains uncommitted work; user can recover via `cd %s`",
+					rs.sess.State, rs.worktreeDir, rs.worktreeDir)
 			}
 		}
 	}

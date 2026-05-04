@@ -507,10 +507,17 @@ func (s *Store) AcknowledgeLatestFailure(workspaceID string, issueNumber int) (*
 	}
 	now := time.Now().Unix()
 	var id, raw string
+	// Check BOTH the indexed `state` column AND the json blob's `$.state`
+	// because the two could be out of sync if a row was written by an
+	// older binary before the json_set unification (or if a future bug
+	// drifts them again). The Clear Failure button must clear the
+	// failure regardless of which source surfaced it; any other behavior
+	// makes the button look broken to the user.
 	err := s.DB.QueryRow(`
 		SELECT id, json FROM sessions
 		WHERE workspace_id = ? AND issue_number = ?
-		  AND state IN ('blocked','failed')
+		  AND (state IN ('blocked','failed')
+		       OR json_extract(json, '$.state') IN ('blocked','failed'))
 		  AND (acknowledged_at IS NULL OR acknowledged_at = 0)
 		ORDER BY json_extract(json, '$.started_at') DESC
 		LIMIT 1`, workspaceID, issueNumber).Scan(&id, &raw)
