@@ -36,7 +36,7 @@ func TestManagerStartAndOutput(t *testing.T) {
 		nil,
 	)
 
-	pid, err := mgr.Start("ws1", "echo", []string{"hello"}, 80, 24)
+	pid, err := mgr.Start("ws1", "echo", []string{"hello"}, "", 80, 24)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestManagerExitCallback(t *testing.T) {
 		func(_ string, code int) { done <- code },
 	)
 
-	if _, err := mgr.Start("ws2", "true", nil, 80, 24); err != nil {
+	if _, err := mgr.Start("ws2", "true", nil, "", 80, 24); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -111,7 +111,7 @@ func TestManagerResizeNoSession(t *testing.T) {
 func TestManagerKill(t *testing.T) {
 	mgr := agentterm.New(nil, nil)
 
-	if _, err := mgr.Start("ws3", "cat", nil, 80, 24); err != nil {
+	if _, err := mgr.Start("ws3", "cat", nil, "", 80, 24); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if !mgr.HasSession("ws3") {
@@ -130,4 +130,66 @@ func TestManagerKill(t *testing.T) {
 func TestAgentInfoShape(_ *testing.T) {
 	_ = types.AgentInfo{Name: "claude", Binary: "/usr/local/bin/claude"}
 	_ = types.AgentTermSession{WorkspaceID: "ws1", SessionID: "s1", AgentBin: "claude", PID: 123}
+}
+
+// TestStartUsesCwd verifies the spawned subprocess inherits the requested
+// cwd. Pre-fix bug: the agent inherited the conductor's own cwd (on
+// macOS Wails: typically `/`) so `claude`/`aider` opened with `pwd`
+// pointing at the wrong place. The fix threads workspace.RepoPath
+// through Start as the cwd argument; this test pins that contract.
+func TestStartUsesCwd(t *testing.T) {
+	tmp := t.TempDir()
+	var mu sync.Mutex
+	var received []byte
+	mgr := agentterm.New(
+		func(_ string, dataB64 string) {
+			data, _ := base64.StdEncoding.DecodeString(dataB64)
+			mu.Lock()
+			received = append(received, data...)
+			mu.Unlock()
+		},
+		nil,
+	)
+
+	// `pwd` prints the cwd to stdout. If Start ignored cwd the output
+	// would be the test runner's directory, not tmp.
+	if _, err := mgr.Start("ws-cwd", "pwd", nil, tmp, 80, 24); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(received)
+		mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	mu.Lock()
+	got := string(received)
+	mu.Unlock()
+
+	// On macOS the resolved tmp path is under /private/var/folders even
+	// though `t.TempDir()` returns /var/folders/...; tolerate both.
+	if got == "" {
+		t.Fatal("expected pwd output, got none")
+	}
+	wantSuffix := tmp[len("/private"):]
+	if !contains(got, tmp) && !contains(got, wantSuffix) {
+		t.Errorf("pwd output = %q, want it to contain %q", got, tmp)
+	}
+}
+
+func contains(haystack, needle string) bool {
+	return len(haystack) >= len(needle) && (func() bool {
+		for i := 0; i+len(needle) <= len(haystack); i++ {
+			if haystack[i:i+len(needle)] == needle {
+				return true
+			}
+		}
+		return false
+	}())
 }
