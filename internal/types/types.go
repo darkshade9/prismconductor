@@ -5,6 +5,46 @@ import "time"
 
 // --- Workspace (§6.1) ---
 
+// ExecutionTarget controls where agent work runs for this workspace.
+// "local" (default) runs on the user's machine; "remote" runs inside a
+// Cloudflare Worker deployed on the user's CF account (issue #171).
+type ExecutionTarget string
+
+const (
+	ExecutionTargetLocal  ExecutionTarget = "local"
+	ExecutionTargetRemote ExecutionTarget = "remote"
+)
+
+// RemoteSecretRefs holds references (names, not values) into the Cloudflare
+// Secrets store for a remote workspace. Only the names are persisted locally;
+// the raw token values live exclusively in the user's CF account.
+type RemoteSecretRefs struct {
+	GitHubPATRef  string `json:"github_pat_ref"`  // CF Secret name, e.g. "GITHUB_PAT"
+	CFAPITokenRef string `json:"cf_api_token_ref"` // CF Secret name, e.g. "CF_API_TOKEN"
+}
+
+// RemoteConfig holds the Cloudflare configuration for a remote workspace.
+// Fields are populated by DeployRemoteWorker during workspace setup and stored
+// in workspaces.json. Never store raw token values here — use RemoteSecretRefs.
+type RemoteConfig struct {
+	// CFAccountID is the user's Cloudflare account ID, captured once during
+	// TestCloudflareToken and reused for all subsequent CF API calls.
+	CFAccountID string `json:"cf_account_id"`
+	// CFWorkerName is the deployed CF Worker script name (e.g. "prismconductor-<wsID>").
+	CFWorkerName string `json:"cf_worker_name"`
+	// CFWorkerEndpointURL is the base URL of the deployed worker
+	// (e.g. "https://prismconductor-abc.workers.dev").
+	CFWorkerEndpointURL string `json:"cf_worker_endpoint_url"`
+	// CFDeploymentVersion is the etag / version tag returned by the CF API on
+	// the most recent deploy. Used to detect stale deployments.
+	CFDeploymentVersion string `json:"cf_deployment_version,omitempty"`
+	// SecretRefs holds the names (not values) of CF Secrets created during setup.
+	SecretRefs RemoteSecretRefs `json:"cf_secret_refs"`
+	// TokenExpired is set true when the conductor detects a 401 from the remote
+	// worker. Cleared when the user re-deploys via Settings → Workspace → Auth.
+	TokenExpired bool `json:"token_expired,omitempty"`
+}
+
 type Workspace struct {
 	ID            string          `json:"id"`
 	DisplayName   string          `json:"display_name"`
@@ -21,6 +61,12 @@ type Workspace struct {
 	// Pipeline holds the custom pipeline configuration for this workspace.
 	// Nil means "use the default Plan→Execute→Close flow" (issue #146).
 	Pipeline *WorkspacePipeline `json:"pipeline,omitempty"`
+	// ExecutionTarget controls where agent work runs (issue #171).
+	// Absent / empty means "local" for backward compatibility.
+	ExecutionTarget ExecutionTarget `json:"execution_target,omitempty"`
+	// RemoteConfig holds Cloudflare configuration for remote workspaces.
+	// Nil for local workspaces.
+	RemoteConfig *RemoteConfig `json:"remote_config,omitempty"`
 }
 
 // WorkspacePipeline is the per-workspace pipeline configuration (issue #146).

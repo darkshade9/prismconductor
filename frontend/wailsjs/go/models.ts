@@ -1015,6 +1015,20 @@ export namespace main {
 	        this.body = source["body"];
 	    }
 	}
+	export class CFTokenResult {
+	    account_id: string;
+	    account_name?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CFTokenResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.account_id = source["account_id"];
+	        this.account_name = source["account_name"];
+	    }
+	}
 	export class CostEstimate {
 	    tokens: number;
 	    cost_usd: number;
@@ -1095,6 +1109,22 @@ export namespace main {
 	        this.default_endpoint = source["default_endpoint"];
 	        this.needs_api_key = source["needs_api_key"];
 	        this.can_spawn = source["can_spawn"];
+	    }
+	}
+	export class RemoteDeployResult {
+	    worker_name: string;
+	    cf_worker_endpoint_url: string;
+	    deployment_version: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemoteDeployResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.worker_name = source["worker_name"];
+	        this.cf_worker_endpoint_url = source["cf_worker_endpoint_url"];
+	        this.deployment_version = source["deployment_version"];
 	    }
 	}
 	export class SpawnEstimate {
@@ -1705,6 +1735,61 @@ export namespace types {
 		}
 	}
 	
+	export class RemoteSecretRefs {
+	    github_pat_ref: string;
+	    cf_api_token_ref: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemoteSecretRefs(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.github_pat_ref = source["github_pat_ref"];
+	        this.cf_api_token_ref = source["cf_api_token_ref"];
+	    }
+	}
+	export class RemoteConfig {
+	    cf_account_id: string;
+	    cf_worker_name: string;
+	    cf_worker_endpoint_url: string;
+	    cf_deployment_version?: string;
+	    cf_secret_refs: RemoteSecretRefs;
+	    token_expired?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemoteConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.cf_account_id = source["cf_account_id"];
+	        this.cf_worker_name = source["cf_worker_name"];
+	        this.cf_worker_endpoint_url = source["cf_worker_endpoint_url"];
+	        this.cf_deployment_version = source["cf_deployment_version"];
+	        this.cf_secret_refs = this.convertValues(source["cf_secret_refs"], RemoteSecretRefs);
+	        this.token_expired = source["token_expired"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class Session {
 	    id: string;
 	    workspace_id: string;
@@ -1874,6 +1959,8 @@ export namespace types {
 	    enabled: boolean;
 	    auto_archive?: AutoArchive;
 	    pipeline?: WorkspacePipeline;
+	    execution_target?: string;
+	    remote_config?: RemoteConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new Workspace(source);
@@ -1894,6 +1981,8 @@ export namespace types {
 	        this.enabled = source["enabled"];
 	        this.auto_archive = this.convertValues(source["auto_archive"], AutoArchive);
 	        this.pipeline = this.convertValues(source["pipeline"], WorkspacePipeline);
+	        this.execution_target = source["execution_target"];
+	        this.remote_config = this.convertValues(source["remote_config"], RemoteConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
