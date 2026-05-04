@@ -2,10 +2,10 @@ package store
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"time"
 
+	"prismconductor/internal/store/jsonutil"
 	"prismconductor/internal/types"
 )
 
@@ -24,7 +24,7 @@ func (s *Store) LoadIssue(workspaceID string, number int) (types.Issue, error) {
 		return types.Issue{}, err
 	}
 	var iss types.Issue
-	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+	if _, err := jsonutil.Load([]byte(raw), &iss); err != nil {
 		return types.Issue{}, err
 	}
 	iss.Column = types.BoardColumn(col)
@@ -63,9 +63,12 @@ func (s *Store) SaveIssue(iss types.Issue) (bool, error) {
 	if existingCol.Valid {
 		col = types.BoardColumn(existingCol.String)
 	}
+	var rawMap map[string]any
 	if existingJSON.Valid {
 		var prev types.Issue
-		if err := json.Unmarshal([]byte(existingJSON.String), &prev); err == nil {
+		var err error
+		rawMap, err = jsonutil.Load([]byte(existingJSON.String), &prev)
+		if err == nil {
 			if prev.PRNumber != nil {
 				iss.PRNumber = prev.PRNumber
 			}
@@ -138,7 +141,7 @@ func (s *Store) SaveIssue(iss types.Issue) (bool, error) {
 		iss.ClosedAt = nil
 	}
 
-	b, err := json.Marshal(iss)
+	b, err := jsonutil.Save(rawMap, iss)
 	if err != nil {
 		return false, err
 	}
@@ -191,7 +194,7 @@ func (s *Store) ListIssues(workspaceID string) ([]types.Issue, error) {
 			return nil, err
 		}
 		var iss types.Issue
-		if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+		if _, err := jsonutil.Load([]byte(raw), &iss); err != nil {
 			continue
 		}
 		iss.Column = types.BoardColumn(col)
@@ -234,7 +237,7 @@ func (s *Store) ListArchivedIssues(workspaceID string) ([]types.Issue, error) {
 			return nil, err
 		}
 		var iss types.Issue
-		if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+		if _, err := jsonutil.Load([]byte(raw), &iss); err != nil {
 			continue
 		}
 		iss.Column = types.BoardColumn(col)
@@ -355,9 +358,9 @@ func (s *Store) MoveIssueColumn(workspaceID string, number int, column types.Boa
 	var raw string
 	if err := tx.QueryRow(`SELECT json FROM issues WHERE workspace_id = ? AND number = ?`, workspaceID, number).Scan(&raw); err == nil {
 		var iss types.Issue
-		if err := json.Unmarshal([]byte(raw), &iss); err == nil {
+		if rawMap, err := jsonutil.Load([]byte(raw), &iss); err == nil {
 			iss.Column = column
-			b, _ := json.Marshal(iss)
+			b, _ := jsonutil.Save(rawMap, iss)
 			_, _ = tx.Exec(`UPDATE issues SET json = ? WHERE workspace_id = ? AND number = ?`, string(b), workspaceID, number)
 		}
 	}
@@ -407,7 +410,8 @@ func (s *Store) AccumulateIssueWork(workspaceID string, number int, mode types.S
 		return err
 	}
 	var iss types.Issue
-	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+	rawMap, err := jsonutil.Load([]byte(raw), &iss)
+	if err != nil {
 		return err
 	}
 	iss.WorkSeconds += seconds
@@ -417,7 +421,7 @@ func (s *Store) AccumulateIssueWork(workspaceID string, number int, mode types.S
 	case types.ModeExecute:
 		iss.WorkSecondsExecute += seconds
 	}
-	b, err := json.Marshal(iss)
+	b, err := jsonutil.Save(rawMap, iss)
 	if err != nil {
 		return err
 	}
@@ -448,11 +452,12 @@ func (s *Store) AccumulateIssueCost(workspaceID string, number int, costUSD floa
 		return err
 	}
 	var iss types.Issue
-	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+	rawMap, err := jsonutil.Load([]byte(raw), &iss)
+	if err != nil {
 		return err
 	}
 	iss.CostUSD += costUSD
-	b, err := json.Marshal(iss)
+	b, err := jsonutil.Save(rawMap, iss)
 	if err != nil {
 		return err
 	}
@@ -568,7 +573,7 @@ func (s *Store) ReconcileClosedIssues() (int, error) {
 			return 0, err
 		}
 		var iss types.Issue
-		if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+		if _, err := jsonutil.Load([]byte(raw), &iss); err != nil {
 			continue
 		}
 		if iss.State == "closed" {
@@ -604,14 +609,15 @@ func (s *Store) MarkPROpened(workspaceID string, number int, prNumber int, prURL
 		return err
 	}
 	var iss types.Issue
-	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+	rawMap, err := jsonutil.Load([]byte(raw), &iss)
+	if err != nil {
 		return err
 	}
 	iss.PRNumber = &prNumber
 	iss.PRURL = prURL
 	iss.Column = types.ColReview
 	iss.NeedsPRInfo = nil // clear the NEEDS_PR badge now that a PR is attached
-	b, _ := json.Marshal(iss)
+	b, _ := jsonutil.Save(rawMap, iss)
 
 	var maxOrder sql.NullInt64
 	if err := tx.QueryRow(
@@ -648,12 +654,13 @@ func (s *Store) MarkNeedsPR(workspaceID string, number int, info types.NeedsPRIn
 		return err
 	}
 	var iss types.Issue
-	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+	rawMap, err := jsonutil.Load([]byte(raw), &iss)
+	if err != nil {
 		return err
 	}
 	iss.NeedsPRInfo = &info
 	iss.Column = types.ColReview
-	b, _ := json.Marshal(iss)
+	b, _ := jsonutil.Save(rawMap, iss)
 
 	var maxOrder sql.NullInt64
 	if err := tx.QueryRow(
@@ -693,7 +700,8 @@ func (s *Store) MarkPRMerged(workspaceID string, number int) error {
 		return err
 	}
 	var iss types.Issue
-	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+	rawMap, err := jsonutil.Load([]byte(raw), &iss)
+	if err != nil {
 		return err
 	}
 	iss.State = "closed"
@@ -717,7 +725,7 @@ func (s *Store) MarkPRMerged(workspaceID string, number int) error {
 		iss.ClosedAt = &now
 	}
 
-	b, _ := json.Marshal(iss)
+	b, _ := jsonutil.Save(rawMap, iss)
 
 	var maxOrder sql.NullInt64
 	if err := tx.QueryRow(
@@ -766,7 +774,8 @@ func (s *Store) MarkPRClosedUnmerged(workspaceID string, number int) error {
 		return err
 	}
 	var iss types.Issue
-	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+	rawMap, err := jsonutil.Load([]byte(raw), &iss)
+	if err != nil {
 		return err
 	}
 	iss.PRNumber = nil
@@ -774,7 +783,7 @@ func (s *Store) MarkPRClosedUnmerged(workspaceID string, number int) error {
 	// PR closed without merging → any queued pool spawn is moot. Same
 	// reaping as MarkPRMerged.
 	iss.WaitingForPool = false
-	b, _ := json.Marshal(iss)
+	b, _ := jsonutil.Save(rawMap, iss)
 	if _, err := tx.Exec(
 		`UPDATE issues SET json = ? WHERE workspace_id = ? AND number = ?`,
 		string(b), workspaceID, number,
@@ -817,7 +826,8 @@ func (s *Store) MarkIssueClosed(workspaceID string, number int) error {
 		return nil
 	}
 	var iss types.Issue
-	if err := json.Unmarshal([]byte(raw), &iss); err != nil {
+	rawMap, err := jsonutil.Load([]byte(raw), &iss)
+	if err != nil {
 		return err
 	}
 	iss.State = "closed"
@@ -835,7 +845,7 @@ func (s *Store) MarkIssueClosed(workspaceID string, number int) error {
 		iss.ClosedAt = &now
 	}
 
-	b, _ := json.Marshal(iss)
+	b, _ := jsonutil.Save(rawMap, iss)
 	if _, err := tx.Exec(
 		`UPDATE issues SET column_name = ?, json = ?, closed_at = ? WHERE workspace_id = ? AND number = ?`,
 		string(types.ColDone), string(b), newClosedAt, workspaceID, number,

@@ -74,6 +74,8 @@ jobs:
 
       - name: go test
         run: go test ./...
+        # includes internal/store migration framework tests and v0-baseline
+        # fixture tests (internal/store/migrations_test.go)
 
       - name: typecheck frontend
         working-directory: frontend

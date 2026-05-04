@@ -2,13 +2,13 @@ package store
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"prismconductor/internal/store/jsonutil"
 	"prismconductor/internal/types"
 )
 
@@ -17,7 +17,7 @@ func (s *Store) SaveSession(sess *types.Session, transcriptPath string) error {
 	if s == nil || s.DB == nil {
 		return errors.New("store unavailable")
 	}
-	b, err := json.Marshal(sess)
+	b, err := jsonutil.Save(nil, sess)
 	if err != nil {
 		return err
 	}
@@ -119,7 +119,7 @@ func (s *Store) LoadRunningSessions() ([]types.Session, string, error) {
 			return nil, "", err
 		}
 		var sess types.Session
-		if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+		if _, err := jsonutil.Load([]byte(raw), &sess); err != nil {
 			continue
 		}
 		// The pending_question_id column is the source of truth — the JSON blob
@@ -214,7 +214,7 @@ LIMIT ?`, limit)
 			return nil, err
 		}
 		var sess types.Session
-		if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+		if _, err := jsonutil.Load([]byte(raw), &sess); err != nil {
 			continue
 		}
 		if sess.Transcript == "" {
@@ -317,7 +317,7 @@ func (s *Store) MostRecentEndedAtForWorktree(workspaceID, worktreePath string) (
 		return time.Time{}, false, nil
 	}
 	var sess types.Session
-	if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+	if _, err := jsonutil.Load([]byte(raw), &sess); err != nil {
 		return time.Time{}, false, err
 	}
 	if sess.EndedAt == nil {
@@ -334,7 +334,7 @@ func (s *Store) UpdateSessionUsage(sess *types.Session, transcriptPath string) e
 	if s == nil || s.DB == nil {
 		return nil
 	}
-	b, err := json.Marshal(sess)
+	b, err := jsonutil.Save(nil, sess)
 	if err != nil {
 		return err
 	}
@@ -486,7 +486,7 @@ func (s *Store) ListSessionsForIssue(workspaceID string, issueNumber int) ([]typ
 			return nil, err
 		}
 		var sess types.Session
-		if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+		if _, err := jsonutil.Load([]byte(raw), &sess); err != nil {
 			continue
 		}
 		if pendingQID.Valid {
@@ -523,14 +523,15 @@ func (s *Store) TerminateOrphanPausedSession(workspaceID string, issueNumber int
 		return nil, err
 	}
 	var sess types.Session
-	if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+	rawMap, err := jsonutil.Load([]byte(raw), &sess)
+	if err != nil {
 		return nil, err
 	}
 	sess.State = types.StateFailed
 	sess.BlockedReason = reason
 	sess.EndedAt = &now
 	sess.AcknowledgedAt = &nowUnix
-	updated, err := json.Marshal(&sess)
+	updated, err := jsonutil.Save(rawMap, &sess)
 	if err != nil {
 		return nil, err
 	}
@@ -578,11 +579,12 @@ func (s *Store) AcknowledgeLatestFailure(workspaceID string, issueNumber int) (*
 		return nil, err
 	}
 	var sess types.Session
-	if err := json.Unmarshal([]byte(raw), &sess); err != nil {
-		return nil, err
+	rawMap, err2 := jsonutil.Load([]byte(raw), &sess)
+	if err2 != nil {
+		return nil, err2
 	}
 	sess.AcknowledgedAt = &now
-	updated, err := json.Marshal(&sess)
+	updated, err := jsonutil.Save(rawMap, &sess)
 	if err != nil {
 		return nil, err
 	}

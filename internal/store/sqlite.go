@@ -4,9 +4,12 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"prismconductor/internal/store/migrations"
 
 	_ "modernc.org/sqlite"
 )
@@ -22,6 +25,26 @@ func Open(dir string) (*Store, error) {
 		return nil, err
 	}
 	path := filepath.Join(dir, "conductor.db")
+
+	// Pre-migration backup: copy the existing DB file before any DDL runs.
+	// Only runs when the file already exists (not a fresh install) and when
+	// there are pending migrations to apply (avoids creating a backup on
+	// every startup). A failed backup is logged but non-fatal — the user
+	// can still open the DB; a backup failure must not block the app.
+	if _, statErr := os.Stat(path); statErr == nil {
+		// Peek at pending status without opening a full connection.
+		if peekDB, err := sql.Open("sqlite", path); err == nil {
+			if migrations.HasPending(peekDB) {
+				peekDB.Close()
+				if err := createBackup(path, 3); err != nil {
+					log.Printf("store: pre-migration backup failed (non-fatal): %v", err)
+				}
+			} else {
+				peekDB.Close()
+			}
+		}
+	}
+
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
@@ -50,10 +73,26 @@ func Open(dir string) (*Store, error) {
 		}
 	}
 	s := &Store{DB: db, Path: path}
+
+	// Legacy idempotent DDL (pre-framework migrations).
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+
+	// Downgrade guard: refuse to open a DB written by a newer binary.
+	if err := migrations.CheckVersion(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	// Versioned migration framework: creates schema_migrations, applies pending
+	// migrations, stamps schema_version.
+	if err := migrations.Run(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("schema migration: %w", err)
+	}
+
 	return s, nil
 }
 

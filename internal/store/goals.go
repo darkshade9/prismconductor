@@ -2,9 +2,9 @@ package store
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 
+	"prismconductor/internal/store/jsonutil"
 	"prismconductor/internal/types"
 )
 
@@ -13,7 +13,7 @@ func (s *Store) SaveGoal(g types.Goal) error {
 	if s == nil || s.DB == nil {
 		return errors.New("store unavailable")
 	}
-	b, err := json.Marshal(g)
+	b, err := jsonutil.Save(nil, g)
 	if err != nil {
 		return err
 	}
@@ -37,7 +37,7 @@ func (s *Store) GetGoal(id string) (types.Goal, error) {
 		return types.Goal{}, err
 	}
 	var g types.Goal
-	if err := json.Unmarshal([]byte(raw), &g); err != nil {
+	if _, err := jsonutil.Load([]byte(raw), &g); err != nil {
 		return types.Goal{}, err
 	}
 	return g, nil
@@ -68,7 +68,7 @@ END, "order" ASC`)
 			return nil, err
 		}
 		var g types.Goal
-		if err := json.Unmarshal([]byte(raw), &g); err != nil {
+		if _, err := jsonutil.Load([]byte(raw), &g); err != nil {
 			continue
 		}
 		out = append(out, g)
@@ -146,9 +146,9 @@ func bumpStatusJSON(tx *sql.Tx, from, to string) error {
 	rows.Close()
 	for _, r := range batch {
 		var g types.Goal
-		_ = json.Unmarshal([]byte(r.raw), &g)
+		rawMap, _ := jsonutil.Load([]byte(r.raw), &g)
 		g.Status = types.GoalStatus(to)
-		b, _ := json.Marshal(g)
+		b, _ := jsonutil.Save(rawMap, g)
 		if _, err := tx.Exec(`UPDATE goals SET status = ?, json = ? WHERE id = ?`, to, string(b), r.id); err != nil {
 			return err
 		}
@@ -162,12 +162,13 @@ func setGoalStatus(tx *sql.Tx, id, status string) error {
 		return err
 	}
 	var g types.Goal
-	if err := json.Unmarshal([]byte(raw), &g); err != nil {
+	rawMap, err := jsonutil.Load([]byte(raw), &g)
+	if err != nil {
 		return err
 	}
 	g.Status = types.GoalStatus(status)
-	b, _ := json.Marshal(g)
-	_, err := tx.Exec(`UPDATE goals SET status = ?, json = ? WHERE id = ?`, status, string(b), id)
+	b, _ := jsonutil.Save(rawMap, g)
+	_, err = tx.Exec(`UPDATE goals SET status = ?, json = ? WHERE id = ?`, status, string(b), id)
 	return err
 }
 
