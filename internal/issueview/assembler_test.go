@@ -597,3 +597,54 @@ func TestSelectSessions_BlockedInDoneIsSuppressed_ScenarioFromIssue113(t *testin
 		t.Errorf("DONE column suppression must clear lastFail, got %+v", lastFail)
 	}
 }
+
+// TestClearConflictsInfo_RemovesEntry exercises the optimistic-clear path
+// used by app.go's session-state handler when a resolver completes. Pre-fix
+// the conflictFails entry persisted until the next GitHub poll detected
+// mergeable_state going clean — up to 5 minutes of stale red badge after
+// the resolver session demonstrably finished. Witnessed on issue #177.
+func TestClearConflictsInfo_RemovesEntry(t *testing.T) {
+	bus := eventbus.New()
+	st := &fakeStore{
+		issues: map[int]types.Issue{42: {Number: 42, WorkspaceID: "ws1", Column: types.ColInProgress}},
+	}
+	a := New(bus, st)
+
+	// Simulate the conflict detection event that populates conflictFails.
+	bus.Publish(eventbus.EvtPRConflictsDetected, eventbus.PRConflictsDetected{
+		WorkspaceID:      "ws1",
+		IssueNumber:      42,
+		PRNumber:         99,
+		Base:             "main",
+		Head:             "feat/issue-42",
+		ConflictingFiles: []string{"types.go"},
+	})
+	// Sleep briefly: bus.Publish is async (each subscriber in its own
+	// goroutine). The probeConflicts handler needs a tick to write
+	// conflictFails.
+	time.Sleep(20 * time.Millisecond)
+
+	if !a.HasConflictsInfo("ws1", 42) {
+		t.Fatal("setup: expected HasConflictsInfo true after EvtPRConflictsDetected")
+	}
+
+	a.ClearConflictsInfo("ws1", 42)
+
+	if a.HasConflictsInfo("ws1", 42) {
+		t.Error("ClearConflictsInfo should have removed the entry; HasConflictsInfo still true")
+	}
+}
+
+// TestClearConflictsInfo_NoOpWhenAbsent verifies idempotency: clearing
+// when nothing was set must not crash.
+func TestClearConflictsInfo_NoOpWhenAbsent(t *testing.T) {
+	bus := eventbus.New()
+	st := &fakeStore{
+		issues: map[int]types.Issue{1: {Number: 1, WorkspaceID: "ws1", Column: types.ColTodo}},
+	}
+	a := New(bus, st)
+	a.ClearConflictsInfo("ws1", 1) // must not panic
+	if a.HasConflictsInfo("ws1", 1) {
+		t.Error("HasConflictsInfo on a never-set issue should be false")
+	}
+}

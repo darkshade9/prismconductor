@@ -182,6 +182,45 @@ func (a *Assembler) Reassemble(wsID string, issueNum int) {
 	a.reassembleAndForceEmit(wsID, issueNum)
 }
 
+// ClearConflictsInfo optimistically removes the in-memory conflict-files
+// state for an issue and re-emits the IssueView. Called from app.go's
+// session-state handler when an execute session completes on a card
+// that previously had merge conflicts — the resolver worker just pushed
+// a fixup, so we drop the red badge immediately rather than waiting up
+// to 5 minutes for the next GitHub poll to confirm via mergeable_state.
+//
+// If the resolver actually failed to fix the conflict, the next poll
+// re-detects via probeConflicts and re-sets this entry. Worst case: a
+// brief window (one poll cycle) where the badge is gone but the
+// conflict is still present. Prefer that over the previous behavior —
+// card stuck glowing red after the resolver demonstrably succeeded.
+//
+// No-op if no conflict was recorded for this issue.
+func (a *Assembler) ClearConflictsInfo(workspaceID string, issueNumber int) {
+	key := workspaceID + "#" + strconv.Itoa(issueNumber)
+	a.mu.Lock()
+	_, had := a.conflictFails[key]
+	if had {
+		delete(a.conflictFails, key)
+	}
+	a.mu.Unlock()
+	if had {
+		a.reassembleAndForceEmit(workspaceID, issueNumber)
+	}
+}
+
+// HasConflictsInfo reports whether the assembler currently has merge-
+// conflict state recorded for the given issue. Used by app.go's
+// session-state handler to decide whether to invoke ClearConflictsInfo
+// after a successful execute completion.
+func (a *Assembler) HasConflictsInfo(workspaceID string, issueNumber int) bool {
+	key := workspaceID + "#" + strconv.Itoa(issueNumber)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_, ok := a.conflictFails[key]
+	return ok
+}
+
 // reassembleAndForceEmit runs Assemble + Publish unconditionally.
 // Used when the caller knows a load-bearing state change occurred and
 // can't trust the cache-diff to detect it — e.g. session state
