@@ -5,6 +5,7 @@ import { useWorkspaceStore } from "../stores/workspaceStore";
 import { AddWorkspaceForm } from "./AddWorkspaceForm";
 import { SkillProfileEditor } from "./SkillProfileEditor";
 import { LabelsPanel } from "./LabelsPanel";
+import { noAutoCorrect } from "../lib/inputs";
 
 function AutoArchiveEditor({ workspace, onSave }: { workspace: types.Workspace; onSave: () => void }) {
   const cfg = workspace.auto_archive ?? { enabled: false, days_closed: 7 };
@@ -53,6 +54,7 @@ function AutoArchiveEditor({ workspace, onSave }: { workspace: types.Workspace; 
           <label className="flex items-center gap-2 text-xs text-slate-400">
             After
             <input
+              {...noAutoCorrect}
               type="number"
               min={1}
               max={365}

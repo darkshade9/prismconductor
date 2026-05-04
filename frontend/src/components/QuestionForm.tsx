@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { types } from "../../wailsjs/go/models";
 import { CopyMenu, CopyAction } from "./CopyMenu";
+import { noAutoCorrect } from "../lib/inputs";
 
 export type AnswerState = {
   single: Record<string, string>;
@@ -174,6 +175,7 @@ export function QuestionForm({
             {q.type === "free_text" && (
               <>
                 <textarea
+                  {...noAutoCorrect}
                   value={state.single[q.id] ?? ""}
                   onChange={(e) => setSingle(q.id, e.target.value)}
                   rows={3}

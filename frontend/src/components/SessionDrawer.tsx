@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { KillSession, ReadTranscript, SendInput } from "../../wailsjs/go/main/App";
 import { useSessionStore } from "../stores/sessionStore";
 import { CopyMenu, CopyAction } from "./CopyMenu";
+import { noAutoCorrect } from "../lib/inputs";
 
 const STATE_COLOR: Record<string, string> = {
   running: "text-emerald-400",
@@ -159,6 +160,7 @@ export function SessionDrawer({ open, onClose }: { open: boolean; onClose: () =>
 
       <div className="px-3 py-2 border-t border-slate-800 flex items-center gap-2">
         <input
+          {...noAutoCorrect}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AddManualIssue } from "../../wailsjs/go/main/App";
 import { useIssueStore } from "../stores/issueStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { noAutoCorrect } from "../lib/inputs";
 
 // Lets the user create a fake issue card without waiting on the GitHub poll
 // (#2). Removed once #2 lands and real issues populate the board.
@@ -42,6 +43,7 @@ export function AddIssueQuick() {
   return (
     <div className="flex items-center gap-1 text-xs">
       <input
+        {...noAutoCorrect}
         value={num}
         onChange={(e) => setNum(e.target.value)}
         placeholder="#"
@@ -49,12 +51,14 @@ export function AddIssueQuick() {
         type="number"
       />
       <input
+        {...noAutoCorrect}
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         placeholder="title"
         className="w-40 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5"
       />
       <input
+        {...noAutoCorrect}
         value={labels}
         onChange={(e) => setLabels(e.target.value)}
         placeholder="labels (csv)"

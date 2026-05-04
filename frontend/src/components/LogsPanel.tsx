@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { RecentLogs } from "../../wailsjs/go/main/App";
 import { logbuffer } from "../../wailsjs/go/models";
+import { noAutoCorrect } from "../lib/inputs";
 
 const LEVEL_COLOR: Record<string, string> = {
   info: "text-slate-300",
@@ -39,6 +40,7 @@ export function LogsPanel() {
     <div className="space-y-2 text-sm flex flex-col h-full min-h-0">
       <div className="flex items-center gap-2">
         <input
+          {...noAutoCorrect}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="filter…"

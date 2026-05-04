@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SetIssueLabels } from "../../wailsjs/go/main/App";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
 import { getContrastText } from "../lib/contrast";
+import { noAutoCorrect } from "../lib/inputs";
 
 type Props = {
   open: boolean;
@@ -92,6 +93,7 @@ export function LabelManagePopover({
     >
       <div className="px-2 py-1.5 border-b border-slate-800">
         <input
+          {...noAutoCorrect}
           autoFocus
           type="text"
           value={filter}

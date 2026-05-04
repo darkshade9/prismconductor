@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ContinueWork, FetchPRChecks } from "../../wailsjs/go/main/App";
+import { noAutoCorrect } from "../lib/inputs";
 
 export function ContinueModal({
   open,
@@ -75,6 +76,7 @@ export function ContinueModal({
             )}
           </label>
           <textarea
+            {...noAutoCorrect}
             ref={textareaRef}
             value={note}
             onChange={(e) => setNote(e.target.value)}
