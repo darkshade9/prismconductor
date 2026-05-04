@@ -1798,6 +1798,7 @@ export namespace types {
 	export class RemoteSecretRefs {
 	    github_pat_ref: string;
 	    cf_api_token_ref: string;
+	    conductor_api_key_ref: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new RemoteSecretRefs(source);
@@ -1807,6 +1808,7 @@ export namespace types {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.github_pat_ref = source["github_pat_ref"];
 	        this.cf_api_token_ref = source["cf_api_token_ref"];
+	        this.conductor_api_key_ref = source["conductor_api_key_ref"];
 	    }
 	}
 	export class RemoteConfig {
