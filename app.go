@@ -34,6 +34,7 @@ import (
 	"prismconductor/internal/githubauth"
 	"prismconductor/internal/llm"
 	"prismconductor/internal/orchestrator"
+	"prismconductor/internal/remoteworker"
 	"prismconductor/internal/session"
 	"prismconductor/internal/pipeline"
 	"prismconductor/internal/skills"
@@ -771,6 +772,93 @@ func (a *App) RemoveWorkspace(id string) error {
 		}
 	}
 	return a.wsReg.Remove(id)
+}
+
+// --- Remote workspace helpers (issue #171) ---
+
+// CFTokenResult is the frontend-visible result of TestCloudflareToken.
+type CFTokenResult struct {
+	AccountID   string `json:"account_id"`
+	AccountName string `json:"account_name,omitempty"`
+}
+
+// TestCloudflareToken verifies a Cloudflare API token and returns the account
+// ID. Called by RemoteWorkspaceSetup before persisting anything.
+func (a *App) TestCloudflareToken(token string) (CFTokenResult, error) {
+	res, err := remoteworker.VerifyToken(token)
+	if err != nil {
+		return CFTokenResult{}, err
+	}
+	return CFTokenResult{AccountID: res.AccountID, AccountName: res.AccountName}, nil
+}
+
+// TestGitHubPAT verifies that a GitHub Personal Access Token has push access
+// to owner/repo. Called by RemoteWorkspaceSetup before persisting the PAT ref.
+func (a *App) TestGitHubPAT(pat, owner, repo string) error {
+	return remoteworker.VerifyGitHubPAT(pat, owner, repo)
+}
+
+// RemoteDeployResult is the frontend-visible result of DeployRemoteWorker.
+type RemoteDeployResult struct {
+	WorkerName          string `json:"worker_name"`
+	CFWorkerEndpointURL string `json:"cf_worker_endpoint_url"`
+	DeploymentVersion   string `json:"deployment_version"`
+}
+
+// DeployRemoteWorker uploads the embedded worker bundle to the user's
+// Cloudflare account and stores the GitHub PAT as a CF Secret. It returns the
+// deployed worker's endpoint URL and version tag so the caller can persist them
+// in the workspace's RemoteConfig.
+//
+// Raw tokens are NOT stored locally; only the CF Secret names (refs) are kept.
+func (a *App) DeployRemoteWorker(workspaceID, cfToken, githubPAT string) (RemoteDeployResult, error) {
+	if a.wsReg == nil {
+		return RemoteDeployResult{}, fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return RemoteDeployResult{}, fmt.Errorf("workspace %s not found", workspaceID)
+	}
+
+	// Verify token and resolve account ID.
+	tkRes, err := remoteworker.VerifyToken(cfToken)
+	if err != nil {
+		return RemoteDeployResult{}, fmt.Errorf("CF token invalid: %w", err)
+	}
+	accountID := tkRes.AccountID
+
+	// Deploy the worker bundle.
+	deploy, err := remoteworker.DeployWorker(accountID, cfToken, workspaceID, remoteworker.WorkerBundle)
+	if err != nil {
+		return RemoteDeployResult{}, fmt.Errorf("deploy worker: %w", err)
+	}
+
+	// Store the GitHub PAT as a CF Secret (token value never touches disk).
+	if err := remoteworker.UpsertSecret(accountID, cfToken, deploy.WorkerName, "GITHUB_PAT", githubPAT); err != nil {
+		return RemoteDeployResult{}, fmt.Errorf("store GitHub PAT secret: %w", err)
+	}
+
+	// Update workspace RemoteConfig.
+	rc := &types.RemoteConfig{
+		CFAccountID:         accountID,
+		CFWorkerName:        deploy.WorkerName,
+		CFWorkerEndpointURL: deploy.CFWorkerEndpointURL,
+		CFDeploymentVersion: deploy.DeploymentVersion,
+		SecretRefs: types.RemoteSecretRefs{
+			GitHubPATRef: "GITHUB_PAT",
+		},
+	}
+	ws.ExecutionTarget = types.ExecutionTargetRemote
+	ws.RemoteConfig = rc
+	if err := a.wsReg.Update(ws); err != nil {
+		return RemoteDeployResult{}, fmt.Errorf("update workspace: %w", err)
+	}
+
+	return RemoteDeployResult{
+		WorkerName:          deploy.WorkerName,
+		CFWorkerEndpointURL: deploy.CFWorkerEndpointURL,
+		DeploymentVersion:   deploy.DeploymentVersion,
+	}, nil
 }
 
 // --- Goals ---

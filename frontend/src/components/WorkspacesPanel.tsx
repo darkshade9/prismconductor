@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { GCWorktrees, ListPools, RemoveWorkspace, RunAutoArchiveNow, UpdateWorkspace } from "../../wailsjs/go/main/App";
+import { DeployRemoteWorker, GCWorktrees, ListPools, RemoveWorkspace, RunAutoArchiveNow, UpdateWorkspace } from "../../wailsjs/go/main/App";
 import { types, workerpool } from "../../wailsjs/go/models";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import { AddWorkspaceForm } from "./AddWorkspaceForm";
+import { AddWorkspaceModal } from "./AddWorkspaceModal";
 import { PipelineEditor } from "./PipelineEditor";
 import { SkillProfileEditor } from "./SkillProfileEditor";
 import { LabelsPanel } from "./LabelsPanel";
@@ -104,6 +104,82 @@ function PoolBindings({ workspaceID }: { workspaceID: string }) {
   );
 }
 
+function RemoteAuthPanel({ workspace, onSave }: { workspace: types.Workspace; onSave: () => void }) {
+  const rc = workspace.remote_config;
+  const [cfToken, setCFToken] = useState("");
+  const [githubPAT, setGitHubPAT] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState(false);
+
+  async function redeploy() {
+    if (!cfToken || !githubPAT) {
+      setError("Both tokens are required to re-deploy.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setOk(false);
+    try {
+      await DeployRemoteWorker(workspace.id, cfToken.trim(), githubPAT.trim());
+      setOk(true);
+      await onSave();
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="text-xs text-slate-400 mb-2">Remote Auth</div>
+      {rc && (
+        <div className="text-xs text-slate-500 mb-2 space-y-0.5">
+          <div>Worker: <span className="text-slate-300 font-mono">{rc.cf_worker_endpoint_url}</span></div>
+          <div>CF Secret refs: <span className="text-slate-300">{rc.cf_secret_refs?.github_pat_ref || "GITHUB_PAT"}</span></div>
+          {rc.token_expired && (
+            <div className="text-amber-400">⚠ Token expired — re-deploy to restore access.</div>
+          )}
+        </div>
+      )}
+      <div className="space-y-2">
+        <label className="block">
+          <div className="text-xs text-slate-500 mb-0.5">Cloudflare API Token</div>
+          <input
+            {...noAutoCorrect}
+            type="password"
+            value={cfToken}
+            onChange={(e) => setCFToken(e.target.value)}
+            placeholder="New CF API token…"
+            className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200 font-mono"
+          />
+        </label>
+        <label className="block">
+          <div className="text-xs text-slate-500 mb-0.5">GitHub PAT</div>
+          <input
+            {...noAutoCorrect}
+            type="password"
+            value={githubPAT}
+            onChange={(e) => setGitHubPAT(e.target.value)}
+            placeholder="New GitHub PAT…"
+            className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200 font-mono"
+          />
+        </label>
+        {error && <div className="text-red-400 text-xs">{error}</div>}
+        {ok && <div className="text-emerald-400 text-xs">Re-deployed successfully.</div>}
+        <button
+          onClick={redeploy}
+          disabled={!cfToken || !githubPAT || busy}
+          className="text-xs px-2 py-1 bg-sky-800 hover:bg-sky-700 rounded disabled:opacity-40"
+        >
+          {busy ? "Deploying…" : "Re-deploy worker"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function WorkspacesPanel() {
   const { workspaces, refresh, loading } = useWorkspaceStore();
   const [adding, setAdding] = useState(false);
@@ -149,7 +225,7 @@ export function WorkspacesPanel() {
 
       {adding && (
         <div className="rounded border border-slate-700 bg-slate-950 p-3">
-          <AddWorkspaceForm onDone={() => setAdding(false)} />
+          <AddWorkspaceModal onDone={() => setAdding(false)} />
         </div>
       )}
 
@@ -171,9 +247,18 @@ export function WorkspacesPanel() {
                     style={{ backgroundColor: ws.color || "#64748b" }}
                   />
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm text-slate-200">{ws.display_name || ws.id}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm text-slate-200">{ws.display_name || ws.id}</span>
+                      {ws.execution_target === "remote" && (
+                        <span className="text-[10px] bg-sky-900 text-sky-300 px-1.5 py-0.5 rounded">Remote</span>
+                      )}
+                      {ws.remote_config?.token_expired && (
+                        <span className="text-[10px] bg-amber-900 text-amber-300 px-1.5 py-0.5 rounded">TOKEN EXPIRED</span>
+                      )}
+                    </div>
                     <div className="text-xs text-slate-500 truncate">
-                      {ws.github_owner}/{ws.github_repo} · {ws.skill_profile?.mode ?? "bundled"} · {ws.repo_path}
+                      {ws.github_owner}/{ws.github_repo} · {ws.skill_profile?.mode ?? "bundled"}
+                      {ws.execution_target !== "remote" && ` · ${ws.repo_path}`}
                     </div>
                   </div>
                   <button
@@ -213,6 +298,9 @@ export function WorkspacesPanel() {
                 </div>
                 {isExpanded && (
                   <div className="mt-2 space-y-4">
+                    {ws.execution_target === "remote" && (
+                      <RemoteAuthPanel workspace={ws} onSave={refresh} />
+                    )}
                     <SkillProfileEditor workspace={ws} />
                     <div>
                       <div className="text-xs text-slate-400 mb-2">Pipeline</div>

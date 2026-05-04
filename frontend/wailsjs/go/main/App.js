@@ -58,6 +58,10 @@ export function DeletePool(arg1) {
   return window['go']['main']['App']['DeletePool'](arg1);
 }
 
+export function DeployRemoteWorker(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DeployRemoteWorker'](arg1, arg2, arg3);
+}
+
 export function DiagnoseIssue(arg1, arg2) {
   return window['go']['main']['App']['DiagnoseIssue'](arg1, arg2);
 }
@@ -380,6 +384,14 @@ export function SubmitAnswers(arg1) {
 
 export function SubmitMidRunAnswer(arg1, arg2, arg3) {
   return window['go']['main']['App']['SubmitMidRunAnswer'](arg1, arg2, arg3);
+}
+
+export function TestCloudflareToken(arg1) {
+  return window['go']['main']['App']['TestCloudflareToken'](arg1);
+}
+
+export function TestGitHubPAT(arg1, arg2, arg3) {
+  return window['go']['main']['App']['TestGitHubPAT'](arg1, arg2, arg3);
 }
 
 export function UnarchiveAll(arg1) {

@@ -21,6 +21,7 @@ import (
 	pcgit "prismconductor/internal/git"
 	"prismconductor/internal/harness"
 	"prismconductor/internal/llm"
+	"prismconductor/internal/remoteworker"
 	"prismconductor/internal/skills/bundle"
 	"prismconductor/internal/types"
 )
@@ -319,7 +320,13 @@ func (m *Manager) SpawnPlan(ws types.Workspace, issue types.Issue, pool types.Po
 // worktree's lifecycle: created here before pty.Start, torn down by
 // tailAndParse on Blocked/Failed (immediate, q2=A) or by the 24h GC walk on
 // Completed (q3=A).
+//
+// Issue #171: when ws.ExecutionTarget is "remote", delegates to spawnRemote
+// instead of creating a local worktree. Local flow is unchanged.
 func (m *Manager) SpawnExecute(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool) (*types.Session, error) {
+	if ws.ExecutionTarget == types.ExecutionTargetRemote && ws.RemoteConfig != nil {
+		return m.spawnRemote(ws, issue, plan, pool, "")
+	}
 	base := ws.DefaultBranch
 	if base == "" {
 		base = "main"
@@ -376,7 +383,13 @@ func (m *Manager) SpawnExecute(ws types.Workspace, issue types.Issue, plan types
 // worktree are expected to already exist on disk — this is the second leg of
 // a paused-for-question flow, NOT a fresh execute. Returns an error if the
 // worktree is missing so the caller can surface it on the OLD session row.
+//
+// Issue #171: remote workspaces resume via spawnRemote with the questionID
+// forwarded; the remote worker handles re-hydrating the branch.
 func (m *Manager) SpawnExecuteResume(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool, questionID string) (*types.Session, error) {
+	if ws.ExecutionTarget == types.ExecutionTargetRemote && ws.RemoteConfig != nil {
+		return m.spawnRemote(ws, issue, plan, pool, questionID)
+	}
 	slug := branchSlug(issue.Title)
 	branch := fmt.Sprintf("feat/issue-%d-%s", issue.Number, slug)
 	worktreeDir := filepath.Join(ws.RepoPath, ".prismconductor", "worktrees",
@@ -703,6 +716,123 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 		}
 		done := m.spawnHarness(ctx, rs, prov, ws, pool, prompt, skillMarkdown)
 		rs.cmd = &synthCmd{done: done, err: &rs.harnessErr, cancel: cancel}
+	}
+
+	if m.store != nil {
+		_ = m.store.SaveSession(sess, rs.transcriptPath)
+	}
+	if m.onStateChange != nil {
+		m.onStateChange(*sess, "")
+	}
+
+	m.mu.Lock()
+	m.sessions[sess.ID] = rs
+	m.mu.Unlock()
+
+	go m.tailAndParse(ctx, rs)
+	return sess, nil
+}
+
+// spawnRemote creates a session that runs inside a remote Cloudflare Worker
+// (issue #171). It mirrors the local spawnWithDir session setup — same
+// duplicate-spawn guard, same transcript file, same tailAndParse goroutine —
+// but instead of starting a subprocess it connects to the remote worker's
+// /sessions endpoint and streams SSE transcript lines into the local file.
+//
+// questionID is non-empty only on resume-after-question legs.
+func (m *Manager) spawnRemote(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool, questionID string) (*types.Session, error) {
+	rc := ws.RemoteConfig
+	if rc == nil || rc.CFWorkerEndpointURL == "" {
+		return nil, fmt.Errorf("remote workspace %s has no worker endpoint configured", ws.ID)
+	}
+
+	// Duplicate-spawn guard (same logic as spawnWithDir).
+	key := fmt.Sprintf("%s:%d:%s", ws.ID, issue.Number, types.ModeExecute)
+	m.mu.Lock()
+	if m.inFlight[key] {
+		m.mu.Unlock()
+		return nil, ErrDuplicateSpawn
+	}
+	for _, rs := range m.sessions {
+		if rs == nil || rs.sess == nil {
+			continue
+		}
+		if rs.sess.WorkspaceID != ws.ID || rs.sess.IssueNumber != issue.Number || rs.sess.Mode != types.ModeExecute {
+			continue
+		}
+		switch rs.sess.State {
+		case types.StateRunning, types.StateWaitingForInput, types.StatePausedForQuestion, types.StateBlocked:
+			m.mu.Unlock()
+			return nil, ErrDuplicateSpawn
+		}
+	}
+	m.inFlight[key] = true
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.inFlight, key)
+		m.mu.Unlock()
+	}()
+
+	if m.transcriptDir == "" {
+		return nil, fmt.Errorf("session manager: transcript dir not configured")
+	}
+	if err := os.MkdirAll(m.transcriptDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create transcript dir: %w", err)
+	}
+	sessID := uuid.NewString()
+	transcriptPath := filepath.Join(m.transcriptDir, sessID+".log")
+	tf, err := os.Create(transcriptPath)
+	if err != nil {
+		return nil, fmt.Errorf("create transcript: %w", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sess := &types.Session{
+		ID:          sessID,
+		WorkspaceID: ws.ID,
+		IssueNumber: issue.Number,
+		Mode:        types.ModeExecute,
+		State:       types.StateRunning,
+		StartedAt:   time.Now(),
+		PoolID:      pool.ID,
+	}
+	sess.Transcript = transcriptPath
+
+	slug := branchSlug(issue.Title)
+	branch := fmt.Sprintf("feat/issue-%d-%s", issue.Number, slug)
+
+	params := remoteworker.SpawnParams{
+		WorkspaceID:   ws.ID,
+		IssueNumber:   issue.Number,
+		Mode:          string(types.ModeExecute),
+		GitHubOwner:   ws.GitHubOwner,
+		GitHubRepo:    ws.GitHubRepo,
+		DefaultBranch: ws.DefaultBranch,
+		PlanRevision:  plan.Revision,
+		QuestionID:    questionID,
+		PoolModel:     pool.Model,
+	}
+	remCmd, err := remoteworker.Spawn(ctx, rc.CFWorkerEndpointURL, params, tf)
+	if err != nil {
+		_ = tf.Close()
+		_ = os.Remove(transcriptPath)
+		cancel()
+		return nil, fmt.Errorf("remote spawn: %w", err)
+	}
+
+	rs := &runtimeSession{
+		sess:           sess,
+		cmd:            remCmd,
+		cancel:         cancel,
+		parser:         NewStreamParser(),
+		transcriptPath: transcriptPath,
+		transcriptFile: tf,
+		branch:         branch,
+		poolID:         pool.ID,
+		poolName:       pool.Name,
+		poolModel:      pool.Model,
+		lastLineAt:     time.Now(),
 	}
 
 	if m.store != nil {
