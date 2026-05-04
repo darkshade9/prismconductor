@@ -813,7 +813,14 @@ func (m *Manager) spawnRemote(ws types.Workspace, issue types.Issue, plan types.
 		QuestionID:    questionID,
 		PoolModel:     pool.Model,
 	}
-	remCmd, err := remoteworker.Spawn(ctx, rc.CFWorkerEndpointURL, params, tf)
+	apiKey, err := remoteworker.GetKey(ws.ID)
+	if err != nil {
+		_ = tf.Close()
+		_ = os.Remove(transcriptPath)
+		cancel()
+		return nil, fmt.Errorf("remote spawn: read API key: %w", err)
+	}
+	remCmd, err := remoteworker.Spawn(ctx, rc.CFWorkerEndpointURL, apiKey, params, tf)
 	if err != nil {
 		_ = tf.Close()
 		_ = os.Remove(transcriptPath)

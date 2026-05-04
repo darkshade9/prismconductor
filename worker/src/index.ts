@@ -20,7 +20,19 @@ import Anthropic from "@anthropic-ai/sdk";
 export interface Env {
   GITHUB_PAT: string;
   ANTHROPIC_API_KEY?: string;
+  CONDUCTOR_API_KEY?: string;
   SESSIONS: DurableObjectNamespace;
+}
+
+// timingSafeEqual compares two strings in constant time to prevent timing
+// attacks that could reveal the expected key length or content.
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -31,6 +43,23 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // Health check is public — required for reachability probes.
+    if (request.method === "GET" && path === "/health") {
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // All session endpoints require a valid conductor API key.
+    const expectedKey = env.CONDUCTOR_API_KEY;
+    if (expectedKey) {
+      const auth = request.headers.get("Authorization") ?? "";
+      const providedKey = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+      if (!timingSafeEqual(expectedKey, providedKey)) {
+        return new Response("unauthorized", { status: 401 });
+      }
+    }
 
     // POST /sessions — spawn a new agent session
     if (request.method === "POST" && path === "/sessions") {
@@ -64,13 +93,6 @@ export default {
     // GET /sessions/active — list active sessions
     if (request.method === "GET" && path === "/sessions/active") {
       return handleListActive(env);
-    }
-
-    // Health check
-    if (request.method === "GET" && path === "/health") {
-      return new Response(JSON.stringify({ ok: true }), {
-        headers: { "Content-Type": "application/json" },
-      });
     }
 
     return new Response("Not found", { status: 404 });

@@ -19,8 +19,9 @@ const (
 // Secrets store for a remote workspace. Only the names are persisted locally;
 // the raw token values live exclusively in the user's CF account.
 type RemoteSecretRefs struct {
-	GitHubPATRef  string `json:"github_pat_ref"`  // CF Secret name, e.g. "GITHUB_PAT"
-	CFAPITokenRef string `json:"cf_api_token_ref"` // CF Secret name, e.g. "CF_API_TOKEN"
+	GitHubPATRef       string `json:"github_pat_ref"`          // CF Secret name, e.g. "GITHUB_PAT"
+	CFAPITokenRef      string `json:"cf_api_token_ref"`        // CF Secret name, e.g. "CF_API_TOKEN"
+	ConductorAPIKeyRef string `json:"conductor_api_key_ref"`   // CF Secret name, e.g. "CONDUCTOR_API_KEY"
 }
 
 // RemoteConfig holds the Cloudflare configuration for a remote workspace.

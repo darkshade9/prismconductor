@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const testAPIKey = "test-conductor-api-key-256-bits"
+
 func TestSpawn_success(t *testing.T) {
 	sessionID := "sess-abc123"
 	events := []string{
@@ -51,7 +53,7 @@ func TestSpawn_success(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	rc, err := Spawn(ctx, srv.URL, SpawnParams{
+	rc, err := Spawn(ctx, srv.URL, testAPIKey, SpawnParams{
 		WorkspaceID: "ws1",
 		IssueNumber: 42,
 		Mode:        "execute",
@@ -89,9 +91,87 @@ func TestSpawn_401(t *testing.T) {
 	defer tf.Close()
 
 	ctx := context.Background()
-	_, err := Spawn(ctx, srv.URL, SpawnParams{}, tf)
+	_, err := Spawn(ctx, srv.URL, testAPIKey, SpawnParams{}, tf)
 	if err == nil {
 		t.Fatal("expected error on 401, got nil")
+	}
+}
+
+func TestSpawn_missingKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("HTTP call should not be made when apiKey is empty")
+		http.Error(w, "should not reach here", 500)
+	}))
+	defer srv.Close()
+	replaceHTTPClient(t, srv.Client())
+
+	tf, _ := os.CreateTemp(t.TempDir(), "transcript-*.log")
+	defer tf.Close()
+
+	_, err := Spawn(context.Background(), srv.URL, "", SpawnParams{WorkspaceID: "ws1"}, tf)
+	if err == nil {
+		t.Fatal("expected error when apiKey is empty, got nil")
+	}
+}
+
+func TestSpawn_authHeaderSent(t *testing.T) {
+	const key = "my-secret-key"
+	var gotAuth string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/sessions":
+			gotAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(SpawnResponse{SessionID: "s1"})
+
+		case r.Method == "GET" && r.URL.Path == "/sessions/s1/stream":
+			// Return clean EOF immediately so the goroutine exits.
+
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	replaceHTTPClient(t, srv.Client())
+
+	tf, _ := os.CreateTemp(t.TempDir(), "transcript-*.log")
+	defer tf.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	rc, err := Spawn(ctx, srv.URL, key, SpawnParams{WorkspaceID: "ws1", IssueNumber: 1, Mode: "execute"}, tf)
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	_ = rc.Wait()
+
+	want := "Bearer " + key
+	if gotAuth != want {
+		t.Errorf("Authorization header = %q, want %q", gotAuth, want)
+	}
+}
+
+func TestSpawn_wrongKey_returns401(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer correct-key" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		// Should not reach session endpoints in this test.
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	replaceHTTPClient(t, srv.Client())
+
+	tf, _ := os.CreateTemp(t.TempDir(), "transcript-*.log")
+	defer tf.Close()
+
+	_, err := Spawn(context.Background(), srv.URL, "wrong-key", SpawnParams{WorkspaceID: "ws1"}, tf)
+	if err == nil {
+		t.Fatal("expected error when server rejects wrong key with 401, got nil")
 	}
 }
 
