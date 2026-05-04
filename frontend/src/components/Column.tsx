@@ -25,10 +25,12 @@ export function Column({
       ref={setNodeRef}
       className={cn(
         "flex-1 min-w-[200px] rounded-lg p-2 border transition-colors flex flex-col min-h-0",
-        isOver ? "bg-slate-800/60 border-emerald-700" : "bg-slate-900/40 border-slate-800",
+        isOver
+          ? "bg-slate-200/60 dark:bg-slate-800/60 border-emerald-600 dark:border-emerald-700"
+          : "bg-slate-100/60 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800",
       )}
     >
-      <div className="flex items-center text-xs uppercase tracking-wide text-slate-400 mb-2 px-1 shrink-0">
+      <div className="flex items-center text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2 px-1 shrink-0">
         <span>
           {title} <span className="text-slate-500">({count})</span>
         </span>

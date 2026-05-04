@@ -4,8 +4,9 @@ import { BundledSkillsViewer } from "./BundledSkillsViewer";
 import { PoolsPanel } from "./PoolsPanel";
 import { NotifyPanel } from "./NotifyPanel";
 import { LogsPanel } from "./LogsPanel";
+import { AppearancePanel } from "./AppearancePanel";
 
-type Tab = "workspaces" | "pools" | "skills" | "notify" | "logs";
+type Tab = "workspaces" | "pools" | "skills" | "notify" | "appearance" | "logs";
 
 export function Settings({
   open,
@@ -33,6 +34,7 @@ export function Settings({
                 ["pools", "Pools"],
                 ["skills", "Bundled skills"],
                 ["notify", "Notifications"],
+                ["appearance", "Appearance"],
                 ["logs", "Logs"],
               ] as [Tab, string][]
             ).map(([k, label]) => (
@@ -53,6 +55,7 @@ export function Settings({
             {tab === "pools" && <PoolsPanel />}
             {tab === "skills" && <BundledSkillsViewer />}
             {tab === "notify" && <NotifyPanel />}
+            {tab === "appearance" && <AppearancePanel />}
             {tab === "logs" && <LogsPanel />}
           </div>
         </div>

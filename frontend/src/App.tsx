@@ -344,9 +344,9 @@ function App() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-slate-950 text-slate-200">
-      <header className="flex items-center justify-between px-4 py-2 border-b border-slate-800">
-        <div className="font-semibold">PrismConductor</div>
+    <div className="h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-200">
+      <header className="flex items-center justify-between px-4 py-2 border-b border-slate-200 dark:border-slate-800">
+        <div className="font-semibold text-slate-900 dark:text-slate-200">PrismConductor</div>
         <TitleSearch />
         <div className="flex items-center gap-2">
           {selectedWorkspace && (
@@ -358,7 +358,7 @@ function App() {
                 onChange={(e) => setIssueInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && spawnIssue()}
                 placeholder="issue #"
-                className="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs"
+                className="w-20 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-2 py-1 text-xs"
               />
               <button
                 onClick={spawnIssue}
@@ -379,7 +379,7 @@ function App() {
           </button>
           <button
             onClick={() => RefreshIssuesNow().catch((e) => alert(String(e?.message ?? e)))}
-            className="text-xs border border-slate-700 hover:bg-slate-800 px-2 py-1 rounded"
+            className="text-xs border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 px-2 py-1 rounded"
             title="Re-fetch GitHub issues for every workspace now"
           >
             ↻ Refresh
@@ -410,7 +410,7 @@ function App() {
           </button>
           <button
             onClick={() => setDrawerOpen((v) => !v)}
-            className="text-xs border border-slate-700 hover:bg-slate-800 px-2 py-1 rounded"
+            className="text-xs border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 px-2 py-1 rounded"
           >
             Drawer
           </button>
@@ -428,7 +428,7 @@ function App() {
           </button>
           <button
             onClick={() => setSettingsOpen(true)}
-            className="text-xs border border-slate-700 hover:bg-slate-800 px-2 py-1 rounded"
+            className="text-xs border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 px-2 py-1 rounded"
           >
             Settings
           </button>

@@ -19,6 +19,8 @@ import { AgentActivityStrip } from "./AgentActivityStrip";
 import { DiagnosticPopover } from "./DiagnosticPopover";
 import { cn } from "../lib/cn";
 import { CopyMenu, CopyAction, toQuotedBlock } from "./CopyMenu";
+import { useGlowColorsStore, type GlowState } from "../stores/useGlowColorsStore";
+import { resolveGlowClass, resolveCardBorderGlow } from "../lib/glow";
 
 export type CardProps = {
   issue: types.Issue;
@@ -86,6 +88,42 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   const blocked = (issue.dependencies ?? []).length > 0;
   const isPrimitive = !blocked && (issue.priority ?? 0) >= 0.7;
 
+  // Determine which customizable glow state applies (priority mirrors the old className ladder).
+  const glowColors = useGlowColorsStore((s) => s.colors);
+  const glowState = ((): GlowState | null => {
+    if (pausedSession) return "planReady";
+    if (activeSession?.state === "blocked") return "blocked";
+    if (activeSession?.mode === "plan") return "planning";
+    if (activeSession?.mode === "execute") return "inProgress";
+    // waitingForPool and needsPR use hardcoded glows below.
+    if (issue.waiting_for_pool) return null;
+    if (!activeSession && needsPRInfo && !issue.pr_number) return null;
+    if (!activeSession && (lastFailure || testsFailingInfo || conflictsInfo)) return "blocked";
+    if (planReady) return "planReady";
+    // REVIEW green glow: PR exists and checks pass.
+    if (
+      issue.column === "review" &&
+      issue.pr_number != null &&
+      !activeSession &&
+      !pausedSession &&
+      !testsFailingInfo &&
+      !conflictsInfo
+    ) return "review";
+    return null;
+  })();
+
+  const customGlowClass = resolveGlowClass(glowState, glowState ? glowColors[glowState] : undefined);
+
+  // Hardcoded glows for states not in the 6 customizable ones.
+  const hardcodedGlowClass =
+    !activeSession && !pausedSession && issue.waiting_for_pool
+      ? "border-pink-500 card-glow-waiting"
+      : !activeSession && !pausedSession && !issue.waiting_for_pool && needsPRInfo && !issue.pr_number
+      ? "border-emerald-700 card-glow-needs-pr"
+      : null;
+
+  const cardBorderGlow = resolveCardBorderGlow(customGlowClass, hardcodedGlowClass);
+
   const [midRunOpen, setMidRunOpen] = useState(false);
   const [continueOpen, setContinueOpen] = useState(false);
   const [prCommentOpen, setPrCommentOpen] = useState(false);
@@ -115,42 +153,17 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         e.stopPropagation();
       }}
       className={cn(
-        "w-full text-left rounded-md border bg-slate-800/70 hover:bg-slate-800 px-3 py-2 mb-2",
-        "shadow-sm transition-colors cursor-grab active:cursor-grabbing select-none",
-        // Paused-for-question (#17) beats mode color so a pending question is
-        // always visually distinct from a running execute.
-        // waiting_for_pool sits above lastFailure: a card actively queued for
-        // a slot is a *current* state — the prior failure is history. Without
-        // this ordering the red blocked-glow shadows the pink waiting-glow on
-        // any card that previously failed and got requeued.
-        pausedSession
-          ? "border-amber-500 card-glow-ready"
-          : activeSession && activeSession.state === "blocked"
-          ? "border-red-500 card-glow-blocked"
-          : activeSession && activeSession.mode === "plan"
-          ? "border-sky-500 card-glow-plan"
-          : activeSession && activeSession.mode === "execute"
-          ? "border-purple-500 card-glow-execute"
-          : issue.waiting_for_pool
-          ? "border-pink-500 card-glow-waiting"
-          : !activeSession && needsPRInfo && !issue.pr_number
-          ? "border-emerald-700 card-glow-needs-pr"
-          : !activeSession && lastFailure
-          ? "border-red-500 card-glow-blocked"
-          : !activeSession && testsFailingInfo
-          ? "border-red-500 card-glow-blocked"
-          : !activeSession && conflictsInfo
-          ? "border-red-500 card-glow-blocked"
-          : planReady
-          ? "border-amber-500 card-glow-ready"
-          : "border-slate-700",
+        "w-full text-left rounded-md border",
+        "bg-white/90 dark:bg-slate-800/70 hover:bg-white dark:hover:bg-slate-800",
+        "px-3 py-2 mb-2 shadow-sm transition-colors cursor-grab active:cursor-grabbing select-none",
+        cardBorderGlow,
       )}
     >
-      <div className="flex items-center justify-between text-xs text-slate-400">
+      <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
         <span className="flex items-center gap-2 min-w-0">
           <span className="inline-block h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: workspaceColor ?? "#64748b" }} />
           #{issue.number}
-          <span className="text-slate-500 truncate">{workspaceLabel ?? issue.workspace_id}</span>
+          <span className="text-slate-400 dark:text-slate-500 truncate">{workspaceLabel ?? issue.workspace_id}</span>
         </span>
         <span className="flex items-center gap-1.5 shrink-0">
           {/* Diagnostic info button (issue #100). */}
@@ -161,7 +174,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
             }}
             onMouseDown={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
-            className="text-slate-600 hover:text-slate-300 text-[11px] leading-none"
+            className="text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300 text-[11px] leading-none"
             title="Tell me about X? — show system diagnostic"
           >
             ⓘ
@@ -217,7 +230,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         </span>
       </div>
       <div
-        className="text-sm text-slate-100 mt-1 line-clamp-2"
+        className="text-sm text-slate-900 dark:text-slate-100 mt-1 line-clamp-2"
         onContextMenu={(e) => openCardMenu(e, [{ label: "Copy title", text: issue.title }])}
       >{issue.title}</div>
 
@@ -366,7 +379,7 @@ function CostChip({
   }
   return (
     <span
-      className="text-[10px] text-slate-500 font-mono tabular-nums"
+      className="text-[10px] text-slate-400 dark:text-slate-500 font-mono tabular-nums"
       title={tooltip}
     >
       ${costUSD < 0.01 ? costUSD.toFixed(4) : costUSD.toFixed(2)}{tokenSuffix}
@@ -403,7 +416,7 @@ function WorkTimerChip({
 
   return (
     <span
-      className="text-[10px] text-slate-500 font-mono tabular-nums"
+      className="text-[10px] text-slate-400 dark:text-slate-500 font-mono tabular-nums"
       title={tooltip || undefined}
     >
       ⏱ {formatWorkDuration(total)}
@@ -896,7 +909,7 @@ function StatusRow({
   const showPlanNow = !blocked && (column === "todo" || column === "plan");
   return (
     <>
-      <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
+      <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
         {isPrimitive && <span className="text-emerald-400">🔴 primitive</span>}
         {blocked && (
           <span className="text-amber-300">
