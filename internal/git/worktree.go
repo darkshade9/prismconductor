@@ -132,11 +132,20 @@ func MergeConflictFiles(repoPath, baseRef, headRef string) ([]string, error) {
 	if repoPath == "" || baseRef == "" || headRef == "" {
 		return nil, fmt.Errorf("MergeConflictFiles: repoPath/baseRef/headRef all required")
 	}
-	// `git merge-tree --name-only --merge-base=<base> <head> <other>` writes
-	// one path per line for files that conflict during the simulated
-	// 3-way merge. Empty stdout = no conflicts. Non-zero exit = error
-	// running the merge (e.g. unrelated histories) or git too old to
-	// support these flags.
+	// `git merge-tree --name-only --merge-base=<mb> <base> <head>` output:
+	//   - Line 1: tree SHA of the merge result (NOT a filename — must skip).
+	//   - Subsequent lines: paths of files with conflicts, one per line.
+	//   - Exit status 0 when there are NO conflicts (clean merge).
+	//   - Exit status 1 when there ARE conflicts. THIS IS THE HAPPY PATH
+	//     for our use case; it tells us the merge would conflict and
+	//     gives us the list. Exit > 1 (128 etc.) is a real error
+	//     (fatal git problem, refs missing, etc.).
+	//
+	// Previously we treated exit 1 as failure and fell back to the
+	// GitHub PR-files API for every dirty PR — listing every file the
+	// PR touched instead of the actually-conflicting subset. That's
+	// the user-reported bug on PR #181 (showed 11 files when only
+	// internal/types/types.go actually conflicts).
 	mergeBase, err := run(repoPath, "git", "merge-base", baseRef, headRef)
 	if err != nil {
 		return nil, fmt.Errorf("merge-base %s %s: %w", baseRef, headRef, err)
@@ -145,21 +154,61 @@ func MergeConflictFiles(repoPath, baseRef, headRef string) ([]string, error) {
 	if mergeBase == "" {
 		return nil, fmt.Errorf("merge-base returned empty for %s..%s", baseRef, headRef)
 	}
-	out, err := run(repoPath, "git",
+	out, exitCode, err := runWithExit(repoPath, "git",
 		"merge-tree",
 		"--name-only",
 		"--merge-base="+mergeBase,
 		baseRef, headRef)
-	if err != nil {
-		// Older git or unrelated histories: surface a typed error so the
-		// caller can fall back rather than treating an empty list as
-		// "no conflicts."
-		return nil, fmt.Errorf("merge-tree %s %s: %w", baseRef, headRef, err)
+	switch exitCode {
+	case 0:
+		// Clean merge — no conflicts. Caller already gates on
+		// pr.MergeableState=='dirty' so this branch is rare in practice
+		// but harmless: return empty list.
+		return nil, nil
+	case 1:
+		// Conflict path — parse output. Continue below.
+	default:
+		// Real error: older git that doesn't support --merge-base,
+		// missing refs, fatal repo state, etc. Surface to caller for
+		// fallback to FetchPRFiles.
+		if err != nil {
+			return nil, fmt.Errorf("merge-tree %s %s: %w (exit %d)", baseRef, headRef, err, exitCode)
+		}
+		return nil, fmt.Errorf("merge-tree %s %s: unexpected exit %d", baseRef, headRef, exitCode)
 	}
+
+	// Parse the conflict-path list. The actual stdout format from
+	// `git merge-tree --name-only` is:
+	//
+	//   <tree-sha>
+	//   <path1>
+	//   <path2>
+	//   ...
+	//                          <-- BLANK LINE (separator)
+	//   Auto-merging <path1>   <-- human-readable summary; ignore
+	//   CONFLICT (content): Merge conflict in <path1>
+	//   ...
+	//
+	// We read line-by-line: skip the first non-empty line (tree SHA),
+	// collect non-empty lines into `files`, and STOP at the first
+	// blank line — anything after that is human-readable summary
+	// (Auto-merging / CONFLICT) which would otherwise pollute the
+	// list with non-paths.
 	var files []string
+	seenSHA := false
 	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
+		line = strings.TrimRight(line, "\r")
 		if line == "" {
+			if seenSHA {
+				// Hit the separator after we've started reading paths.
+				// Everything after this is summary noise — stop.
+				break
+			}
+			// Leading blank lines (rare but tolerate) — skip.
+			continue
+		}
+		if !seenSHA {
+			seenSHA = true // tree SHA, discard
 			continue
 		}
 		files = append(files, line)
@@ -230,4 +279,26 @@ func run(dir, name string, args ...string) (string, error) {
 	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// runWithExit is run() + the process exit code. Used by callers that need
+// to distinguish meaningful non-zero exits (e.g. `git merge-tree` exits 1
+// when there are conflicts — which is the case we actually want output
+// for) from real errors. Returns STDOUT only (not combined output) so
+// stderr noise like git's "Auto-merging X" / "CONFLICT" status lines
+// doesn't pollute the parseable stdout. exitCode is 0 on success, the
+// process exit on non-zero exit, or -1 if the process never started.
+func runWithExit(dir, name string, args ...string) (string, int, error) {
+	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.Output()
+	if err == nil {
+		return string(out), 0, nil
+	}
+	if ee, ok := err.(*exec.ExitError); ok {
+		return string(out), ee.ExitCode(), err
+	}
+	return string(out), -1, err
 }
