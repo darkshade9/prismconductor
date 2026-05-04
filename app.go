@@ -324,6 +324,17 @@ func (a *App) startup(ctx context.Context) {
 		} else if n > 0 {
 			log.Printf("reconciled %d closed issues to DONE\n", n)
 		}
+		// Self-heal any session row left in state=running for an issue whose
+		// PR is already open or merged. Harness sessions can leave stale
+		// running rows when their goroutine dies/hangs without cleaning up;
+		// without this pass the assembler picks them as active_session and
+		// the card glows blue/purple in REVIEW/DONE forever (witnessed on
+		// issue #109).
+		if n, err := a.store.ReconcileStaleRunningSessions(); err != nil {
+			log.Printf("reconcile stale running sessions: %v\n", err)
+		} else if n > 0 {
+			log.Printf("reconciled %d stale running sessions to failed\n", n)
+		}
 
 		// Issue #107: auto-archive DONE cards per workspace config. Run once at
 		// startup and then on a 24-hour tick so long-running sessions stay clean.

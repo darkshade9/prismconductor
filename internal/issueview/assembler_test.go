@@ -126,6 +126,21 @@ func TestSelectSessions_LastFailureSuppressedInDone(t *testing.T) {
 	}
 }
 
+// A session left in state=running for a card that's already in DONE is by
+// definition stale — work shipped, PR merged, the card moved to DONE via
+// the merge handler. The harness goroutine for that session may have died
+// or hung without cleaning up its DB row; either way the UI must NEVER
+// claim a shipped card is actively being worked on. Witnessed on issue
+// #109 (DONE column with PR #149 merged, but a state=running plan row
+// from before the merge made the card glow blue as if planning).
+func TestSelectSessions_ActiveSuppressedInDone(t *testing.T) {
+	sessions := []types.Session{makeSession(types.StateRunning, t1, "", false)}
+	active, _, _, _ := selectSessions(types.Issue{Column: types.ColDone}, sessions)
+	if active != nil {
+		t.Errorf("active session should be suppressed for DONE cards (stale running row), got %+v", active)
+	}
+}
+
 func TestSelectSessions_LastFailureSuppressedByLaterSuccess(t *testing.T) {
 	sessions := []types.Session{
 		makeSession(types.StateCompleted, t3, "", false),
