@@ -1346,6 +1346,8 @@ export namespace types {
 	    worktree_dir: string;
 	    reason: string;
 	    kind: string;
+	    commit_msg_file?: string;
+	    commit_msg?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new NeedsPRInfo(source);
@@ -1357,6 +1359,8 @@ export namespace types {
 	        this.worktree_dir = source["worktree_dir"];
 	        this.reason = source["reason"];
 	        this.kind = source["kind"];
+	        this.commit_msg_file = source["commit_msg_file"];
+	        this.commit_msg = source["commit_msg"];
 	    }
 	}
 	export class Question {
@@ -2018,6 +2022,7 @@ export namespace types {
 	    conventions: ConventionHints;
 	    enabled: boolean;
 	    auto_archive?: AutoArchive;
+	    signing_strategy?: string;
 	    pipeline?: WorkspacePipeline;
 	    execution_target?: string;
 	    remote_config?: RemoteConfig;
@@ -2040,6 +2045,7 @@ export namespace types {
 	        this.conventions = this.convertValues(source["conventions"], ConventionHints);
 	        this.enabled = source["enabled"];
 	        this.auto_archive = this.convertValues(source["auto_archive"], AutoArchive);
+	        this.signing_strategy = source["signing_strategy"];
 	        this.pipeline = this.convertValues(source["pipeline"], WorkspacePipeline);
 	        this.execution_target = source["execution_target"];
 	        this.remote_config = this.convertValues(source["remote_config"], RemoteConfig);

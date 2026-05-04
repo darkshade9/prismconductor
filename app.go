@@ -2300,11 +2300,27 @@ func (a *App) handleNeedsPR(sess types.Session, branch, worktreeDir, reason stri
 			break
 		}
 	}
+	// Read the Tier-3 commit message file written by the worker (issue #175).
+	// The worker writes it to <worktreeDir>/.prismconductor/commit-msg/<issueNum>.txt.
+	commitMsgFile := filepath.Join(worktreeDir, ".prismconductor", "commit-msg",
+		fmt.Sprintf("%d.txt", sess.IssueNumber))
+	var commitMsg string
+	if raw, err := os.ReadFile(commitMsgFile); err == nil {
+		if len(raw) > 500 {
+			commitMsg = string(raw[:500])
+		} else {
+			commitMsg = string(raw)
+		}
+	} else {
+		commitMsgFile = "" // file absent — clear path so UI knows it's missing
+	}
 	info := types.NeedsPRInfo{
-		Branch:      branch,
-		WorktreeDir: worktreeDir,
-		Reason:      reason,
-		Kind:        kind,
+		Branch:        branch,
+		WorktreeDir:   worktreeDir,
+		Reason:        reason,
+		Kind:          kind,
+		CommitMsgFile: commitMsgFile,
+		CommitMsg:     commitMsg,
 	}
 	if err := a.store.MarkNeedsPR(sess.WorkspaceID, sess.IssueNumber, info); err != nil {
 		log.Printf("NEEDS_PR: MarkNeedsPR failed for #%d: %v", sess.IssueNumber, err)
@@ -2328,6 +2344,22 @@ func (a *App) handleNeedsPR(sess types.Session, branch, worktreeDir, reason stri
 			"issue_number": sess.IssueNumber,
 			"action":       "focus_card",
 		})
+}
+
+// PrepareManualPushCommand returns the exact shell command the user should paste
+// to complete a NEEDS_PR card's commit+push from the preserved worktree (#175).
+func (a *App) PrepareManualPushCommand(workspaceID string, issueNumber int) (string, error) {
+	if a.store == nil {
+		return "", fmt.Errorf("store unavailable")
+	}
+	issue, err := a.store.LoadIssue(workspaceID, issueNumber)
+	if err != nil {
+		return "", fmt.Errorf("issue not found: %w", err)
+	}
+	if issue.NeedsPRInfo == nil {
+		return "", fmt.Errorf("issue #%d has no NEEDS_PR info", issueNumber)
+	}
+	return handlers.BuildManualPushCommand(issue.NeedsPRInfo), nil
 }
 
 // AttachManualPR allows the user to paste a PR URL for a NEEDS_PR card,

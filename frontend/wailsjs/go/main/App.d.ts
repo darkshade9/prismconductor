@@ -139,6 +139,8 @@ export function PoolSpendToday(arg1:string):Promise<number>;
 
 export function PostPRComment(arg1:string,arg2:number,arg3:string,arg4:boolean):Promise<void>;
 
+export function PrepareManualPushCommand(arg1:string,arg2:number):Promise<string>;
+
 export function ProbeProviderModels(arg1:types.Provider,arg2:string,arg3:string):Promise<Array<string>>;
 
 export function ReadTranscript(arg1:string):Promise<string>;
