@@ -17,6 +17,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   ListPools,
   ListProviders,
+  ListWorkspaces,
   SavePool,
   DeletePool,
   ResetPoolCounters,
@@ -39,6 +40,7 @@ const ROLE_LABEL: Record<Role, string> = {
 export function PoolsPanel() {
   const [pools, setPools] = useState<workerpool.PoolStatus[]>([]);
   const [providers, setProviders] = useState<main.ProviderInfo[]>([]);
+  const [workspaces, setWorkspaces] = useState<types.Workspace[]>([]);
   const [editing, setEditing] = useState<types.Pool | null>(null);
   const [adding, setAdding] = useState(false);
   const [deleteErr, setDeleteErr] = useState<Record<string, string>>({});
@@ -47,9 +49,10 @@ export function PoolsPanel() {
 
   async function refresh() {
     try {
-      const [ps, pv] = await Promise.all([ListPools(), ListProviders()]);
+      const [ps, pv, ws] = await Promise.all([ListPools(), ListProviders(), ListWorkspaces()]);
       setPools(ps ?? []);
       setProviders(pv ?? []);
+      setWorkspaces(ws ?? []);
       // Fetch spend for each pool in parallel.
       const ids = (ps ?? []).map((r) => r.pool.id);
       if (ids.length > 0) {
@@ -82,6 +85,7 @@ export function PoolsPanel() {
   }, []);
 
   const providerByKind = new Map(providers.map((p) => [p.kind, p]));
+  const workspaceByID = new Map(workspaces.map((w) => [w.id, w]));
 
   function poolRole(p: types.Pool): Role {
     return ((p.role as Role) || "work") as Role;
@@ -205,6 +209,7 @@ export function PoolsPanel() {
                       isFirst={idx === 0}
                       isLast={idx === rows.length - 1}
                       providerByKind={providerByKind}
+                      workspaceByID={workspaceByID}
                       deleteErr={deleteErr[row.pool.id]}
                       spendToday={spendToday[row.pool.id] ?? 0}
                       spendWeek={spendWeek[row.pool.id] ?? 0}
@@ -224,6 +229,7 @@ export function PoolsPanel() {
                     row={row}
                     role={role}
                     providerByKind={providerByKind}
+                    workspaceByID={workspaceByID}
                     deleteErr={err}
                     dragHandle={null}
                     spendToday={spendToday[row.pool.id] ?? 0}
@@ -284,6 +290,7 @@ function SortablePoolRow({
   isFirst,
   isLast,
   providerByKind,
+  workspaceByID,
   deleteErr,
   spendToday,
   spendWeek,
@@ -296,6 +303,7 @@ function SortablePoolRow({
   isFirst: boolean;
   isLast: boolean;
   providerByKind: Map<string, main.ProviderInfo>;
+  workspaceByID: Map<string, types.Workspace>;
   deleteErr?: string;
   spendToday: number;
   spendWeek: number;
@@ -328,6 +336,7 @@ function SortablePoolRow({
         row={row}
         role={role}
         providerByKind={providerByKind}
+        workspaceByID={workspaceByID}
         deleteErr={deleteErr}
         dragHandle={dragHandle}
         preferenceHint={hint ?? undefined}
@@ -341,10 +350,24 @@ function SortablePoolRow({
   );
 }
 
+function poolScopeBadge(pool: types.Pool, workspaceByID: Map<string, types.Workspace>): React.ReactNode {
+  if (!pool.scope || pool.scope === "shared") {
+    return <span className="text-[10px] text-slate-600 font-normal">(shared)</span>;
+  }
+  const ws = pool.workspace_id ? workspaceByID.get(pool.workspace_id) : undefined;
+  const label = ws ? (ws.display_name || ws.id) : (pool.workspace_id || "?");
+  return (
+    <span className="text-[10px] font-normal px-1 py-0.5 rounded bg-slate-800 text-slate-400">
+      workspace: {label}
+    </span>
+  );
+}
+
 function PoolRow({
   row,
   role,
   providerByKind,
+  workspaceByID,
   deleteErr,
   dragHandle,
   preferenceHint,
@@ -357,6 +380,7 @@ function PoolRow({
   row: workerpool.PoolStatus;
   role: Role;
   providerByKind: Map<string, main.ProviderInfo>;
+  workspaceByID: Map<string, types.Workspace>;
   deleteErr?: string;
   dragHandle: React.ReactNode;
   preferenceHint?: string;
@@ -377,6 +401,7 @@ function PoolRow({
             <span className="text-slate-500">
               ({info?.display_name ?? row.pool.provider})
             </span>
+            {poolScopeBadge(row.pool, workspaceByID)}
             {preferenceHint && (
               <span className="text-slate-600 font-normal">{preferenceHint}</span>
             )}

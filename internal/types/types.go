@@ -126,6 +126,10 @@ type Pool struct {
 	MaxInputTokens *int           `json:"max_input_tokens,omitempty"`
 	BashTimeout    *time.Duration `json:"bash_timeout,omitempty"`
 	OutputCap      *int           `json:"output_cap,omitempty"`
+	// Scope controls whether this pool is shared across all workspaces or
+	// dedicated to a specific workspace (issue #109). Empty = shared.
+	Scope       PoolScope `json:"scope,omitempty"`
+	WorkspaceID string    `json:"workspace_id,omitempty"`
 }
 
 // PendingPoolRequest is a persisted "waiting for pool" request. Created when
@@ -138,6 +142,16 @@ type PendingPoolRequest struct {
 	Action      string    `json:"action"`
 	CreatedAt   time.Time `json:"created_at"`
 }
+
+// PoolScope controls whether a pool is reserved for one workspace or shared
+// across all workspaces (issue #109). Empty string is treated as PoolScopeShared
+// for backwards compatibility with rows written before this field existed.
+type PoolScope string
+
+const (
+	PoolScopeShared    PoolScope = "shared"
+	PoolScopeWorkspace PoolScope = "workspace"
+)
 
 // Role names which step in the orchestration loop a pool serves (issue #39).
 // Stored as TEXT in the pools table with a CHECK constraint.

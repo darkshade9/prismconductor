@@ -685,10 +685,20 @@ func (a *App) UpdateWorkspace(ws types.Workspace) error {
 	return a.wsReg.Update(ws)
 }
 
-// RemoveWorkspace removes a workspace by ID.
+// RemoveWorkspace removes a workspace by ID. Any pools bound to this workspace
+// are silently rebound to shared so capacity isn't orphaned (issue #109, q1).
 func (a *App) RemoveWorkspace(id string) error {
 	if a.wsReg == nil {
 		return fmt.Errorf("workspace registry unavailable")
+	}
+	if a.store != nil {
+		if err := a.store.RebindWorkspacePools(id); err != nil {
+			log.Printf("RemoveWorkspace: rebind pools for %s: %v", id, err)
+		} else if a.poolReg != nil {
+			if rows, err := a.store.ListPools(); err == nil {
+				a.poolReg.Sync(rows)
+			}
+		}
 	}
 	return a.wsReg.Remove(id)
 }
