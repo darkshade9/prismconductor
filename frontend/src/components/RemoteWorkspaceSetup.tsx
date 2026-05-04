@@ -6,7 +6,26 @@ import { noAutoCorrect } from "../lib/inputs";
 
 type Step = "cf-token" | "github-pat" | "repo" | "deploy" | "done";
 
-const COLOR_PALETTE = ["#22c55e", "#06b6d4", "#a855f7", "#f59e0b", "#ef4444", "#ec4899", "#14b8a6", "#eab308"];
+export const COLOR_PALETTE = ["#22c55e", "#06b6d4", "#a855f7", "#f59e0b", "#ef4444", "#ec4899", "#14b8a6", "#eab308"];
+
+export const STEPS: { id: Step; label: string }[] = [
+  { id: "cf-token", label: "CF Token" },
+  { id: "github-pat", label: "GitHub PAT" },
+  { id: "repo", label: "Repository" },
+  { id: "deploy", label: "Deploy" },
+  { id: "done", label: "Done" },
+];
+
+export const CF_REQUIRED_SCOPES = [
+  { category: "Account → Workers Scripts", permission: "Edit" },
+  { category: "Account → Account Settings", permission: "Read" },
+] as const;
+
+export const GITHUB_FINE_GRAINED_SCOPES = [
+  { permission: "Contents", level: "Read and write" },
+  { permission: "Pull requests", level: "Read and write" },
+  { permission: "Metadata", level: "Read (mandatory)" },
+] as const;
 
 export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
   const refresh = useWorkspaceStore((s) => s.refresh);
@@ -14,6 +33,7 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState<Step>("cf-token");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // Step 1 — CF token
   const [cfToken, setCFToken] = useState("");
@@ -126,7 +146,16 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="space-y-4 text-sm">
-      <StepIndicator current={step} />
+      <div className="flex items-center justify-between">
+        <StepIndicator current={step} />
+        <button
+          onClick={() => setHelpOpen(true)}
+          title="Setup guide"
+          className="w-5 h-5 rounded-full bg-slate-700 hover:bg-slate-600 text-slate-300 text-[10px] font-bold flex items-center justify-center shrink-0"
+        >
+          ?
+        </button>
+      </div>
 
       {step === "cf-token" && (
         <div className="space-y-3">
@@ -136,7 +165,29 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
             <span className="text-slate-200">Account Settings:Read</span> permissions.
           </div>
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">Cloudflare API Token</div>
+            <FieldLabel
+              label="Cloudflare API Token"
+              tip={
+                <div className="space-y-2">
+                  <p className="font-medium text-slate-200">Required scopes:</p>
+                  <ul className="space-y-0.5">
+                    {CF_REQUIRED_SCOPES.map((s) => (
+                      <li key={s.category}>
+                        • {s.category} → <strong>{s.permission}</strong>
+                      </li>
+                    ))}
+                  </ul>
+                  <a
+                    href="https://dash.cloudflare.com/profile/api-tokens"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block text-sky-400 hover:underline"
+                  >
+                    Create a token now →
+                  </a>
+                </div>
+              }
+            />
             <input
               {...noAutoCorrect}
               type="password"
@@ -174,7 +225,35 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
             stored as a Cloudflare Secret — never on disk.
           </div>
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">GitHub Personal Access Token</div>
+            <FieldLabel
+              label="GitHub Personal Access Token"
+              tip={
+                <div className="space-y-2">
+                  <p className="font-medium text-slate-200">Fine-grained (recommended):</p>
+                  <ul className="space-y-0.5">
+                    {GITHUB_FINE_GRAINED_SCOPES.map((s) => (
+                      <li key={s.permission}>
+                        • {s.permission} → <strong>{s.level}</strong>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="font-medium text-slate-200">Classic (broader):</p>
+                  <ul>
+                    <li>
+                      • <code className="bg-slate-700 px-0.5 rounded">repo</code> scope
+                    </li>
+                  </ul>
+                  <a
+                    href="https://github.com/settings/tokens?type=beta"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block text-sky-400 hover:underline"
+                  >
+                    Create a fine-grained token →
+                  </a>
+                </div>
+              }
+            />
             <input
               {...noAutoCorrect}
               type="password"
@@ -210,7 +289,10 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
           </div>
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
-              <div className="text-xs text-slate-500 mb-1">Owner</div>
+              <FieldLabel
+                label="Owner"
+                tip={<p>The GitHub user or organization that owns the repository, e.g. <code className="bg-slate-700 px-0.5 rounded">octocat</code>.</p>}
+              />
               <input
                 {...noAutoCorrect}
                 value={owner}
@@ -220,7 +302,10 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
               />
             </label>
             <label className="block">
-              <div className="text-xs text-slate-500 mb-1">Repository</div>
+              <FieldLabel
+                label="Repository"
+                tip={<p>The repository name (without the owner prefix), e.g. <code className="bg-slate-700 px-0.5 rounded">my-repo</code>. Your PAT must have Contents and Pull requests access to this repo.</p>}
+              />
               <input
                 {...noAutoCorrect}
                 value={repo}
@@ -242,7 +327,10 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
-              <div className="text-xs text-slate-500 mb-1">Workspace ID</div>
+              <FieldLabel
+                label="Workspace ID"
+                tip={<p>A unique slug for this workspace, e.g. <code className="bg-slate-700 px-0.5 rounded">my-repo-remote</code>. Used as part of the CF Worker name — lowercase letters, numbers, and hyphens only.</p>}
+              />
               <input
                 {...noAutoCorrect}
                 value={wsID}
@@ -348,6 +436,8 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
           </div>
         </div>
       )}
+
+      {helpOpen && <HelpDrawer onClose={() => setHelpOpen(false)} />}
     </div>
   );
 }
@@ -355,14 +445,6 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
 // ---------------------------------------------------------------------------
 // Step indicator
 // ---------------------------------------------------------------------------
-
-const STEPS: { id: Step; label: string }[] = [
-  { id: "cf-token", label: "CF Token" },
-  { id: "github-pat", label: "GitHub PAT" },
-  { id: "repo", label: "Repository" },
-  { id: "deploy", label: "Deploy" },
-  { id: "done", label: "Done" },
-];
 
 function StepIndicator({ current }: { current: Step }) {
   const currentIdx = STEPS.findIndex((s) => s.id === current);
@@ -388,6 +470,246 @@ function StepIndicator({ current }: { current: Step }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Field label with hover tooltip
+// ---------------------------------------------------------------------------
+
+function FieldLabel({ label, tip }: { label: string; tip: React.ReactNode }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative flex items-center gap-1 text-xs text-slate-500 mb-1">
+      {label}
+      <span
+        className="cursor-help select-none text-slate-600 hover:text-slate-400"
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+      >
+        ⓘ
+      </span>
+      {show && (
+        <div className="absolute bottom-full left-0 mb-1 z-50 w-64 bg-slate-800 border border-slate-600 rounded p-2 text-xs text-slate-300 shadow-xl">
+          {tip}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Help drawer — full-screen overlay with setup guide
+// ---------------------------------------------------------------------------
+
+function HelpDrawer({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex"
+      onClick={onClose}
+    >
+      <div className="flex-1 bg-black/40" />
+      <div
+        className="w-96 bg-slate-900 border-l border-slate-700 overflow-y-auto flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 sticky top-0 bg-slate-900">
+          <span className="text-sm font-medium text-slate-200">Remote Workspace Guide</span>
+          <button
+            onClick={onClose}
+            className="text-slate-500 hover:text-slate-300 text-sm leading-none"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="p-4 space-y-5 text-xs text-slate-300">
+
+          {/* Local vs Remote */}
+          <HelpSection title="Local vs remote">
+            <table className="w-full text-[11px] border-collapse">
+              <thead>
+                <tr className="text-slate-400">
+                  <th className="text-left pb-1 font-normal">Concern</th>
+                  <th className="text-left pb-1 font-normal">Local</th>
+                  <th className="text-left pb-1 font-normal">Remote</th>
+                </tr>
+              </thead>
+              <tbody className="text-slate-300">
+                {[
+                  ["Survives laptop sleep", "No", "Yes"],
+                  ["GitHub auth", "Local SSH/gh", "PAT you supply"],
+                  ["Privacy", "Code stays local", "Clones to CF"],
+                  ["Setup time", "Add repo path", "~5 min"],
+                  ["Best for", "Quick, sensitive", "Long runs, big repos"],
+                ].map(([concern, local, remote]) => (
+                  <tr key={concern} className="border-t border-slate-800">
+                    <td className="py-0.5 pr-2 text-slate-400">{concern}</td>
+                    <td className="py-0.5 pr-2">{local}</td>
+                    <td className="py-0.5">{remote}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </HelpSection>
+
+          {/* CF Token */}
+          <HelpSection title="Cloudflare API token">
+            <p className="text-slate-400 mb-2">
+              Go to{" "}
+              <a
+                href="https://dash.cloudflare.com/profile/api-tokens"
+                target="_blank"
+                rel="noreferrer"
+                className="text-sky-400 hover:underline"
+              >
+                dash.cloudflare.com/profile/api-tokens
+              </a>{" "}
+              → Create Token → Custom Token.
+            </p>
+            <p className="font-medium text-slate-200 mb-1">Required permissions:</p>
+            <ul className="space-y-0.5">
+              {CF_REQUIRED_SCOPES.map((s) => (
+                <li key={s.category}>
+                  • {s.category} → <strong>{s.permission}</strong>
+                </li>
+              ))}
+            </ul>
+            <p className="text-slate-400 mt-2">
+              Account resources: All accounts. Zone resources: not needed.
+            </p>
+            <p className="text-slate-500 mt-2">
+              These scopes let the conductor deploy and update the worker bundle. The token cannot read DNS, edit billing, or touch other CF products.
+            </p>
+          </HelpSection>
+
+          {/* GitHub PAT */}
+          <HelpSection title="GitHub PAT">
+            <p className="font-medium text-slate-200 mb-1">Fine-grained (recommended):</p>
+            <p className="text-slate-400 mb-1">
+              <a
+                href="https://github.com/settings/tokens?type=beta"
+                target="_blank"
+                rel="noreferrer"
+                className="text-sky-400 hover:underline"
+              >
+                github.com/settings/tokens?type=beta
+              </a>{" "}
+              → Generate new token
+            </p>
+            <ul className="space-y-0.5 mb-2">
+              {GITHUB_FINE_GRAINED_SCOPES.map((s) => (
+                <li key={s.permission}>
+                  • {s.permission} → <strong>{s.level}</strong>
+                </li>
+              ))}
+            </ul>
+            <p className="font-medium text-slate-200 mb-1">Classic (if org requires):</p>
+            <ul className="mb-2">
+              <li>• <code className="bg-slate-800 px-0.5 rounded">repo</code> scope (broader — covers all private repos)</li>
+            </ul>
+            <p className="text-slate-500">
+              Expiration: 90 days max recommended. When expired, cards return to PLAN with TOKEN EXPIRED badge — paste a new PAT in Settings → Workspaces → Auth.
+            </p>
+          </HelpSection>
+
+          {/* Where secrets live */}
+          <HelpSection title="Where secrets are stored">
+            <table className="w-full text-[11px] border-collapse">
+              <thead>
+                <tr className="text-slate-400">
+                  <th className="text-left pb-1 font-normal">Secret</th>
+                  <th className="text-left pb-1 font-normal">Stored in</th>
+                </tr>
+              </thead>
+              <tbody className="text-slate-300">
+                {[
+                  ["CF API token", "OS keychain"],
+                  ["GitHub PAT", "CF Secrets (worker only)"],
+                  ["Worker API key", "OS keychain + CF Secrets"],
+                ].map(([secret, store]) => (
+                  <tr key={secret} className="border-t border-slate-800">
+                    <td className="py-0.5 pr-2 text-slate-200">{secret}</td>
+                    <td className="py-0.5">{store}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-slate-500 mt-2">
+              Nothing is written to disk as plaintext. No tokens end up in your repo. Transcripts redact token-shaped strings.
+            </p>
+          </HelpSection>
+
+          {/* Rotating tokens */}
+          <HelpSection title="Rotating tokens">
+            <ul className="space-y-1.5">
+              <li>
+                <span className="font-medium text-slate-200">CF token expired:</span>
+                <span className="text-slate-400"> Settings → Workspaces → Auth → Replace Cloudflare token</span>
+              </li>
+              <li>
+                <span className="font-medium text-slate-200">GitHub PAT expired:</span>
+                <span className="text-slate-400"> Settings → Workspaces → Auth → Replace GitHub PAT (updates CF Secret, no redeploy)</span>
+              </li>
+              <li>
+                <span className="font-medium text-slate-200">Worker API key suspected leaked:</span>
+                <span className="text-slate-400"> Settings → Workspaces → Auth → Rotate worker API key (generates new 256-bit key, old key returns 401 immediately)</span>
+              </li>
+            </ul>
+          </HelpSection>
+
+          {/* Tearing down */}
+          <HelpSection title="Tearing down">
+            <p className="text-slate-400 mb-1">Settings → Workspaces → [name] → Delete:</p>
+            <ol className="space-y-0.5 list-decimal list-inside text-slate-300">
+              <li>Reads CF token from keychain</li>
+              <li>Calls CF API to delete the worker</li>
+              <li>Deletes keychain entries (CF token, worker API key)</li>
+              <li>Removes workspace from local database</li>
+            </ol>
+            <p className="text-slate-500 mt-2">
+              After deletion: nothing referencing this workspace remains on your CF account or machine.
+            </p>
+          </HelpSection>
+
+          {/* Threat model */}
+          <HelpSection title="Threat model">
+            <p className="font-medium text-slate-200 mb-1">Protected against:</p>
+            <ul className="space-y-0.5 text-slate-400 mb-2">
+              <li>• Random traffic reaching your worker (API key auth on every request)</li>
+              <li>• Tokens leaking via process memory (OS keychain, not files)</li>
+              <li>• Tokens committed to git (conductor config is local-only)</li>
+            </ul>
+            <p className="font-medium text-slate-200 mb-1">NOT protected against:</p>
+            <ul className="space-y-0.5 text-slate-400">
+              <li>• Compromise of your local OS user account (unlocked keychain = access to tokens)</li>
+              <li>• Compromise of your CF account credentials</li>
+              <li>• Malicious skills — they run with the worker's auth; only install skills from sources you trust</li>
+            </ul>
+          </HelpSection>
+
+          <div className="pt-1 border-t border-slate-800">
+            <a
+              href="https://github.com/darkshade9/prismconductor/blob/main/docs/remote-workspaces.md"
+              target="_blank"
+              rel="noreferrer"
+              className="text-sky-400 hover:underline text-[11px]"
+            >
+              Full reference docs →
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HelpSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <h3 className="text-[11px] font-semibold text-slate-200 uppercase tracking-wide mb-2">{title}</h3>
+      {children}
     </div>
   );
 }

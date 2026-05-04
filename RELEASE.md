@@ -83,6 +83,25 @@ The `release` GitHub Environment must be created in the repository settings with
 - **Deployment branches**: restrict to `main`.
 - No long-lived secrets are needed — the release workflow uses cosign keyless signing via GitHub Actions OIDC, so no private key is stored in repository secrets.
 
+## Remote workspaces
+
+If you're running PrismConductor on a laptop that closes often, or working on
+a big monorepo where local builds are slow, try a Remote workspace. Work
+runs on Cloudflare's servers; your laptop just talks to it.
+
+[Full setup guide → docs/remote-workspaces.md](docs/remote-workspaces.md)
+
+Quick start:
+1. Add Workspace → Remote.
+2. Paste a Cloudflare API token (Workers Scripts: Edit + Account Settings: Read).
+3. Paste a GitHub PAT (Contents + Pull requests: Read/Write on the target repo).
+4. Click Deploy. The conductor uploads its worker bundle to your CF account.
+
+Tokens are stored in your OS keychain (macOS Keychain / Windows Credential
+Vault / Linux Secret Service). Workers run under your CF account, billed to
+you. See [the security model](docs/remote-workspaces.md#threat-model) in the
+full guide.
+
 ## Dependabot and auto-merge policy
 
 Dependabot opens weekly PRs for Go modules, frontend npm packages, test npm packages, and GitHub Actions. Patch and minor version bumps are auto-merged via squash when the `build` workflow is green. Major version bumps always require human review.
