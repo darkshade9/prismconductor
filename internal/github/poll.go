@@ -163,6 +163,24 @@ func (p *Poller) Run(ctx context.Context) {
 	// Initial fetch.
 	p.fanOut(ctx)
 
+	// Delayed second fetch ~15s after startup. Reason: GitHub's
+	// mergeable_state field is computed lazily — for ~10-60 seconds
+	// after the latest push to a PR, the API returns "unknown" instead
+	// of "clean"/"dirty"/"blocked". If the conductor opens during that
+	// settling window, the conflict-detection probe sees "unknown",
+	// doesn't fire EvtPRConflictsDetected, and the user has to wait
+	// for the next 5min tick (or click Refresh manually) before
+	// conflict badges appear. The 15s wake-up catches the common case
+	// where mergeable_state has settled by then.
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(15 * time.Second):
+			p.fanOut(ctx)
+		}
+	}()
+
 	t := time.NewTicker(p.Interval)
 	defer t.Stop()
 	for {
@@ -514,6 +532,18 @@ func (p *Poller) probeConflicts(ctx context.Context, ws types.Workspace, iss typ
 	default:
 		// Not dirty, not transitioning out of dirty — just refresh the
 		// state cache. No emit.
+		//
+		// SPECIAL CASE: pr.MergeableState == "unknown" means GitHub is
+		// still computing mergeability (typical for ~10-60 seconds after
+		// a push). Don't cache it as "unknown" — that pins the state
+		// across ticks and forces every subsequent probe to skip the
+		// dirty branch above. Instead, leave the cache untouched so
+		// the NEXT poll re-evaluates from a clean slate. The 15s
+		// startup wake-up + the regular 5min ticker both eventually
+		// catch the settled state.
+		if pr.MergeableState == "unknown" {
+			return
+		}
 		p.conflictStateCache.Store(cacheKey, conflictStateCacheEntry{
 			mergeableState: pr.MergeableState,
 		})
