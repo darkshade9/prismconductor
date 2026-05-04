@@ -83,6 +83,8 @@ export function GoalSpendToday(arg1:string):Promise<main.GoalSpendResult>;
 
 export function InspectRepo(arg1:string):Promise<workspace.Inspection>;
 
+export function IsKeyringAvailable():Promise<boolean>;
+
 export function IssueCost(arg1:string,arg2:number):Promise<number>;
 
 export function KillAgentSession(arg1:string):Promise<void>;
@@ -155,6 +157,8 @@ export function RemoveWorkspace(arg1:string):Promise<void>;
 
 export function ReorderIssues(arg1:string,arg2:string,arg3:Array<number>):Promise<void>;
 
+export function ReplaceCFToken(arg1:string,arg2:string):Promise<void>;
+
 export function Replan(arg1:string,arg2:number):Promise<void>;
 
 export function ReplanForce(arg1:string,arg2:number):Promise<void>;
@@ -198,6 +202,8 @@ export function SpawnDemo():Promise<types.Session>;
 export function SpawnPlanForIssue(arg1:string,arg2:number):Promise<types.Session>;
 
 export function StartAgentSession(arg1:string,arg2:string,arg3:Array<string>,arg4:number,arg5:number):Promise<types.AgentTermSession>;
+
+export function StoreCFTokenFileFallback(arg1:string,arg2:string):Promise<void>;
 
 export function SubmitAnswers(arg1:main.AnswerSubmission):Promise<void>;
 

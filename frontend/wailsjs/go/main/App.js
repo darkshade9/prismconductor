@@ -146,6 +146,10 @@ export function InspectRepo(arg1) {
   return window['go']['main']['App']['InspectRepo'](arg1);
 }
 
+export function IsKeyringAvailable() {
+  return window['go']['main']['App']['IsKeyringAvailable']();
+}
+
 export function IssueCost(arg1, arg2) {
   return window['go']['main']['App']['IssueCost'](arg1, arg2);
 }
@@ -290,6 +294,10 @@ export function ReorderIssues(arg1, arg2, arg3) {
   return window['go']['main']['App']['ReorderIssues'](arg1, arg2, arg3);
 }
 
+export function ReplaceCFToken(arg1, arg2) {
+  return window['go']['main']['App']['ReplaceCFToken'](arg1, arg2);
+}
+
 export function Replan(arg1, arg2) {
   return window['go']['main']['App']['Replan'](arg1, arg2);
 }
@@ -376,6 +384,10 @@ export function SpawnPlanForIssue(arg1, arg2) {
 
 export function StartAgentSession(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['StartAgentSession'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function StoreCFTokenFileFallback(arg1, arg2) {
+  return window['go']['main']['App']['StoreCFTokenFileFallback'](arg1, arg2);
 }
 
 export function SubmitAnswers(arg1) {

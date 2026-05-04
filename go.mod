@@ -8,6 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/mozilla-ai/any-llm-go v0.9.0
 	github.com/wailsapp/wails/v2 v2.11.0
+	github.com/zalando/go-keyring v0.2.8
 	modernc.org/sqlite v1.50.0
 )
 
@@ -16,9 +17,10 @@ require (
 	cloud.google.com/go/auth v0.9.3 // indirect
 	cloud.google.com/go/compute/metadata v0.5.0 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
+	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/godbus/dbus/v5 v5.1.0 // indirect
+	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
