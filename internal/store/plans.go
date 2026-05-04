@@ -2,9 +2,9 @@ package store
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 
+	"prismconductor/internal/store/jsonutil"
 	"prismconductor/internal/types"
 )
 
@@ -13,7 +13,7 @@ func (s *Store) SavePlan(p types.Plan) error {
 	if s == nil || s.DB == nil {
 		return errors.New("store unavailable")
 	}
-	b, err := json.Marshal(p)
+	b, err := jsonutil.Save(nil, p)
 	if err != nil {
 		return err
 	}
@@ -35,7 +35,7 @@ func (s *Store) GetPlan(workspaceID string, issueNumber, revision int) (types.Pl
 		return types.Plan{}, err
 	}
 	var p types.Plan
-	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+	if _, err := jsonutil.Load([]byte(raw), &p); err != nil {
 		return types.Plan{}, err
 	}
 	return p, nil
@@ -84,7 +84,7 @@ WHERE i.column_name IS NULL OR i.column_name NOT IN ('done','review')`)
 			return nil, err
 		}
 		var plan types.Plan
-		if err := json.Unmarshal([]byte(raw), &plan); err != nil {
+		if _, err := jsonutil.Load([]byte(raw), &plan); err != nil {
 			continue
 		}
 		if plan.ApprovedAt == nil {
@@ -109,7 +109,7 @@ func (s *Store) LatestPlan(workspaceID string, issueNumber int) (*types.Plan, er
 		return nil, err
 	}
 	var p types.Plan
-	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+	if _, err := jsonutil.Load([]byte(raw), &p); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -133,7 +133,7 @@ func (s *Store) ListPlans(workspaceID string, issueNumber int) ([]types.Plan, er
 			return nil, err
 		}
 		var p types.Plan
-		if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		if _, err := jsonutil.Load([]byte(raw), &p); err != nil {
 			continue
 		}
 		out = append(out, p)
