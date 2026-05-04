@@ -31,6 +31,8 @@ import { Toast } from "./components/Toast";
 import { useToastStore, type Toast as ToastT } from "./stores/toastStore";
 import { TitleSearch } from "./components/Header";
 import { PoolsHeader } from "./components/PoolsHeader";
+import { AgentTerminalDrawer } from "./components/AgentTerminalDrawer";
+import { useAgentTerminalStore } from "./stores/useAgentTerminalStore";
 
 type PlanRef = { workspace_id: string; number: number };
 type PlanTarget = PlanRef | null;
@@ -61,6 +63,8 @@ function App() {
     );
   }, [issues, planTarget]);
   const [busy, setBusy] = useState(false);
+  const toggleAgentDrawer = useAgentTerminalStore((s) => s.toggleDrawer);
+  const agentDrawerOpen = useAgentTerminalStore((s) => s.drawerOpen);
   const [issueInput, setIssueInput] = useState("");
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [archivedCount, setArchivedCount] = useState(0);
@@ -411,6 +415,18 @@ function App() {
             Drawer
           </button>
           <button
+            onClick={toggleAgentDrawer}
+            className={
+              "text-xs border px-2 py-1 rounded " +
+              (agentDrawerOpen
+                ? "border-emerald-700 bg-emerald-950/40 text-emerald-300 hover:bg-emerald-900/50"
+                : "border-slate-700 hover:bg-slate-800 text-slate-300")
+            }
+            title="Toggle agent terminal panel"
+          >
+            ⌨ Terminal
+          </button>
+          <button
             onClick={() => setSettingsOpen(true)}
             className="text-xs border border-slate-700 hover:bg-slate-800 px-2 py-1 rounded"
           >
@@ -481,6 +497,7 @@ function App() {
         onClose={() => setArchivedOpen(false)}
         workspaceID={selectedWorkspace ?? ""}
       />
+      <AgentTerminalDrawer />
     </div>
   );
 }

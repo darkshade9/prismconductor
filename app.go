@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	gh "github.com/google/go-github/v62/github"
 
+	"prismconductor/internal/agentterm"
 	"prismconductor/internal/archiver"
 	"prismconductor/internal/diagnose"
 	"prismconductor/internal/eventbus"
@@ -74,6 +75,9 @@ type App struct {
 	// Issue #116: per-PR self-heal attempt counters.
 	// Key: "wsID#issueNum#headSHA", value: int.
 	healAttempts sync.Map
+
+	// Issue #161: ephemeral PTY-backed agent terminal sessions.
+	agentTerm *agentterm.Manager
 }
 
 type issueDetailEntry struct {
@@ -189,6 +193,9 @@ func (a *App) startup(ctx context.Context) {
 			}
 		}()
 	}
+
+	// Issue #161: ephemeral PTY-backed agent terminal panel.
+	a.agentTerm = agentterm.New(a.emitAgentData, a.emitAgentExit)
 
 	a.mgr = session.NewManager(a.bus, a.emitLine)
 	a.mgr.Configure(filepath.Join(cfgDir, "transcripts"), a.store, a.handleSessionStateChange)
@@ -3458,4 +3465,67 @@ func thisWeekUTC() time.Time {
 	}
 	monday := now.AddDate(0, 0, -(weekday - 1))
 	return time.Date(monday.Year(), monday.Month(), monday.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// --- Agent terminal (issue #161) ---
+
+func (a *App) emitAgentData(workspaceID, dataB64 string) {
+	wruntime.EventsEmit(a.ctx, "agentterm.output", map[string]string{
+		"workspace_id": workspaceID,
+		"data":         dataB64,
+	})
+}
+
+func (a *App) emitAgentExit(workspaceID string, exitCode int) {
+	wruntime.EventsEmit(a.ctx, "agentterm.exit", map[string]any{
+		"workspace_id": workspaceID,
+		"exit_code":    exitCode,
+	})
+}
+
+// ListAvailableAgents returns agent CLI binaries found on PATH.
+func (a *App) ListAvailableAgents() []types.AgentInfo {
+	return agentterm.DiscoverAgents()
+}
+
+// StartAgentSession spawns an ephemeral PTY-backed agent for the workspace.
+// Any existing session for that workspace is killed first.
+func (a *App) StartAgentSession(workspaceID, agentBin string, args []string, cols, rows uint16) (*types.AgentTermSession, error) {
+	if a.agentTerm == nil {
+		return nil, fmt.Errorf("agent terminal manager unavailable")
+	}
+	pid, err := a.agentTerm.Start(workspaceID, agentBin, args, cols, rows)
+	if err != nil {
+		return nil, err
+	}
+	return &types.AgentTermSession{
+		WorkspaceID: workspaceID,
+		SessionID:   uuid.NewString(),
+		AgentBin:    agentBin,
+		PID:         pid,
+	}, nil
+}
+
+// WriteAgentInput sends raw bytes (base64-encoded) to the workspace's PTY.
+func (a *App) WriteAgentInput(workspaceID, dataB64 string) error {
+	if a.agentTerm == nil {
+		return fmt.Errorf("agent terminal manager unavailable")
+	}
+	return a.agentTerm.Write(workspaceID, dataB64)
+}
+
+// ResizeAgentTerm resizes the PTY window for the workspace's active session.
+func (a *App) ResizeAgentTerm(workspaceID string, cols, rows uint16) error {
+	if a.agentTerm == nil {
+		return fmt.Errorf("agent terminal manager unavailable")
+	}
+	return a.agentTerm.Resize(workspaceID, cols, rows)
+}
+
+// KillAgentSession terminates the active agent session for the workspace.
+func (a *App) KillAgentSession(workspaceID string) error {
+	if a.agentTerm == nil {
+		return fmt.Errorf("agent terminal manager unavailable")
+	}
+	return a.agentTerm.Kill(workspaceID)
 }

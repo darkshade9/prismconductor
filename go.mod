@@ -3,6 +3,7 @@ module prismconductor
 go 1.25.0
 
 require (
+	github.com/creack/pty v1.1.24
 	github.com/google/go-github/v62 v62.0.0
 	github.com/google/uuid v1.6.0
 	github.com/mozilla-ai/any-llm-go v0.9.0

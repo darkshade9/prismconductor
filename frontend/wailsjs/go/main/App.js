@@ -138,6 +138,10 @@ export function IssueCost(arg1, arg2) {
   return window['go']['main']['App']['IssueCost'](arg1, arg2);
 }
 
+export function KillAgentSession(arg1) {
+  return window['go']['main']['App']['KillAgentSession'](arg1);
+}
+
 export function KillSession(arg1) {
   return window['go']['main']['App']['KillSession'](arg1);
 }
@@ -148,6 +152,10 @@ export function LatestPlan(arg1, arg2) {
 
 export function ListArchivedIssues(arg1) {
   return window['go']['main']['App']['ListArchivedIssues'](arg1);
+}
+
+export function ListAvailableAgents() {
+  return window['go']['main']['App']['ListAvailableAgents']();
 }
 
 export function ListAvailableSkills(arg1) {
@@ -274,6 +282,10 @@ export function ResetPoolCounters() {
   return window['go']['main']['App']['ResetPoolCounters']();
 }
 
+export function ResizeAgentTerm(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ResizeAgentTerm'](arg1, arg2, arg3);
+}
+
 export function ResolveConflicts(arg1, arg2) {
   return window['go']['main']['App']['ResolveConflicts'](arg1, arg2);
 }
@@ -338,6 +350,10 @@ export function SpawnPlanForIssue(arg1, arg2) {
   return window['go']['main']['App']['SpawnPlanForIssue'](arg1, arg2);
 }
 
+export function StartAgentSession(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['StartAgentSession'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function SubmitAnswers(arg1) {
   return window['go']['main']['App']['SubmitAnswers'](arg1);
 }
@@ -368,6 +384,10 @@ export function ValidatePipeline(arg1) {
 
 export function WorkspaceSpendToday(arg1) {
   return window['go']['main']['App']['WorkspaceSpendToday'](arg1);
+}
+
+export function WriteAgentInput(arg1, arg2) {
+  return window['go']['main']['App']['WriteAgentInput'](arg1, arg2);
 }
 
 export function WriteAnswersOnly(arg1) {
