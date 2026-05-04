@@ -452,6 +452,23 @@ const (
 	StatePausedForQuestion  SessionState = "paused_for_question"
 )
 
+// --- Agent terminal sessions (issue #161) ---
+
+// AgentInfo describes a CLI agent binary discovered on PATH.
+type AgentInfo struct {
+	Name   string `json:"name"`   // display name, e.g. "claude"
+	Binary string `json:"binary"` // absolute path to the executable
+}
+
+// AgentTermSession is the runtime state of an ephemeral PTY session.
+// Sessions are never persisted to disk or the database.
+type AgentTermSession struct {
+	WorkspaceID string `json:"workspace_id"`
+	SessionID   string `json:"session_id"`
+	AgentBin    string `json:"agent_bin"` // display name of the agent binary
+	PID         int    `json:"pid"`
+}
+
 // --- Pool usage / rate limits (issue #52) ---
 
 // PoolUsage is a last-seen snapshot of rate-limit consumption for one

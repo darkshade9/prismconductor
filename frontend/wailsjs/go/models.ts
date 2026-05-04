@@ -1137,6 +1137,38 @@ export namespace store {
 
 export namespace types {
 	
+	export class AgentInfo {
+	    name: string;
+	    binary: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.binary = source["binary"];
+	    }
+	}
+	export class AgentTermSession {
+	    workspace_id: string;
+	    session_id: string;
+	    agent_bin: string;
+	    pid: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentTermSession(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.workspace_id = source["workspace_id"];
+	        this.session_id = source["session_id"];
+	        this.agent_bin = source["agent_bin"];
+	        this.pid = source["pid"];
+	    }
+	}
 	export class AutoArchive {
 	    enabled: boolean;
 	    days_closed: number;

@@ -79,11 +79,15 @@ export function InspectRepo(arg1:string):Promise<workspace.Inspection>;
 
 export function IssueCost(arg1:string,arg2:number):Promise<number>;
 
+export function KillAgentSession(arg1:string):Promise<void>;
+
 export function KillSession(arg1:string):Promise<void>;
 
 export function LatestPlan(arg1:string,arg2:number):Promise<types.Plan>;
 
 export function ListArchivedIssues(arg1:string):Promise<Array<types.Issue>>;
+
+export function ListAvailableAgents():Promise<Array<types.AgentInfo>>;
 
 export function ListAvailableSkills(arg1:string):Promise<Array<types.SkillRef>>;
 
@@ -147,6 +151,8 @@ export function ReplanForce(arg1:string,arg2:number):Promise<void>;
 
 export function ResetPoolCounters():Promise<number>;
 
+export function ResizeAgentTerm(arg1:string,arg2:number,arg3:number):Promise<void>;
+
 export function ResolveConflicts(arg1:string,arg2:number):Promise<void>;
 
 export function RunAutoArchiveNow(arg1:string):Promise<number>;
@@ -179,6 +185,8 @@ export function SpawnDemo():Promise<types.Session>;
 
 export function SpawnPlanForIssue(arg1:string,arg2:number):Promise<types.Session>;
 
+export function StartAgentSession(arg1:string,arg2:string,arg3:Array<string>,arg4:number,arg5:number):Promise<types.AgentTermSession>;
+
 export function SubmitAnswers(arg1:main.AnswerSubmission):Promise<void>;
 
 export function SubmitMidRunAnswer(arg1:string,arg2:number,arg3:types.MidRunAnswer):Promise<void>;
@@ -194,5 +202,7 @@ export function UpdateWorkspace(arg1:types.Workspace):Promise<void>;
 export function ValidatePipeline(arg1:types.WorkspacePipeline):Promise<void>;
 
 export function WorkspaceSpendToday(arg1:string):Promise<number>;
+
+export function WriteAgentInput(arg1:string,arg2:string):Promise<void>;
 
 export function WriteAnswersOnly(arg1:main.AnswerSubmission):Promise<void>;
