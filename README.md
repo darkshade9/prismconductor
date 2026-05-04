@@ -35,10 +35,10 @@ PrismConductor turns GitHub issues into a kanban board where AI agents do the bu
 **GitHub integration**
 
 - **5-minute poll** of every workspace's open issues + PR state. Auto-detect: PR opened, PR merged, PR closed unmerged, checks failed, checks recovered, merge conflicts (with the precise conflicting file list via `git merge-tree`, not the full PR changeset), comments added.
-- **Auto-heal on test failure** (`#116`) — when CI fails on a REVIEW PR, the conductor can auto-spawn a self-heal session up to N times.
-- **Resolve Conflicts button** (`#124`) — surface a card-level red badge with the actually-conflicting file list and one-click rebase + merge worker.
-- **Auto-cancel zombie workers** (`#113`, `#118`) when a PR merges/closes/opens, so workers don't keep burning tokens after the deliverable is shipped.
-- **Bundled mode** (`#15.8` of the plan) — a bare repo with no `.claude/` or `CLAUDE.md` works on day one. No setup tax for new repos.
+- **Auto-heal on test failure** — when CI fails on a REVIEW PR, the conductor can auto-spawn a self-heal session up to N times.
+- **Resolve Conflicts button** — surface a card-level red badge with the actually-conflicting file list and one-click rebase + merge worker.
+- **Auto-cancel zombie workers** when a PR merges/closes/opens, so workers don't keep burning tokens after the deliverable is shipped.
+- **Bundled mode** — a bare repo with no `.claude/` or `CLAUDE.md` works on day one. No setup tax for new repos.
 
 **Cost and observability**
 
@@ -48,11 +48,11 @@ PrismConductor turns GitHub issues into a kanban board where AI agents do the bu
 
 **In flight (see open issues)**
 
-- **Remote workspaces** (`#171`) — execute on Cloudflare Workers instead of your laptop, so big runs aren't gated by your local CPU. Requires #177 (worker auth, security blocker) before merge.
-- **Agent terminal panel** (`#161`) — embedded PTY for chatting directly with `claude` / `aider` / `gemini` from inside the conductor.
-- **Three-tier signed-commit fallback** (`#175`) — GitHub-API commits → local signing → NEEDS_PR with prepared push command.
-- **Theming + customizable glow colors** (`#142`).
-- **PR comment UX inside the conductor** (`#159`) — full GitHub-stand-in for review feedback.
+- **Remote workspaces** — execute on Cloudflare Workers instead of your laptop, so big runs aren't gated by your local CPU. Pending worker-auth security work before merge.
+- **Agent terminal panel** — embedded PTY for chatting directly with `claude` / `aider` / `gemini` from inside the conductor.
+- **Three-tier signed-commit fallback** — GitHub-API commits → local signing → NEEDS_PR with prepared push command.
+- **Theming + customizable glow colors.**
+- **PR comment UX inside the conductor** — full GitHub-stand-in for review feedback.
 
 ## Test coverage
 
@@ -157,7 +157,7 @@ If checks fail or merge conflicts appear, the conductor surfaces a red banner wi
 
 ### Merge
 
-Merge the PR on GitHub. The conductor's poller detects the merge within ~5 minutes and moves the card to DONE. (In-app merge button is on the roadmap; see #146.)
+Merge the PR on GitHub. The conductor's poller detects the merge within ~5 minutes and moves the card to DONE. (In-app merge button is on the roadmap.)
 
 ### Stop / cancel
 
@@ -186,7 +186,7 @@ internal/
 frontend/src/
   components/       # Board, Card, PlanModal, Settings, etc.
   stores/           # zustand stores (workspace, issueview, session)
-worker/             # Cloudflare Worker bundle (in flight, #171)
+worker/             # Cloudflare Worker bundle (in flight)
 scripts/restart.sh  # one-shot rebuild + relaunch
 ```
 
@@ -205,4 +205,20 @@ PRs welcome; please ensure `go test ./...` and `npx tsc --noEmit` pass.
 
 ## License
 
-Not yet licensed for public redistribution. See repository owner for details.
+PrismConductor is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. See [`LICENSE`](LICENSE) for the full text.
+
+In short: you may use, modify, and redistribute this software freely, **but any derivative work — including a modified version offered as a hosted service over a network** — must be released under AGPL-3.0 with full source available to its users. This is intentional: it keeps PrismConductor open and prevents closed-source forks or proprietary SaaS rebrands.
+
+### No warranty, no liability
+
+> **THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.** See sections 15 and 16 of the [LICENSE](LICENSE) for the legally binding text.
+
+PrismConductor spawns autonomous AI agents that **spend money** (LLM API tokens), **modify your code**, **push commits**, **open pull requests**, and (optionally) **execute on remote infrastructure you configure**. You are solely responsible for:
+
+- **Cost.** Workers can run for hours and burn through hundreds of thousands of tokens. Set per-pool budgets. Watch the spend rollups. The maintainer is not responsible if your bill is larger than expected.
+- **Code changes.** Agents commit and push on your behalf. Review every PR before merging. The maintainer is not responsible for bad code, broken builds, lost work, or merged regressions.
+- **Credentials.** You provide API keys, GitHub tokens, and (for remote workspaces) Cloudflare credentials. PrismConductor stores them in your OS keychain on a best-effort basis; the maintainer makes no warranty about credential confidentiality and is not responsible for credential leakage, theft, or misuse.
+- **Auth and access control.** The remote-workspace path is pre-1.0 and security hardening is in flight. Do not expose remote workers to the public internet without your own review of the auth model.
+- **Compliance.** You are responsible for ensuring your use complies with the terms of every LLM provider, GitHub, your employer, and any applicable law.
+
+If you are not comfortable with any of the above, **do not use this software.** By running PrismConductor you accept full responsibility for everything its agents do under your credentials, in your repos, on your infrastructure, and on your bill.
