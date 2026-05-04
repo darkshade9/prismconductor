@@ -1531,6 +1531,7 @@ export namespace types {
 	        this.multi = source["multi"];
 	    }
 	}
+	
 	export class PRComment {
 	    workspace_id: string;
 	    issue_number: number;
@@ -1545,11 +1546,11 @@ export namespace types {
 	    // Go type: time
 	    read_at?: any;
 	    pending_post?: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new PRComment(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.workspace_id = source["workspace_id"];
@@ -1564,7 +1565,7 @@ export namespace types {
 	        this.read_at = this.convertValues(source["read_at"], null);
 	        this.pending_post = source["pending_post"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
