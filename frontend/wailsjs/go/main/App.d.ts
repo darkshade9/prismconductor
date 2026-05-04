@@ -41,12 +41,6 @@ export function DiscoverWorkspaceSkills(arg1:string):Promise<Array<types.SkillRe
 
 export function EstimateSpawnCost(arg1:string,arg2:number,arg3:string):Promise<main.SpawnEstimate>;
 
-export function ListAvailableSkills(arg1:string):Promise<Array<types.SkillRef>>;
-
-export function ValidatePipeline(arg1:types.WorkspacePipeline):Promise<void>;
-
-export function SaveWorkspacePipeline(arg1:string,arg2:types.WorkspacePipeline):Promise<void>;
-
 export function FetchIssueDetail(arg1:string,arg2:number):Promise<types.Issue>;
 
 export function FetchPRChecks(arg1:string,arg2:number):Promise<string>;
@@ -91,6 +85,8 @@ export function LatestPlan(arg1:string,arg2:number):Promise<types.Plan>;
 
 export function ListArchivedIssues(arg1:string):Promise<Array<types.Issue>>;
 
+export function ListAvailableSkills(arg1:string):Promise<Array<types.SkillRef>>;
+
 export function ListBundledSkills():Promise<Array<main.BundledSkill>>;
 
 export function ListGoals():Promise<Array<types.Goal>>;
@@ -133,6 +129,8 @@ export function ReadTranscript(arg1:string):Promise<string>;
 
 export function RecentLogs():Promise<Array<logbuffer.Entry>>;
 
+export function RecoverOrphanQuestion(arg1:string,arg2:number):Promise<void>;
+
 export function RefreshIssuesNow():Promise<void>;
 
 export function RejectPlan(arg1:string,arg2:number):Promise<void>;
@@ -145,6 +143,8 @@ export function ReorderIssues(arg1:string,arg2:string,arg3:Array<number>):Promis
 
 export function Replan(arg1:string,arg2:number):Promise<void>;
 
+export function ReplanForce(arg1:string,arg2:number):Promise<void>;
+
 export function ResetPoolCounters():Promise<number>;
 
 export function ResolveConflicts(arg1:string,arg2:number):Promise<void>;
@@ -156,6 +156,8 @@ export function RunOrchestrator():Promise<void>;
 export function SaveGoal(arg1:types.Goal):Promise<void>;
 
 export function SavePool(arg1:types.Pool):Promise<void>;
+
+export function SaveWorkspacePipeline(arg1:string,arg2:types.WorkspacePipeline):Promise<void>;
 
 export function SelfHeal(arg1:string,arg2:number):Promise<void>;
 
@@ -188,6 +190,8 @@ export function UnarchiveIssue(arg1:string,arg2:number):Promise<void>;
 export function UpdateLabel(arg1:string,arg2:string,arg3:types.Label):Promise<types.Label>;
 
 export function UpdateWorkspace(arg1:types.Workspace):Promise<void>;
+
+export function ValidatePipeline(arg1:types.WorkspacePipeline):Promise<void>;
 
 export function WorkspaceSpendToday(arg1:string):Promise<number>;
 

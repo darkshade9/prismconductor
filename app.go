@@ -270,6 +270,16 @@ func (a *App) startup(ctx context.Context) {
 		// Issue #98: canonical IssueView assembler — emits bus.issue_view_updated
 		// whenever any contributing source changes.
 		a.assembler = issueview.New(a.bus, a.store)
+		// Issue #153: wire workspace path resolver so the assembler can probe
+		// for orphan question files during IssueView assembly.
+		if a.wsReg != nil {
+			a.assembler.SetWorkspacePathFn(func(id string) string {
+				if ws, ok := a.wsReg.Get(id); ok {
+					return ws.RepoPath
+				}
+				return ""
+			})
+		}
 
 		// Pool counter self-heal: on every terminal session-state event,
 		// re-derive every pool's `active` counter from the DB count of
@@ -315,6 +325,8 @@ func (a *App) startup(ctx context.Context) {
 			},
 			a.handleMidRunAnswerArrived,
 		)
+		// Issue #153: auto-recover orphaned paused sessions after 60s grace.
+		a.answerWatcher.SetOrphanCallback(60*time.Second, a.handleOrphanQuestion)
 		go a.answerWatcher.Run(a.ctx)
 	}
 
@@ -2185,6 +2197,133 @@ func (a *App) handleMidRunAnswerArrived(ps store.PausedSession) {
 	}
 	log.Printf("answer resume: spawned execute worker for #%d on branch %s (qid=%s)",
 		ps.IssueNumber, ctx.Branch, ps.QuestionID)
+}
+
+// handleOrphanQuestion is the AnswerWatcher callback for orphaned paused
+// sessions (#153). Auto-recover fires only when the workspace setting
+// `auto_recover_orphan_questions:<wsID>` is not explicitly set to "false".
+func (a *App) handleOrphanQuestion(ps store.PausedSession) {
+	if a.store == nil {
+		return
+	}
+	v, _ := a.store.GetSetting("auto_recover_orphan_questions:" + ps.WorkspaceID)
+	if v == "false" {
+		return
+	}
+	sess, err := a.store.TerminateOrphanPausedSession(ps.WorkspaceID, ps.IssueNumber,
+		"question file gone — auto-recovered after 60s")
+	if err != nil {
+		log.Printf("auto-recover orphan #%d: %v", ps.IssueNumber, err)
+		return
+	}
+	if sess == nil {
+		return
+	}
+	if sess.PoolID != "" {
+		a.bus.Publish(eventbus.EvtWorkerSlotFreed, eventbus.WorkerSlotFreed{
+			SessionID: sess.ID,
+			PoolID:    sess.PoolID,
+		})
+	}
+	if a.ctx != nil {
+		wruntime.EventsEmit(a.ctx, "session.state", *sess)
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtSessionStateChanged, eventbus.SessionStateChanged{
+			WorkspaceID: sess.WorkspaceID,
+			IssueNumber: sess.IssueNumber,
+			SessionID:   sess.ID,
+		})
+	}
+	log.Printf("auto-recovered orphan paused session %s for #%d", sess.ID[:8], ps.IssueNumber)
+}
+
+// RecoverOrphanQuestion manually marks an orphaned paused_for_question session
+// as failed and releases its worker slot (#153). Called from the card's Recover
+// button when OrphanQuestion is set in the IssueView.
+func (a *App) RecoverOrphanQuestion(workspaceID string, issueNumber int) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if a.wsReg != nil {
+		if _, ok := a.wsReg.Get(workspaceID); !ok {
+			return fmt.Errorf("unknown workspace %q", workspaceID)
+		}
+	}
+	sess, err := a.store.TerminateOrphanPausedSession(workspaceID, issueNumber,
+		"question file missing — recovered manually")
+	if err != nil {
+		return err
+	}
+	if sess == nil {
+		// No orphan found — force a reassemble so the frontend's view converges.
+		if a.assembler != nil {
+			a.assembler.Reassemble(workspaceID, issueNumber)
+		}
+		return nil
+	}
+	if sess.PoolID != "" {
+		a.bus.Publish(eventbus.EvtWorkerSlotFreed, eventbus.WorkerSlotFreed{
+			SessionID: sess.ID,
+			PoolID:    sess.PoolID,
+		})
+	}
+	if a.ctx != nil {
+		wruntime.EventsEmit(a.ctx, "session.state", *sess)
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtSessionStateChanged, eventbus.SessionStateChanged{
+			WorkspaceID: sess.WorkspaceID,
+			IssueNumber: sess.IssueNumber,
+			SessionID:   sess.ID,
+		})
+	}
+	log.Printf("RecoverOrphanQuestion: recovered session %s for %s#%d", sess.ID[:8], workspaceID, issueNumber)
+	return nil
+}
+
+// ReplanForce cancels any non-terminal plan-mode sessions for the given issue
+// (running, waiting_for_input, paused_for_question) then spawns a fresh plan
+// worker (#153, Q1=A: only plan-mode sessions; execute sessions are left alone).
+func (a *App) ReplanForce(workspaceID string, number int) error {
+	if a.wsReg == nil || a.mgr == nil {
+		return fmt.Errorf("registry/manager unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	// Cancel live plan sessions (running / waiting_for_input / blocked).
+	for _, s := range a.mgr.Snapshot() {
+		if s.WorkspaceID != workspaceID || s.IssueNumber != number || s.Mode != types.ModePlan {
+			continue
+		}
+		switch s.State {
+		case types.StateRunning, types.StateWaitingForInput, types.StateBlocked:
+			if err := a.mgr.KillGraceful(s.ID); err != nil {
+				log.Printf("ReplanForce: kill session %s: %v", s.ID[:8], err)
+			}
+		}
+	}
+	// Terminate any paused_for_question plan session.
+	if a.store != nil {
+		if _, err := a.store.TerminateOrphanPausedSession(workspaceID, number, "force-replan by user"); err != nil {
+			log.Printf("ReplanForce: terminate paused session for #%d: %v", number, err)
+		}
+	}
+	log.Printf("ReplanForce: spawning plan worker for %s#%d", workspaceID, number)
+	pool, ok := a.acquirePlanPool(ws)
+	if !ok {
+		return fmt.Errorf("no plan pool available")
+	}
+	sess, err := a.mgr.SpawnPlan(ws, types.Issue{Number: number, WorkspaceID: workspaceID}, pool)
+	if err != nil {
+		a.poolReg.ReleaseByPool(pool.ID)
+		log.Printf("ReplanForce #%d FAILED: %v", number, err)
+		return err
+	}
+	log.Printf("ReplanForce: spawn ok for #%d, session=%s pid=%d pool=%s", number, sess.ID[:8], sess.PID, pool.ID)
+	return nil
 }
 
 // SubmitMidRunAnswer writes the user's answer for a mid-run question (#17).

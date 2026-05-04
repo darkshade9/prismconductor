@@ -36,6 +36,16 @@ type ConflictsInfo struct {
 	ConflictingFiles []string `json:"conflicting_files"`
 }
 
+// OrphanQuestionInfo is populated when a paused_for_question session's question
+// file is absent from disk (#153). The frontend uses this to render a recovery
+// badge and enable the Recover action without re-checking the filesystem.
+type OrphanQuestionInfo struct {
+	PendingQuestionID string `json:"pending_question_id"`
+	// Since is the Unix epoch of the session's started_at, used to compute
+	// how long the card has been stuck.
+	Since int64 `json:"since"`
+}
+
 // IssueView is the single canonical read model for a board card. Assembled on
 // the backend and emitted as bus.issue_view_updated on every change so the
 // frontend can render without reconciling multiple stores.
@@ -48,9 +58,13 @@ type IssueView struct {
 	// LastSession is the most recent terminal session regardless of outcome.
 	// Used by the CostChip hover tooltip to show per-session token breakdown
 	// (issue #101). Nil when no terminal session exists.
-	LastSession      *types.Session    `json:"last_session,omitempty"`
-	PoolBadge        *PoolBadge        `json:"pool_badge,omitempty"`
-	DerivedColumn    types.BoardColumn `json:"derived_column"`
-	TestsFailingInfo *TestsFailingInfo `json:"tests_failing_info,omitempty"`
-	ConflictsInfo    *ConflictsInfo    `json:"conflicts_info,omitempty"`
+	LastSession      *types.Session      `json:"last_session,omitempty"`
+	PoolBadge        *PoolBadge          `json:"pool_badge,omitempty"`
+	DerivedColumn    types.BoardColumn   `json:"derived_column"`
+	TestsFailingInfo *TestsFailingInfo   `json:"tests_failing_info,omitempty"`
+	ConflictsInfo    *ConflictsInfo      `json:"conflicts_info,omitempty"`
+	// OrphanQuestion is set when PausedSession has a pending_question_id but
+	// the corresponding question file is missing from disk (#153). The
+	// frontend renders a BLOCKED badge and a Recover action.
+	OrphanQuestion *OrphanQuestionInfo `json:"orphan_question,omitempty"`
 }

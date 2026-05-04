@@ -826,6 +826,20 @@ export namespace issueview {
 	        this.conflicting_files = source["conflicting_files"];
 	    }
 	}
+	export class OrphanQuestionInfo {
+	    pending_question_id: string;
+	    since: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new OrphanQuestionInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pending_question_id = source["pending_question_id"];
+	        this.since = source["since"];
+	    }
+	}
 	export class TestsFailingInfo {
 	    failing_jobs: string[];
 	    failing_check_run_urls: string[];
@@ -875,6 +889,7 @@ export namespace issueview {
 	    derived_column: string;
 	    tests_failing_info?: TestsFailingInfo;
 	    conflicts_info?: ConflictsInfo;
+	    orphan_question?: OrphanQuestionInfo;
 	
 	    static createFrom(source: any = {}) {
 	        return new IssueView(source);
@@ -892,6 +907,7 @@ export namespace issueview {
 	        this.derived_column = source["derived_column"];
 	        this.tests_failing_info = this.convertValues(source["tests_failing_info"], TestsFailingInfo);
 	        this.conflicts_info = this.convertValues(source["conflicts_info"], ConflictsInfo);
+	        this.orphan_question = this.convertValues(source["orphan_question"], OrphanQuestionInfo);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -912,6 +928,7 @@ export namespace issueview {
 		    return a;
 		}
 	}
+	
 	
 
 }
@@ -1363,18 +1380,18 @@ export namespace types {
 	    // Go type: time
 	    closed_at?: any;
 	    waiting_for_pool?: boolean;
+	    pipeline_step_id?: string;
+	    pipeline_loops?: Record<string, number>;
+	    pipeline_version?: number;
 	    work_seconds?: number;
 	    work_seconds_plan?: number;
 	    work_seconds_execute?: number;
 	    cost_usd?: number;
-	    pipeline_step_id?: string;
-	    pipeline_loops?: Record<string, number>;
-	    pipeline_version?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Issue(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.number = source["number"];
@@ -1398,13 +1415,13 @@ export namespace types {
 	        this.archived_at = this.convertValues(source["archived_at"], null);
 	        this.closed_at = this.convertValues(source["closed_at"], null);
 	        this.waiting_for_pool = source["waiting_for_pool"];
+	        this.pipeline_step_id = source["pipeline_step_id"];
+	        this.pipeline_loops = source["pipeline_loops"];
+	        this.pipeline_version = source["pipeline_version"];
 	        this.work_seconds = source["work_seconds"];
 	        this.work_seconds_plan = source["work_seconds_plan"];
 	        this.work_seconds_execute = source["work_seconds_execute"];
 	        this.cost_usd = source["cost_usd"];
-	        this.pipeline_step_id = source["pipeline_step_id"];
-	        this.pipeline_loops = source["pipeline_loops"];
-	        this.pipeline_version = source["pipeline_version"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1457,6 +1474,68 @@ export namespace types {
 	        this.answer = source["answer"];
 	        this.multi = source["multi"];
 	    }
+	}
+	export class SkillRef {
+	    path: string;
+	    source: string;
+	    name: string;
+	    display_name: string;
+	    description?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SkillRef(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.source = source["source"];
+	        this.name = source["name"];
+	        this.display_name = source["display_name"];
+	        this.description = source["description"];
+	    }
+	}
+	export class PipelineStep {
+	    id: string;
+	    name: string;
+	    skill_ref: SkillRef;
+	    auto_chain: boolean;
+	    max_loops: number;
+	    on_success: string;
+	    on_fail: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PipelineStep(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.skill_ref = this.convertValues(source["skill_ref"], SkillRef);
+	        this.auto_chain = source["auto_chain"];
+	        this.max_loops = source["max_loops"];
+	        this.on_success = source["on_success"];
+	        this.on_fail = source["on_fail"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	
 	export class Pool {
@@ -1587,15 +1666,15 @@ export namespace types {
 	    pending_question_id?: string;
 	    pool_id?: string;
 	    acknowledged_at?: number;
+	    pipeline_step_name?: string;
 	    input_tokens?: number;
 	    output_tokens?: number;
 	    estimated_cost_cents?: number;
-	    pipeline_step_name?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1611,10 +1690,10 @@ export namespace types {
 	        this.pending_question_id = source["pending_question_id"];
 	        this.pool_id = source["pool_id"];
 	        this.acknowledged_at = source["acknowledged_at"];
+	        this.pipeline_step_name = source["pipeline_step_name"];
 	        this.input_tokens = source["input_tokens"];
 	        this.output_tokens = source["output_tokens"];
 	        this.estimated_cost_cents = source["estimated_cost_cents"];
-	        this.pipeline_step_name = source["pipeline_step_name"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1634,26 +1713,6 @@ export namespace types {
 		    }
 		    return a;
 		}
-	}
-	export class SkillRef {
-	    path: string;
-	    source: string;
-	    name: string;
-	    display_name: string;
-	    description?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new SkillRef(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.path = source["path"];
-	        this.source = source["source"];
-	        this.name = source["name"];
-	        this.display_name = source["display_name"];
-	        this.description = source["description"];
-	    }
 	}
 	export class SkillProfile {
 	    mode: string;
@@ -1714,63 +1773,20 @@ export namespace types {
 		}
 	}
 	
-	export class PipelineStep {
-	    id: string;
-	    name: string;
-	    skill_ref: SkillRef;
-	    auto_chain: boolean;
-	    max_loops: number;
-	    on_success: string;
-	    on_fail: string;
-
-	    static createFrom(source: any = {}) {
-	        return new PipelineStep(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.skill_ref = this.convertValues(source["skill_ref"], SkillRef);
-	        this.auto_chain = source["auto_chain"];
-	        this.max_loops = source["max_loops"];
-	        this.on_success = source["on_success"];
-	        this.on_fail = source["on_fail"];
-	    }
-
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-
 	export class WorkspacePipeline {
 	    steps: PipelineStep[];
 	    version: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new WorkspacePipeline(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.steps = this.convertValues(source["steps"], PipelineStep);
 	        this.version = source["version"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1789,7 +1805,6 @@ export namespace types {
 		    return a;
 		}
 	}
-
 	export class Workspace {
 	    id: string;
 	    display_name: string;
@@ -1804,11 +1819,11 @@ export namespace types {
 	    enabled: boolean;
 	    auto_archive?: AutoArchive;
 	    pipeline?: WorkspacePipeline;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Workspace(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];

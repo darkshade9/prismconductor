@@ -497,6 +497,56 @@ func (s *Store) ListSessionsForIssue(workspaceID string, issueNumber int) ([]typ
 	return out, rows.Err()
 }
 
+// TerminateOrphanPausedSession finds the most-recent unacknowledged
+// paused_for_question session for (workspaceID, issueNumber), marks it as
+// failed with the given reason, stamps acknowledged_at, and returns the
+// updated session. Returns nil (no error) if no matching row exists.
+// Used by RecoverOrphanQuestion and the auto-recovery watcher (#153).
+func (s *Store) TerminateOrphanPausedSession(workspaceID string, issueNumber int, reason string) (*types.Session, error) {
+	if s == nil || s.DB == nil {
+		return nil, errors.New("store unavailable")
+	}
+	now := time.Now()
+	nowUnix := now.Unix()
+	var id, raw string
+	err := s.DB.QueryRow(`
+		SELECT id, json FROM sessions
+		WHERE workspace_id = ? AND issue_number = ?
+		  AND state = 'paused_for_question'
+		  AND (acknowledged_at IS NULL OR acknowledged_at = 0)
+		ORDER BY json_extract(json, '$.started_at') DESC
+		LIMIT 1`, workspaceID, issueNumber).Scan(&id, &raw)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var sess types.Session
+	if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+		return nil, err
+	}
+	sess.State = types.StateFailed
+	sess.BlockedReason = reason
+	sess.EndedAt = &now
+	sess.AcknowledgedAt = &nowUnix
+	updated, err := json.Marshal(&sess)
+	if err != nil {
+		return nil, err
+	}
+	_, err = s.DB.Exec(`
+		UPDATE sessions
+		   SET state = 'failed',
+		       json = ?,
+		       acknowledged_at = ?
+		 WHERE id = ?`,
+		string(updated), nowUnix, id)
+	if err != nil {
+		return nil, err
+	}
+	return &sess, nil
+}
+
 // AcknowledgeLatestFailure marks the most recent unacknowledged blocked/failed
 // session for the given issue as acknowledged (issue #88). The session row is
 // preserved for audit; only acknowledged_at is set so the UI stops showing the

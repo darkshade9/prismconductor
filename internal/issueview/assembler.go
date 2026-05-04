@@ -3,6 +3,8 @@ package issueview
 import (
 	"encoding/json"
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 
@@ -48,6 +50,11 @@ type Assembler struct {
 	cache         map[string]string           // "wsID#num" → last-emitted JSON
 	checkFails    map[string]*checkFailEntry  // "wsID#num" → latest check failure
 	conflictFails map[string]*conflictEntry   // "wsID#num" → latest conflict state
+
+	// repoPathFn resolves a workspace ID to its local repo path. When set,
+	// Assemble probes the questions directory to detect orphan question files
+	// (#153). Nil disables the probe (conservative: no orphan flag set).
+	repoPathFn func(workspaceID string) string
 }
 
 // New wires the Assembler to the bus. Call once at startup after the store is ready.
@@ -133,6 +140,14 @@ func (a *Assembler) handleEvent(e eventbus.Event) {
 		}
 	}
 	a.reassembleAndEmit(wsID, issueNum)
+}
+
+// SetWorkspacePathFn wires the workspace-path resolver used to probe for
+// orphan question files (#153). Call once after New, before any events arrive.
+func (a *Assembler) SetWorkspacePathFn(fn func(workspaceID string) string) {
+	a.mu.Lock()
+	a.repoPathFn = fn
+	a.mu.Unlock()
 }
 
 // Reassemble forces a fresh assembly + emit for the given issue.
@@ -222,6 +237,28 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		}
 	}
 
+	// Detect orphan question: paused session with a question_id that has no
+	// corresponding file on disk (#153). The probe is best-effort — if
+	// repoPathFn is nil or the path is unknown, skip silently.
+	var orphanQuestion *OrphanQuestionInfo
+	if paused != nil && paused.PendingQuestionID != "" {
+		a.mu.Lock()
+		fn := a.repoPathFn
+		a.mu.Unlock()
+		if fn != nil {
+			repoPath := fn(workspaceID)
+			if repoPath != "" {
+				qPath := filepath.Join(repoPath, ".prismconductor", "questions", paused.PendingQuestionID+".json")
+				if _, err := os.Stat(qPath); os.IsNotExist(err) {
+					orphanQuestion = &OrphanQuestionInfo{
+						PendingQuestionID: paused.PendingQuestionID,
+						Since:             paused.StartedAt.Unix(),
+					}
+				}
+			}
+		}
+	}
+
 	return IssueView{
 		Issue:            iss,
 		LatestPlan:       plan,
@@ -233,6 +270,7 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		DerivedColumn:    derivedColumn(iss, plan, active),
 		TestsFailingInfo: testsFailingInfo,
 		ConflictsInfo:    conflictsInfo,
+		OrphanQuestion:   orphanQuestion,
 	}, nil
 }
 
