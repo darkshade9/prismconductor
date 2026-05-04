@@ -369,6 +369,48 @@ func (s *Store) PoolSpendCents(poolID string, since time.Time) (float64, error) 
 	return total, err
 }
 
+// CountRunningSessionsByPool returns a map[poolID]count of every session
+// currently in `running` or `waiting_for_input` state, keyed by the
+// session's pool_id.
+//
+// Used by the Registry to reconcile its in-memory `active` counter against
+// DB ground truth. Without this reconciliation, any acquire-without-matching-
+// release leaks the slot in the registry forever (witnessed: planner
+// counter stuck at 1/2 with zero plan sessions actually running). The DB is
+// the source of truth; the registry counter is now a cache derived from
+// this query at startup and on every terminal session transition.
+//
+// Reads json_extract on $.pool_id rather than a dedicated column because
+// PoolID is stored only inside the session JSON blob, not in an indexed
+// column. SQLite's json1 extension handles this efficiently for the small
+// active-session row count we ever have (sub-100 rows).
+func (s *Store) CountRunningSessionsByPool() (map[string]int, error) {
+	if s == nil || s.DB == nil {
+		return nil, nil
+	}
+	rows, err := s.DB.Query(
+		`SELECT json_extract(json, '$.pool_id') AS pool_id, COUNT(*)
+		   FROM sessions
+		  WHERE state IN ('running','waiting_for_input')
+		    AND json_extract(json, '$.pool_id') IS NOT NULL
+		    AND json_extract(json, '$.pool_id') <> ''
+		  GROUP BY json_extract(json, '$.pool_id')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var poolID string
+		var count int
+		if err := rows.Scan(&poolID, &count); err != nil {
+			return nil, err
+		}
+		out[poolID] = count
+	}
+	return out, rows.Err()
+}
+
 // GoalSpendCents returns the (totalCents, runCount) for all terminal sessions
 // belonging to issues assigned to the given goal since the supplied time
 // (issue #101).

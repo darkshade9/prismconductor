@@ -124,6 +124,46 @@ func NewRegistry(canSpawn func(types.Provider) bool) *Registry {
 	}
 }
 
+// SetActive overwrites the in-memory active counter to n (clamped >= 0).
+// Called by ReconcileActive to align the registry's view with DB truth.
+func (p *Pool) SetActive(n int) {
+	if n < 0 {
+		n = 0
+	}
+	p.mu.Lock()
+	p.active = n
+	p.mu.Unlock()
+}
+
+// ReconcileActive aligns every pool's in-memory `active` counter with the
+// authoritative DB count of currently-running sessions.
+//
+// Why this exists: the Registry's `active` counter is hand-maintained via
+// paired TryAcquire/Release calls. Any code path that acquires a slot but
+// errors before the matching Release runs leaks the slot in the counter
+// forever — the user sees ghost slots (e.g. Planners 1/2 with zero plan
+// sessions actually running). Manual "Reset counters" was the only fix.
+//
+// Now: callers (app.go startup, the bus subscriber on session-state and
+// worker-slot-freed events) feed the registry the DB-derived counts via
+// Store.CountRunningSessionsByPool, and the registry trusts that as truth.
+// Drift becomes self-correcting: the counter is at most one terminal-event
+// tick stale before reconcile pulls it back in line.
+//
+// Pools whose ID is not in the counts map are reset to 0 (no live
+// sessions on them). Pools that no longer exist in the registry are
+// silently ignored.
+func (r *Registry) ReconcileActive(counts map[string]int) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for id, p := range r.pools {
+		if p == nil {
+			continue
+		}
+		p.SetActive(counts[id])
+	}
+}
+
 // Sync reconciles the registry with a fresh DB read. New pools get a
 // fresh *Pool. Surviving entries keep their active counts but pick up updated
 // metadata (name, model, capacity, enabled, role). Pools that disappeared are
