@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
-import { Replan, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue, ResolveConflicts } from "../../wailsjs/go/main/App";
+import { Replan, ReplanForce, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue, ResolveConflicts } from "../../wailsjs/go/main/App";
+import { RecoverButton } from "./RecoverButton";
 import { types } from "../../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "../stores/sessionStore";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
@@ -45,6 +46,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   const lastFailure: types.Session | null = view?.last_failure ?? null;
   const testsFailingInfo = view?.tests_failing_info ?? null;
   const conflictsInfo = view?.conflicts_info ?? null;
+  const orphanQuestion = view?.orphan_question ?? null;
   // Activity is live-streaming data not captured in the view — still from sessionStore.
   const activity: SessionActivity | null = useSessionStore((s) =>
     activeSession ? (s.sessions[activeSession.id]?.activity ?? null) : null
@@ -203,6 +205,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         activity={activity}
         lastFailure={lastFailure}
         pausedSession={pausedSession}
+        orphanQuestion={orphanQuestion}
         planReady={planReady}
         blocked={blocked}
         isPrimitive={isPrimitive}
@@ -393,11 +396,17 @@ type ConflictsInfo = {
   conflicting_files: string[];
 };
 
+type OrphanQuestionInfo = {
+  pending_question_id: string;
+  since: number;
+};
+
 function StatusRow({
   activeSession,
   activity,
   lastFailure,
   pausedSession,
+  orphanQuestion,
   planReady,
   blocked,
   isPrimitive,
@@ -419,6 +428,7 @@ function StatusRow({
   activity: SessionActivity | null;
   lastFailure: types.Session | null;
   pausedSession: types.Session | null;
+  orphanQuestion: OrphanQuestionInfo | null;
   planReady: { revision: number } | null;
   blocked: boolean;
   isPrimitive: boolean;
@@ -449,6 +459,21 @@ function StatusRow({
   ) : null;
 
   if (pausedSession) {
+    if (orphanQuestion) {
+      return (
+        <>
+          <div className="text-[11px] mt-1.5 space-y-0.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Pulse className="bg-red-400" />
+              <span className="text-red-300 font-medium">BLOCKED — orphan question</span>
+              <RecoverButton workspaceID={workspaceID} issueNumber={issueNumber} />
+            </div>
+            <div className="text-slate-500 pl-3.5">question file missing — session cannot resume</div>
+          </div>
+          {menuEl}
+        </>
+      );
+    }
     return (
       <>
         <div className="text-[11px] mt-1.5 flex items-center gap-1.5 flex-wrap">
@@ -692,7 +717,16 @@ function StatusRow({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              Replan(workspaceID, issueNumber).catch((err: any) => alert(String(err?.message ?? err)));
+              Replan(workspaceID, issueNumber).catch((err: any) => {
+                const msg = String(err?.message ?? err);
+                if (msg.includes("already in flight")) {
+                  if (confirm(`A session for #${issueNumber} is currently in progress. Cancel it and start a fresh plan?`)) {
+                    ReplanForce(workspaceID, issueNumber).catch((e2: any) => alert(String(e2?.message ?? e2)));
+                  }
+                } else {
+                  alert(msg);
+                }
+              });
             }}
             onMouseDown={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}

@@ -58,18 +58,6 @@ export function DiscoverWorkspaceSkills(arg1) {
   return window['go']['main']['App']['DiscoverWorkspaceSkills'](arg1);
 }
 
-export function ListAvailableSkills(arg1) {
-  return window['go']['main']['App']['ListAvailableSkills'](arg1);
-}
-
-export function ValidatePipeline(arg1) {
-  return window['go']['main']['App']['ValidatePipeline'](arg1);
-}
-
-export function SaveWorkspacePipeline(arg1, arg2) {
-  return window['go']['main']['App']['SaveWorkspacePipeline'](arg1, arg2);
-}
-
 export function EstimateSpawnCost(arg1, arg2, arg3) {
   return window['go']['main']['App']['EstimateSpawnCost'](arg1, arg2, arg3);
 }
@@ -162,6 +150,10 @@ export function ListArchivedIssues(arg1) {
   return window['go']['main']['App']['ListArchivedIssues'](arg1);
 }
 
+export function ListAvailableSkills(arg1) {
+  return window['go']['main']['App']['ListAvailableSkills'](arg1);
+}
+
 export function ListBundledSkills() {
   return window['go']['main']['App']['ListBundledSkills']();
 }
@@ -246,6 +238,10 @@ export function RecentLogs() {
   return window['go']['main']['App']['RecentLogs']();
 }
 
+export function RecoverOrphanQuestion(arg1, arg2) {
+  return window['go']['main']['App']['RecoverOrphanQuestion'](arg1, arg2);
+}
+
 export function RefreshIssuesNow() {
   return window['go']['main']['App']['RefreshIssuesNow']();
 }
@@ -270,6 +266,10 @@ export function Replan(arg1, arg2) {
   return window['go']['main']['App']['Replan'](arg1, arg2);
 }
 
+export function ReplanForce(arg1, arg2) {
+  return window['go']['main']['App']['ReplanForce'](arg1, arg2);
+}
+
 export function ResetPoolCounters() {
   return window['go']['main']['App']['ResetPoolCounters']();
 }
@@ -292,6 +292,10 @@ export function SaveGoal(arg1) {
 
 export function SavePool(arg1) {
   return window['go']['main']['App']['SavePool'](arg1);
+}
+
+export function SaveWorkspacePipeline(arg1, arg2) {
+  return window['go']['main']['App']['SaveWorkspacePipeline'](arg1, arg2);
 }
 
 export function SelfHeal(arg1, arg2) {
@@ -356,6 +360,10 @@ export function UpdateLabel(arg1, arg2, arg3) {
 
 export function UpdateWorkspace(arg1) {
   return window['go']['main']['App']['UpdateWorkspace'](arg1);
+}
+
+export function ValidatePipeline(arg1) {
+  return window['go']['main']['App']['ValidatePipeline'](arg1);
 }
 
 export function WorkspaceSpendToday(arg1) {

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"prismconductor/internal/types"
 )
@@ -146,5 +147,129 @@ func TestAnswerWatcherSkipsDisabledWorkspace(t *testing.T) {
 	w.Tick()
 	if len(fired) != 0 {
 		t.Errorf("expected no callbacks for disabled workspace, got %d", len(fired))
+	}
+}
+
+// --- Orphan detection tests (#153) ---
+
+func writeQuestionFile(t *testing.T, repoPath, questionID, body string) {
+	t.Helper()
+	dir := filepath.Join(repoPath, ".prismconductor", "questions")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir questions: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, questionID+".json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write question: %v", err)
+	}
+}
+
+func TestOrphanWatcherFiresAfterGracePeriod(t *testing.T) {
+	ws := newWS(t, "ws1")
+	ws.Enabled = true
+	const qid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	// Question file is absent — no writeQuestionFile call.
+
+	paused := []PausedSession{{
+		SessionID:   "sess-orphan",
+		WorkspaceID: ws.ID,
+		IssueNumber: 99,
+		QuestionID:  qid,
+	}}
+	var orphanFired []PausedSession
+	w := NewAnswerWatcher(0,
+		func() []types.Workspace { return []types.Workspace{ws} },
+		func() []PausedSession { return paused },
+		func(ps PausedSession) {}, // answer callback, not triggered here
+	)
+	// Set a very short grace period for testing.
+	w.SetOrphanCallback(10*time.Millisecond, func(ps PausedSession) {
+		orphanFired = append(orphanFired, ps)
+	})
+
+	// First tick: records firstMissing, does not fire yet.
+	w.Tick()
+	if len(orphanFired) != 0 {
+		t.Fatalf("expected no orphan callback on first tick, got %d", len(orphanFired))
+	}
+
+	// Wait past grace period, then tick again.
+	time.Sleep(20 * time.Millisecond)
+	w.Tick()
+	if len(orphanFired) != 1 {
+		t.Fatalf("expected 1 orphan callback after grace, got %d", len(orphanFired))
+	}
+	if orphanFired[0].SessionID != "sess-orphan" {
+		t.Errorf("wrong session ID: %s", orphanFired[0].SessionID)
+	}
+
+	// Third tick: idempotent, must not re-fire.
+	w.Tick()
+	if len(orphanFired) != 1 {
+		t.Errorf("orphan callback should fire exactly once, got %d total", len(orphanFired))
+	}
+}
+
+func TestOrphanWatcherDoesNotFireWhenQuestionExists(t *testing.T) {
+	ws := newWS(t, "ws1")
+	ws.Enabled = true
+	const qid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	writeQuestionFile(t, ws.RepoPath, qid, `{"id":"`+qid+`"}`)
+
+	paused := []PausedSession{{
+		SessionID:   "sess-good",
+		WorkspaceID: ws.ID,
+		IssueNumber: 77,
+		QuestionID:  qid,
+	}}
+	var orphanFired []PausedSession
+	w := NewAnswerWatcher(0,
+		func() []types.Workspace { return []types.Workspace{ws} },
+		func() []PausedSession { return paused },
+		func(ps PausedSession) {},
+	)
+	w.SetOrphanCallback(0, func(ps PausedSession) {
+		orphanFired = append(orphanFired, ps)
+	})
+
+	w.Tick()
+	w.Tick()
+	if len(orphanFired) != 0 {
+		t.Errorf("expected no orphan callback when question file exists, got %d", len(orphanFired))
+	}
+}
+
+func TestOrphanWatcherResetsTimerWhenFileReturns(t *testing.T) {
+	ws := newWS(t, "ws1")
+	ws.Enabled = true
+	const qid = "aaaaaaaa-bbbb-cccc-dddd-ffffffffffff"
+
+	paused := []PausedSession{{
+		SessionID:   "sess-reset",
+		WorkspaceID: ws.ID,
+		IssueNumber: 55,
+		QuestionID:  qid,
+	}}
+	var orphanFired []PausedSession
+	w := NewAnswerWatcher(0,
+		func() []types.Workspace { return []types.Workspace{ws} },
+		func() []PausedSession { return paused },
+		func(ps PausedSession) {},
+	)
+	w.SetOrphanCallback(10*time.Millisecond, func(ps PausedSession) {
+		orphanFired = append(orphanFired, ps)
+	})
+
+	// First tick: file missing, starts timer.
+	w.Tick()
+
+	// File reappears before grace period elapses.
+	writeQuestionFile(t, ws.RepoPath, qid, `{}`)
+	w.Tick() // resets timer
+
+	// Wait past original grace, then another tick.
+	time.Sleep(20 * time.Millisecond)
+	w.Tick()
+	if len(orphanFired) != 0 {
+		t.Errorf("expected no orphan callback after file returned, got %d", len(orphanFired))
 	}
 }

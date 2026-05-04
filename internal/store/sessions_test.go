@@ -167,3 +167,66 @@ func TestLoadRunningSessions_SkipsAcknowledged(t *testing.T) {
 		}
 	}
 }
+
+// TestTerminateOrphanPausedSession verifies the state transition from
+// paused_for_question → failed with acknowledgement (#153).
+func TestTerminateOrphanPausedSession(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	sess := &types.Session{
+		ID:                "sess-paused",
+		WorkspaceID:       "ws1",
+		IssueNumber:       42,
+		Mode:              types.ModeExecute,
+		State:             types.StatePausedForQuestion,
+		StartedAt:         now.Add(-5 * time.Minute),
+		PendingQuestionID: "q-uuid-123",
+		PoolID:            "pool-1",
+	}
+	if err := s.SaveSession(sess, ""); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+
+	got, err := s.TerminateOrphanPausedSession("ws1", 42, "question file missing — test")
+	if err != nil {
+		t.Fatalf("TerminateOrphanPausedSession: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected a session, got nil")
+	}
+	if got.State != types.StateFailed {
+		t.Errorf("expected state=failed, got %s", got.State)
+	}
+	if got.BlockedReason != "question file missing — test" {
+		t.Errorf("unexpected blocked_reason: %q", got.BlockedReason)
+	}
+	if got.AcknowledgedAt == nil || *got.AcknowledgedAt == 0 {
+		t.Error("expected acknowledged_at to be set")
+	}
+	if got.EndedAt == nil {
+		t.Error("expected ended_at to be set")
+	}
+
+	// Should not appear in LoadRunningSessions after termination.
+	sessions, _, err := s.LoadRunningSessions()
+	if err != nil {
+		t.Fatalf("LoadRunningSessions: %v", err)
+	}
+	for _, s2 := range sessions {
+		if s2.ID == "sess-paused" {
+			t.Fatal("terminated orphan should not appear in LoadRunningSessions")
+		}
+	}
+}
+
+// TestTerminateOrphanPausedSession_NoMatch returns nil when no paused session exists.
+func TestTerminateOrphanPausedSession_NoMatch(t *testing.T) {
+	s := newTestStore(t)
+	got, err := s.TerminateOrphanPausedSession("ws1", 99, "reason")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil, got %+v", got)
+	}
+}
