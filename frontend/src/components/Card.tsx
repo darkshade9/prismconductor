@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
-import { Replan, ReplanForce, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue, ResolveConflicts, AttachManualPR } from "../../wailsjs/go/main/App";
+import { Replan, ReplanForce, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue, ResolveConflicts, AttachManualPR, PrepareManualPushCommand } from "../../wailsjs/go/main/App";
 import { ClipboardSetText } from "../../wailsjs/runtime/runtime";
 import { RecoverButton } from "./RecoverButton";
 import { types } from "../../wailsjs/go/models";
@@ -437,6 +437,8 @@ type NeedsPRInfo = {
   worktree_dir: string;
   reason: string;
   kind: string;
+  commit_msg_file?: string;
+  commit_msg?: string;
 };
 
 function StatusRow({
@@ -608,13 +610,27 @@ function StatusRow({
   // NEEDS_PR badge: show when NeedsPRInfo is set and no PR has been attached yet.
   const showNeedsPR = needsPRInfo && !prNumber && !activeSession && !pausedSession && !waitingForPool;
   if (showNeedsPR && needsPRInfo) {
-    const pushCmd = `cd ${needsPRInfo.worktree_dir} && git push -u origin ${needsPRInfo.branch}`;
-    const isCommitSigning = needsPRInfo.kind === "commit_signing";
-    const fullCmd = isCommitSigning
-      ? `cd ${needsPRInfo.worktree_dir} && git add -A && git commit -S -m 'feat: implement changes' && git push -u origin ${needsPRInfo.branch}`
-      : pushCmd;
+    const info = needsPRInfo; // capture for closures — TypeScript can't narrow through async boundaries
+    const isCommitSigning = info.kind === "commit_signing";
     const [attachOpen, setAttachOpen] = useState(false);
     const [prURLInput, setPRURLInput] = useState("");
+    const [msgExpanded, setMsgExpanded] = useState(false);
+
+    function copyPushCmd(e: React.MouseEvent) {
+      e.stopPropagation();
+      PrepareManualPushCommand(workspaceID, issueNumber)
+        .then((cmd) => ClipboardSetText(cmd))
+        .catch(() => {
+          // Fall back to constructing the command locally if the binding fails.
+          const fallback = isCommitSigning && info.commit_msg_file
+            ? `cd "${info.worktree_dir}" && git add -A && git commit -S -F "${info.commit_msg_file}" && git push -u origin ${info.branch}`
+            : isCommitSigning
+              ? `cd "${info.worktree_dir}" && git add -A && git commit -S -m 'feat: implement changes' && git push -u origin ${info.branch}`
+              : `cd "${info.worktree_dir}" && git push -u origin ${info.branch}`;
+          ClipboardSetText(fallback);
+        });
+    }
+
     return (
       <>
         <div className="text-[11px] mt-1.5 space-y-1">
@@ -623,25 +639,41 @@ function StatusRow({
             <span className="text-emerald-400 font-medium">push needed</span>
             <span className="text-slate-500">— commits in worktree</span>
           </div>
-          <div className="text-slate-400 text-[10px] truncate pl-3.5" title={needsPRInfo.reason}>
-            {needsPRInfo.reason || "could not push"}
+          <div className="text-slate-400 text-[10px] truncate pl-3.5" title={info.reason}>
+            {info.reason || "could not push"}
           </div>
+          {info.commit_msg && (
+            <div className="pl-3.5">
+              <button
+                onClick={(e) => { e.stopPropagation(); setMsgExpanded(!msgExpanded); }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="text-[10px] text-slate-500 hover:text-slate-300"
+              >
+                {msgExpanded ? "▾ hide commit message" : "▸ show commit message"}
+              </button>
+              {msgExpanded && (
+                <pre className="mt-1 text-[10px] text-slate-400 bg-slate-900 rounded p-1.5 whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
+                  {info.commit_msg}
+                </pre>
+              )}
+            </div>
+          )}
           <div className="flex gap-1.5 flex-wrap pl-3.5">
             <button
-              onClick={(e) => { e.stopPropagation(); ClipboardSetText(fullCmd); }}
+              onClick={copyPushCmd}
               onMouseDown={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
               className="px-1.5 py-0.5 rounded text-[10px] border border-emerald-800 text-emerald-400 hover:border-emerald-600 hover:text-emerald-300"
-              title={fullCmd}
             >
               ⎘ Copy {isCommitSigning ? "commit+push" : "push"} command
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); BrowserOpenURL("file://" + needsPRInfo.worktree_dir); }}
+              onClick={(e) => { e.stopPropagation(); BrowserOpenURL("file://" + info.worktree_dir); }}
               onMouseDown={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
               className="px-1.5 py-0.5 rounded text-[10px] border border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200"
-              title={needsPRInfo.worktree_dir}
+              title={info.worktree_dir}
             >
               ⌂ Open folder
             </button>

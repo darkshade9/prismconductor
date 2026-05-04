@@ -254,6 +254,10 @@ export function PostPRComment(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['PostPRComment'](arg1, arg2, arg3, arg4);
 }
 
+export function PrepareManualPushCommand(arg1, arg2) {
+  return window['go']['main']['App']['PrepareManualPushCommand'](arg1, arg2);
+}
+
 export function ProbeProviderModels(arg1, arg2, arg3) {
   return window['go']['main']['App']['ProbeProviderModels'](arg1, arg2, arg3);
 }

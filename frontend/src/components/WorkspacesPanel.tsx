@@ -8,6 +8,50 @@ import { SkillProfileEditor } from "./SkillProfileEditor";
 import { LabelsPanel } from "./LabelsPanel";
 import { noAutoCorrect } from "../lib/inputs";
 
+const SIGNING_OPTIONS: { value: string; label: string; description: string }[] = [
+  { value: "auto",       label: "Auto (recommended)", description: "Try GitHub API → local signing → manual fallback" },
+  { value: "github_api", label: "GitHub API only",    description: "Only use GitHub API commits; emit NEEDS_PR if that fails" },
+  { value: "local",      label: "Local signing only", description: "Only attempt local git commit -S + push" },
+  { value: "manual",     label: "Manual always",      description: "Never attempt automation; always prepare a worktree command" },
+];
+
+function SigningStrategyEditor({ workspace, onSave }: { workspace: types.Workspace; onSave: () => void }) {
+  const current = workspace.signing_strategy || "auto";
+
+  async function save(strategy: string) {
+    const updated = types.Workspace.createFrom({
+      ...workspace,
+      signing_strategy: strategy === "auto" ? "" : strategy,
+    });
+    await UpdateWorkspace(updated);
+    onSave();
+  }
+
+  return (
+    <div>
+      <div className="text-xs text-slate-400 mb-2">Commit signing strategy</div>
+      <div className="flex flex-col gap-1.5">
+        {SIGNING_OPTIONS.map((opt) => (
+          <label key={opt.value} className="flex items-start gap-2 text-xs cursor-pointer">
+            <input
+              type="radio"
+              name={`signing-${workspace.id}`}
+              value={opt.value}
+              checked={current === opt.value}
+              onChange={() => save(opt.value)}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="text-slate-200">{opt.label}</span>
+              <span className="text-slate-500 ml-1">— {opt.description}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AutoArchiveEditor({ workspace, onSave }: { workspace: types.Workspace; onSave: () => void }) {
   const cfg = workspace.auto_archive ?? { enabled: false, days_closed: 7 };
   const [enabled, setEnabled] = useState(cfg.enabled);
@@ -307,6 +351,7 @@ export function WorkspacesPanel() {
                       <PipelineEditor workspace={ws} />
                     </div>
                     <AutoArchiveEditor workspace={ws} onSave={refresh} />
+                    <SigningStrategyEditor workspace={ws} onSave={refresh} />
                     <div>
                       <div className="text-xs text-slate-400 mb-2">Labels</div>
                       <LabelsPanel workspaceID={ws.id} />

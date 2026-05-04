@@ -45,19 +45,34 @@ type RemoteConfig struct {
 	TokenExpired bool `json:"token_expired,omitempty"`
 }
 
+// SigningStrategy controls how the conductor-execute worker attempts to commit
+// and push work on behalf of a workspace (issue #175).
+type SigningStrategy string
+
+const (
+	// SigningStrategyAuto tries Tier 1 (GitHub API), then Tier 2 (local signing),
+	// then Tier 3 (manual NEEDS_PR). This is the default when unset.
+	SigningStrategyAuto      SigningStrategy = "auto"
+	SigningStrategyGitHubAPI SigningStrategy = "github_api"
+	SigningStrategyLocal     SigningStrategy = "local"
+	SigningStrategyManual    SigningStrategy = "manual"
+)
 type Workspace struct {
-	ID            string          `json:"id"`
-	DisplayName   string          `json:"display_name"`
-	RepoPath      string          `json:"repo_path"`
-	GitHubOwner   string          `json:"github_owner"`
-	GitHubRepo    string          `json:"github_repo"`
-	DefaultBranch string          `json:"default_branch"`
-	Color         string          `json:"color"`
-	AgentEnv      EnvSpec         `json:"agent_env"`
-	SkillProfile  SkillProfile    `json:"skill_profile"`
-	Conventions   ConventionHints `json:"conventions"`
-	Enabled       bool            `json:"enabled"`
-	AutoArchive   AutoArchive     `json:"auto_archive,omitempty"`
+	ID              string          `json:"id"`
+	DisplayName     string          `json:"display_name"`
+	RepoPath        string          `json:"repo_path"`
+	GitHubOwner     string          `json:"github_owner"`
+	GitHubRepo      string          `json:"github_repo"`
+	DefaultBranch   string          `json:"default_branch"`
+	Color           string          `json:"color"`
+	AgentEnv        EnvSpec         `json:"agent_env"`
+	SkillProfile    SkillProfile    `json:"skill_profile"`
+	Conventions     ConventionHints `json:"conventions"`
+	Enabled         bool            `json:"enabled"`
+	AutoArchive     AutoArchive     `json:"auto_archive,omitempty"`
+	// SigningStrategy controls the commit+push tier used by execute workers.
+	// Empty string is equivalent to SigningStrategyAuto (issue #175).
+	SigningStrategy SigningStrategy `json:"signing_strategy,omitempty"`
 	// Pipeline holds the custom pipeline configuration for this workspace.
 	// Nil means "use the default Plan→Execute→Close flow" (issue #146).
 	Pipeline *WorkspacePipeline `json:"pipeline,omitempty"`
@@ -366,6 +381,13 @@ type NeedsPRInfo struct {
 	// Kind is "commit_signing" when the commit itself failed, or "push" when
 	// commits landed locally but the remote push was rejected.
 	Kind string `json:"kind"`
+	// CommitMsgFile is the path to the worker-drafted commit message file
+	// written by Tier 3 of the three-tier commit fallback (issue #175).
+	// Empty when the commit landed but the push failed.
+	CommitMsgFile string `json:"commit_msg_file,omitempty"`
+	// CommitMsg is the first 500 bytes of CommitMsgFile content for inline
+	// display in the UI. Empty when CommitMsgFile is empty.
+	CommitMsg string `json:"commit_msg,omitempty"`
 }
 
 type BoardColumn string

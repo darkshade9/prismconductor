@@ -74,17 +74,85 @@ These run before commit. Failures here are **stop-the-world** events: print `BLO
 
 ### 5. Commit + push + PR (NON-NEGOTIABLE)
 
-12. `git add` only the files you modified (avoid `git add -A` — never commit unrelated WIP that may be in the tree from another task). If `git status` shows nothing staged AND nothing modified (the prior worker already committed before pausing), skip the commit step cleanly and proceed to the PR check.
-13. `git commit -m "<short subject>\n\nCloses #<num>\n\nCo-Authored-By: PrismConductor worker <noreply@anthropic.com>"`. Subject must reference the issue number; body must include `Closes #<num>` so the PR auto-closes the issue on merge.
-14. `git push -u origin HEAD`.
-15. **Single-PR enforcement (#17, Q6):** before `gh pr create`, run `gh pr list --head <branch> --json number,url`. If non-empty, an earlier resume already opened the PR — append a follow-up comment via `gh pr comment <num> --body-file -` summarizing this leg's work, capture the existing URL, and SKIP `gh pr create`. Otherwise: `gh pr create --draft --base <BASE> --title "<short subject> (#<num>)" --body-file -`. The body should contain:
+The commit+push step uses a **three-tier fallback** (issue #175). Attempt each
+tier in order; on success proceed to the PR step. On failure fall through to
+the next tier. The workspace `signing_strategy` field may restrict which tiers
+to attempt: `github_api` = Tier 1 only, `local` = Tier 2 only, `manual` = Tier 3
+straight away, `auto` (default/empty) = Tier 1 → Tier 2 → Tier 3.
+
+**Tier 1 — GitHub API commit (signed by GitHub)**
+
+12a. Draft the commit message (subject + body with `Closes #<num>` +
+     `Co-Authored-By: PrismConductor worker <noreply@anthropic.com>`).
+12b. Call the GitHub GraphQL mutation `createCommitOnBranch` using the
+     workspace PAT (`gh api graphql`). The mutation requires:
+     - `repositoryNameWithOwner`: `<owner>/<repo>`
+     - `branch.branchName`: the current branch name
+     - `expectedHeadOid`: `git rev-parse HEAD` (the current tip SHA)
+     - `message.headline` / `message.body`: split from the drafted message
+     - `fileChanges.additions` / `fileChanges.deletions`: list every modified
+       or deleted path with base64-encoded content for additions.
+
+     Example invocation (write the JSON body to a temp file to avoid shell
+     quoting issues):
+     ```
+     gh api graphql -f query='mutation($input: CreateCommitOnBranchInput!) {
+       createCommitOnBranch(input: $input) { commit { oid } }
+     }' -f input="$(cat /tmp/commit-payload.json)"
+     ```
+
+     **File-size / payload limits:** if the total additions payload exceeds
+     ~8 MB or the number of files exceeds 200, skip Tier 1 and fall through
+     to Tier 2 — do not attempt a partial commit.
+
+     **Retry on transient errors:** if the API returns a 5xx status, wait 2 s
+     and retry once. On second failure fall through to Tier 2.
+
+     On success: record the returned SHA. Proceed to `git push -u origin HEAD`
+     (the API already pushed the commit; local HEAD may be behind — a push is
+     still needed to update the remote tracking ref if you want local sync, or
+     you may skip the local push and go straight to PR creation since the commit
+     already exists on the remote).
+
+**Tier 2 — local signed commit + push**
+
+12c. `git add` only the files you modified (avoid `git add -A`). If nothing is
+     staged and nothing is modified, skip commit and proceed to push.
+12d. Write the commit message to `.prismconductor/commit-msg/<issue>.txt` (full
+     content; truncate only the GraphQL payload, never the file).
+12e. `git commit -S -F .prismconductor/commit-msg/<issue>.txt` with a 30 s
+     timeout. Do NOT attempt to supply a passphrase. If the process blocks on
+     TTY or times out, fall through to Tier 3.
+12f. `git push -u origin HEAD`.
+
+**Tier 3 — preserved worktree + manual command (NEEDS_PR)**
+
+12g. Stage all changes: `git add -A`.
+12h. Write the full drafted commit message to
+     `.prismconductor/commit-msg/<issue>.txt` (create parent directories if
+     missing).
+12i. Print the NEEDS_PR sentinel on its own line:
+     ```
+     NEEDS_PR: commit signing unavailable — manual push required
+     ```
+     The conductor parses this, preserves the worktree, and surfaces a
+     copy-pastable command to the user. Do NOT print `PR_OPENED:` or
+     `Work complete.` — those are reserved for successful pushes.
+
+     After printing the sentinel, exit cleanly (exit 0). The conductor moves
+     the card to NEEDS_PR state.
+
+**After a successful Tier 1 or Tier 2 push:**
+
+13. **Single-PR enforcement (#17, Q6):** before `gh pr create`, run `gh pr list --head <branch> --json number,url`. If non-empty, an earlier resume already opened the PR — append a follow-up comment via `gh pr comment <num> --body-file -` summarizing this leg's work, capture the existing URL, and SKIP `gh pr create`. Otherwise: `gh pr create --draft --base <BASE> --title "<short subject> (#<num>)" --body-file -`. The body should contain:
     - A 1-2 sentence summary
     - The list of files modified
     - **Verification:** lint command + result, build command + result, smoke command + result (`pass` / `fail` with first console error / `skipped — spec not present`), test command + result with pass/fail counts
+    - Which commit tier succeeded (Tier 1 / Tier 2)
     - Anything skipped or flagged for human review
     - `Workspace mode: per-execute worktree at <pwd>` — surfaces the conductor isolation mode for reviewers (run `pwd` to fill the path).
     - The literal trailer line `Closes #<num>`
-16. Capture the PR URL from `gh pr create` (or `gh pr list` in the reuse case).
+14. Capture the PR URL from `gh pr create` (or `gh pr list` in the reuse case).
 
 ### 6. Sentinels for the conductor
 
