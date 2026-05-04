@@ -1,6 +1,9 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Tailwind 4 entry: single @import replaces the old three @tailwind
+   directives. The @config line points at the existing JS config so
+   custom theme colors (col.todo / col.plan / etc.) and the typography
+   plugin keep working without rewriting the config in CSS. */
+@import "tailwindcss";
+@config "../tailwind.config.js";
 
 @font-face {
   font-family: "Nunito";
