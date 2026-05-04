@@ -653,7 +653,8 @@ func (a *App) PickRepoPath() (string, error) {
 	})
 }
 
-// AddWorkspace registers a new workspace.
+// AddWorkspace registers a new workspace, then triggers an immediate issue fetch
+// and emits EvtWorkspaceAdded so the frontend can auto-select and show a toast.
 func (a *App) AddWorkspace(ws types.Workspace) error {
 	if a.wsReg == nil {
 		return fmt.Errorf("workspace registry unavailable")
@@ -661,7 +662,19 @@ func (a *App) AddWorkspace(ws types.Workspace) error {
 	if !ws.Enabled {
 		ws.Enabled = true
 	}
-	return a.wsReg.Add(ws)
+	if err := a.wsReg.Add(ws); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtWorkspaceAdded, map[string]any{
+			"workspace_id":   ws.ID,
+			"workspace_name": ws.DisplayName,
+		})
+	}
+	if a.poller != nil {
+		go a.poller.FetchNow(a.ctx, ws)
+	}
+	return nil
 }
 
 // UpdateWorkspace replaces a workspace's record.

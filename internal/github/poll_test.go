@@ -251,6 +251,49 @@ func TestProbeConflicts_RecoveryEdge(t *testing.T) {
 	}
 }
 
+// TestFetchNow_NilClient verifies that FetchNow publishes EvtWorkspaceFetchComplete
+// with success=false when the GitHub client is unavailable (issue #108).
+func TestFetchNow_NilClient(t *testing.T) {
+	bus := eventbus.New()
+	p := &Poller{Bus: bus, Client: nil}
+
+	var mu sync.Mutex
+	var events []eventbus.Event
+	bus.Subscribe(func(e eventbus.Event) {
+		mu.Lock()
+		events = append(events, e)
+		mu.Unlock()
+	})
+
+	ws := types.Workspace{ID: "ws-new", DisplayName: "My Repo"}
+	p.FetchNow(t.Context(), ws)
+
+	import_sync_sleep(t)
+
+	mu.Lock()
+	defer mu.Unlock()
+	var found *eventbus.WorkspaceFetchComplete
+	for _, e := range events {
+		if e.Type == eventbus.EvtWorkspaceFetchComplete {
+			if p, ok := e.Payload.(eventbus.WorkspaceFetchComplete); ok {
+				found = &p
+			}
+		}
+	}
+	if found == nil {
+		t.Fatal("expected EvtWorkspaceFetchComplete, got none")
+	}
+	if found.WorkspaceID != "ws-new" {
+		t.Errorf("workspace_id: got %q, want %q", found.WorkspaceID, "ws-new")
+	}
+	if found.Success {
+		t.Error("expected success=false when client is nil")
+	}
+	if found.Error == "" {
+		t.Error("expected non-empty error when client is nil")
+	}
+}
+
 // import_sync_sleep waits briefly for async bus handlers.
 //
 // eventbus.Bus.Publish dispatches each subscriber in its own goroutine, so a

@@ -37,15 +37,17 @@ function ToastItem({
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (toast.persist) return;
     timerRef.current = window.setTimeout(() => dismiss(toast.id), AUTO_DISMISS_MS);
     return () => {
       if (timerRef.current !== null) {
         window.clearTimeout(timerRef.current);
       }
     };
-  }, [toast.id, dismiss]);
+  }, [toast.id, toast.persist, dismiss]);
 
   function pauseTimer() {
+    if (toast.persist) return;
     if (timerRef.current !== null) {
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
@@ -53,6 +55,7 @@ function ToastItem({
   }
 
   function resumeTimer() {
+    if (toast.persist) return;
     if (timerRef.current === null) {
       timerRef.current = window.setTimeout(() => dismiss(toast.id), AUTO_DISMISS_MS);
     }

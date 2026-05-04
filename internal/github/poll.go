@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sort"
 	"strconv"
@@ -87,6 +88,37 @@ func NewPoller(bus *eventbus.Bus, client *Client, store Store, src WorkspaceSour
 		maxConcurrency: 4,
 		pokeCh:         make(chan struct{}, 1),
 	}
+}
+
+// FetchNow runs an immediate fetch for a single workspace (used after AddWorkspace).
+// It blocks until the fetch completes and then publishes EvtWorkspaceFetchComplete.
+// Safe to call from a goroutine.
+func (p *Poller) FetchNow(ctx context.Context, ws types.Workspace) {
+	var fetchErr error
+	if p.Client == nil {
+		fetchErr = fmt.Errorf("github client unavailable")
+	} else {
+		fetchErr = p.pollOne(ctx, ws)
+	}
+	var issueCount int
+	if fetchErr == nil {
+		if issues, e := p.Store.ListIssues(ws.ID); e == nil {
+			issueCount = len(issues)
+		}
+	}
+	if p.Bus == nil {
+		return
+	}
+	payload := eventbus.WorkspaceFetchComplete{
+		WorkspaceID:   ws.ID,
+		WorkspaceName: ws.DisplayName,
+		Success:       fetchErr == nil,
+		IssueCount:    issueCount,
+	}
+	if fetchErr != nil {
+		payload.Error = fetchErr.Error()
+	}
+	p.Bus.Publish(eventbus.EvtWorkspaceFetchComplete, payload)
 }
 
 // PokeNow asks the poll loop to fan out immediately (e.g. user clicked Refresh).
