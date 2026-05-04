@@ -372,6 +372,20 @@ func (a *App) startup(ctx context.Context) {
 			log.Printf("reconciled %d stale running sessions to failed\n", n)
 		}
 
+		// Self-heal stuck waiting_for_pool flags + leftover
+		// pending_pool_for rows on REVIEW/DONE cards. Witnessed on #118:
+		// PR merged, card moved to DONE, but waiting_for_pool=1 + a stale
+		// pending_pool_for row from the original approve-execute enqueue
+		// stuck around → card glowed pink "waiting for available agent
+		// pool" in DONE forever. The fix in MarkPRMerged /
+		// MarkPRClosedUnmerged prevents future leaks; this reconciles
+		// any pre-fix data that's already in this state.
+		if iss, q, err := a.store.ReconcileStalePoolQueueForClosedIssues(); err != nil {
+			log.Printf("reconcile stale pool queue: %v\n", err)
+		} else if iss > 0 || q > 0 {
+			log.Printf("reconciled stale pool-queue state: cleared waiting_for_pool on %d closed/review issues, deleted %d pending_pool_for rows\n", iss, q)
+		}
+
 		// Reconcile pool registry's in-memory `active` counter against DB
 		// truth. The hand-maintained TryAcquire/Release counter leaks on
 		// any acquire-without-matching-release (witnessed: planner 1/2

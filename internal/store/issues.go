@@ -471,6 +471,45 @@ func (s *Store) RemoveIssue(workspaceID string, number int) error {
 	return err
 }
 
+// ReconcileStalePoolQueueForClosedIssues clears `waiting_for_pool` and
+// removes `pending_pool_for` rows for any issue whose card is in REVIEW
+// (PR open) or DONE (PR merged/closed). A queued spawn for an issue
+// whose work has already shipped (or whose PR was rejected) is by
+// definition moot; leaving the row + flag around makes the card glow
+// pink "waiting for available agent pool" forever in DONE. Witnessed
+// live on #118 (DONE column, PR #166 closed/merged, but
+// waiting_for_pool=1 + a stale pending_pool_for row from the original
+// approve-execute enqueue).
+//
+// Returns (issuesFixed, queueRowsDeleted).
+func (s *Store) ReconcileStalePoolQueueForClosedIssues() (int, int, error) {
+	if s == nil || s.DB == nil {
+		return 0, 0, errors.New("store unavailable")
+	}
+	res1, err := s.DB.Exec(`
+UPDATE issues
+   SET json = json_set(json, '$.waiting_for_pool', json('false'))
+ WHERE column_name IN ('review','done')
+   AND json_extract(json, '$.waiting_for_pool') = 1`)
+	if err != nil {
+		return 0, 0, err
+	}
+	issuesFixed, _ := res1.RowsAffected()
+	res2, err := s.DB.Exec(`
+DELETE FROM pending_pool_for
+ WHERE EXISTS (
+   SELECT 1 FROM issues
+    WHERE issues.workspace_id = pending_pool_for.workspace_id
+      AND issues.number       = pending_pool_for.issue_number
+      AND issues.column_name IN ('review','done')
+ )`)
+	if err != nil {
+		return int(issuesFixed), 0, err
+	}
+	queueRowsDeleted, _ := res2.RowsAffected()
+	return int(issuesFixed), int(queueRowsDeleted), nil
+}
+
 // ReconcileStaleRunningSessions marks any session row whose state is still
 // `running` or `waiting_for_input` but whose corresponding issue is in
 // REVIEW (PR open) or DONE (PR merged) as failed. Self-healing pass for
@@ -660,6 +699,12 @@ func (s *Store) MarkPRMerged(workspaceID string, number int) error {
 	iss.State = "closed"
 	iss.Column = types.ColDone
 	iss.LastError = ""
+	// PR is merged → any queued pool spawn for this issue is now moot. Clear
+	// the conductor-owned waiting_for_pool flag in the JSON we're about to
+	// write (avoids the SaveIssue preservation rule by going through the
+	// raw blob marshal path). The matching pending_pool_for row gets
+	// deleted below in the same transaction.
+	iss.WaitingForPool = false
 
 	var newClosedAt any
 	if existingClosedAt.Valid {
@@ -684,6 +729,16 @@ func (s *Store) MarkPRMerged(workspaceID string, number int) error {
 	if _, err := tx.Exec(
 		`UPDATE issues SET column_name = ?, manual_order = ?, json = ?, closed_at = ? WHERE workspace_id = ? AND number = ?`,
 		string(types.ColDone), maxOrder.Int64+1, string(b), newClosedAt, workspaceID, number,
+	); err != nil {
+		return err
+	}
+	// Reap any leftover pool-queue rows. Witnessed leak: PR for #118
+	// merged, card moved to DONE, but a stale `pending_pool_for` row from
+	// the original approve-execute enqueue stuck around AND
+	// json.waiting_for_pool stayed true → card glowed pink in DONE forever.
+	if _, err := tx.Exec(
+		`DELETE FROM pending_pool_for WHERE workspace_id = ? AND issue_number = ?`,
+		workspaceID, number,
 	); err != nil {
 		return err
 	}
@@ -716,10 +771,19 @@ func (s *Store) MarkPRClosedUnmerged(workspaceID string, number int) error {
 	}
 	iss.PRNumber = nil
 	iss.PRURL = ""
+	// PR closed without merging → any queued pool spawn is moot. Same
+	// reaping as MarkPRMerged.
+	iss.WaitingForPool = false
 	b, _ := json.Marshal(iss)
 	if _, err := tx.Exec(
 		`UPDATE issues SET json = ? WHERE workspace_id = ? AND number = ?`,
 		string(b), workspaceID, number,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM pending_pool_for WHERE workspace_id = ? AND issue_number = ?`,
+		workspaceID, number,
 	); err != nil {
 		return err
 	}
