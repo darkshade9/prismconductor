@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  ListWorkspaces,
   ProbeProviderModels,
   SavePool,
 } from "../../wailsjs/go/main/App";
 import { main, types } from "../../wailsjs/go/models";
 
 type Role = "plan" | "work" | "orchestrator";
+type Scope = "shared" | "workspace";
 
 const ROLE_OPTIONS: { value: Role; label: string; help: string }[] = [
   {
@@ -48,6 +50,9 @@ export function PoolEditModal({
 }: Props) {
   const fallbackProvider = (providers[0]?.kind ?? "claude") as string;
   const [role, setRole] = useState<Role>(((initial?.role as Role) || "work") as Role);
+  const [scope, setScope] = useState<Scope>(((initial?.scope as Scope) || "shared") as Scope);
+  const [scopeWorkspaceID, setScopeWorkspaceID] = useState<string>(initial?.workspace_id ?? "");
+  const [workspaces, setWorkspaces] = useState<types.Workspace[]>([]);
   const [providerKind, setProviderKind] = useState<string>(
     initial?.provider ?? fallbackProvider,
   );
@@ -97,6 +102,13 @@ export function PoolEditModal({
         p.id !== (initial?.id ?? ""),
     );
   }, [role, existingPools, initial]);
+
+  // Disable Save when workspace-specific scope is chosen but no workspace selected (q3).
+  const workspaceScopeBlock = scope === "workspace" && !scopeWorkspaceID;
+
+  useEffect(() => {
+    ListWorkspaces().then((ws) => setWorkspaces(ws ?? [])).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (initial) return;
@@ -156,7 +168,7 @@ export function PoolEditModal({
 
   async function onSave() {
     if (!providerInfo) return;
-    if (orchestratorBlock) return;
+    if (orchestratorBlock || workspaceScopeBlock) return;
     setBusy(true);
     setSaveErr("");
     try {
@@ -184,6 +196,8 @@ export function PoolEditModal({
         max_input_tokens: (parsedMaxInputTokens != null && !isNaN(parsedMaxInputTokens)) ? parsedMaxInputTokens : undefined,
         bash_timeout: (parsedBashTimeoutSec != null && !isNaN(parsedBashTimeoutSec)) ? parsedBashTimeoutSec * 1e9 : undefined,
         output_cap: (parsedOutputCapKB != null && !isNaN(parsedOutputCapKB)) ? parsedOutputCapKB * 1024 : undefined,
+        scope,
+        workspace_id: scope === "workspace" ? scopeWorkspaceID : "",
       });
       await SavePool(pool);
       onSaved();
@@ -221,6 +235,43 @@ export function PoolEditModal({
             <div className="text-[11px] text-slate-500 mt-1">
               {ROLE_OPTIONS.find((o) => o.value === role)?.help}
             </div>
+          </div>
+
+          <div>
+            <div className="text-xs text-slate-500 mb-1">Scope</div>
+            <div className="flex items-center gap-4">
+              {(["shared", "workspace"] as Scope[]).map((s) => (
+                <label key={s} className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="pool-scope"
+                    value={s}
+                    checked={scope === s}
+                    onChange={() => {
+                      setScope(s);
+                      if (s === "shared") setScopeWorkspaceID("");
+                    }}
+                  />
+                  {s === "shared" ? "Shared (all workspaces)" : "Workspace-specific"}
+                </label>
+              ))}
+            </div>
+            {scope === "workspace" && (
+              <div className="mt-2">
+                <select
+                  value={scopeWorkspaceID}
+                  onChange={(e) => setScopeWorkspaceID(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100 text-xs"
+                >
+                  <option value="">— pick a workspace —</option>
+                  {workspaces.map((ws) => (
+                    <option key={ws.id} value={ws.id}>
+                      {ws.display_name || ws.id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           <div>
@@ -446,6 +497,12 @@ export function PoolEditModal({
             </div>
           )}
 
+          {workspaceScopeBlock && (
+            <div className="text-xs text-amber-300">
+              Select a workspace to save a workspace-specific pool.
+            </div>
+          )}
+
           {saveErr && <div className="text-xs text-rose-300">{saveErr}</div>}
         </div>
 
@@ -458,7 +515,7 @@ export function PoolEditModal({
           </button>
           <button
             onClick={onSave}
-            disabled={busy || orchestratorBlock}
+            disabled={busy || orchestratorBlock || workspaceScopeBlock}
             className="text-xs px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-100 rounded disabled:opacity-50"
           >
             {busy ? "Saving…" : "Save"}

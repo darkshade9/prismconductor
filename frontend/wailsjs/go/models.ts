@@ -1471,6 +1471,8 @@ export namespace types {
 	    max_input_tokens?: number;
 	    bash_timeout?: number;
 	    output_cap?: number;
+	    scope?: string;
+	    workspace_id?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Pool(source);
@@ -1494,6 +1496,8 @@ export namespace types {
 	        this.max_input_tokens = source["max_input_tokens"];
 	        this.bash_timeout = source["bash_timeout"];
 	        this.output_cap = source["output_cap"];
+	        this.scope = source["scope"];
+	        this.workspace_id = source["workspace_id"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

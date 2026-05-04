@@ -23,7 +23,7 @@ func (s *Store) ListPools() ([]types.Pool, error) {
 		return nil, errors.New("store unavailable")
 	}
 	rows, err := s.DB.Query(`
-SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap
+SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id
 FROM pools
 ORDER BY priority ASC, created_at ASC, id ASC`)
 	if err != nil {
@@ -47,7 +47,7 @@ func (s *Store) ListPoolsByRole(role types.Role) ([]types.Pool, error) {
 		return nil, errors.New("store unavailable")
 	}
 	rows, err := s.DB.Query(`
-SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap
+SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id
 FROM pools
 WHERE role = ?
 ORDER BY priority ASC, created_at ASC, id ASC`, string(role))
@@ -72,7 +72,7 @@ func (s *Store) GetPool(id string) (types.Pool, error) {
 		return types.Pool{}, errors.New("store unavailable")
 	}
 	row := s.DB.QueryRow(`
-SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap
+SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id
 FROM pools WHERE id = ?`, id)
 	return scanPool(row)
 }
@@ -121,9 +121,13 @@ func (s *Store) SavePool(p types.Pool) error {
 		ms := p.BashTimeout.Milliseconds()
 		bashTimeoutMs = &ms
 	}
+	scope := string(p.Scope)
+	if scope == "" {
+		scope = string(types.PoolScopeShared)
+	}
 	_, err := s.DB.Exec(`
-INSERT INTO pools (id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pools (id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     name = excluded.name,
     provider = excluded.provider,
@@ -138,10 +142,25 @@ ON CONFLICT(id) DO UPDATE SET
     max_turns = excluded.max_turns,
     max_input_tokens = excluded.max_input_tokens,
     bash_timeout_ms = excluded.bash_timeout_ms,
-    output_cap = excluded.output_cap`,
+    output_cap = excluded.output_cap,
+    scope = excluded.scope,
+    workspace_id = excluded.workspace_id`,
 		p.ID, p.Name, string(p.Provider), p.Endpoint, p.Model,
 		p.Capacity, enabled, p.APIKey, string(p.Role), p.CreatedAt.Unix(), p.Priority, p.Temperature,
-		p.MaxTurns, p.MaxInputTokens, bashTimeoutMs, p.OutputCap)
+		p.MaxTurns, p.MaxInputTokens, bashTimeoutMs, p.OutputCap, scope, p.WorkspaceID)
+	return err
+}
+
+// RebindWorkspacePools sets scope='shared' and workspace_id='' for every pool
+// bound to workspaceID. Called on workspace deletion so capacity isn't orphaned
+// (issue #109, q1: silently rebind on delete).
+func (s *Store) RebindWorkspacePools(workspaceID string) error {
+	if s == nil || s.DB == nil {
+		return errors.New("store unavailable")
+	}
+	_, err := s.DB.Exec(
+		`UPDATE pools SET scope = 'shared', workspace_id = '' WHERE workspace_id = ?`,
+		workspaceID)
 	return err
 }
 
@@ -180,9 +199,10 @@ func scanPool(r rowScanner) (types.Pool, error) {
 	var createdAt int64
 	var temperature sql.NullFloat64
 	var maxTurns, maxInputTokens, bashTimeoutMs, outputCap sql.NullInt64
+	var scope, workspaceID string
 	if err := r.Scan(&p.ID, &p.Name, &provider, &p.Endpoint, &p.Model,
 		&p.Capacity, &enabled, &p.APIKey, &role, &createdAt, &p.Priority, &temperature,
-		&maxTurns, &maxInputTokens, &bashTimeoutMs, &outputCap); err != nil {
+		&maxTurns, &maxInputTokens, &bashTimeoutMs, &outputCap, &scope, &workspaceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return types.Pool{}, fmt.Errorf("pool not found")
 		}
@@ -214,5 +234,10 @@ func scanPool(r rowScanner) (types.Pool, error) {
 		v := int(outputCap.Int64)
 		p.OutputCap = &v
 	}
+	if scope == "" {
+		scope = string(types.PoolScopeShared)
+	}
+	p.Scope = types.PoolScope(scope)
+	p.WorkspaceID = workspaceID
 	return p, nil
 }

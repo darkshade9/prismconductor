@@ -258,6 +258,18 @@ CREATE TABLE IF NOT EXISTS pools (
 		    AND json_extract(json, '$.state') <> state`); err != nil {
 		return fmt.Errorf("backfill session json.state: %w", err)
 	}
+	// Issue #109: pool scoping — shared vs workspace-specific.
+	// Default 'shared' keeps existing rows visible to all workspaces unchanged.
+	for _, col := range []string{
+		`ALTER TABLE pools ADD COLUMN scope TEXT NOT NULL DEFAULT 'shared'`,
+		`ALTER TABLE pools ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := s.DB.Exec(col); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

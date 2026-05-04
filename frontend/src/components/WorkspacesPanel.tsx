@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { GCWorktrees, RemoveWorkspace, RunAutoArchiveNow, UpdateWorkspace } from "../../wailsjs/go/main/App";
-import { types } from "../../wailsjs/go/models";
+import { GCWorktrees, ListPools, RemoveWorkspace, RunAutoArchiveNow, UpdateWorkspace } from "../../wailsjs/go/main/App";
+import { types, workerpool } from "../../wailsjs/go/models";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { AddWorkspaceForm } from "./AddWorkspaceForm";
 import { SkillProfileEditor } from "./SkillProfileEditor";
@@ -73,6 +73,31 @@ function AutoArchiveEditor({ workspace, onSave }: { workspace: types.Workspace; 
         </button>
       </div>
     </div>
+  );
+}
+
+function PoolBindings({ workspaceID }: { workspaceID: string }) {
+  const [pools, setPools] = useState<workerpool.PoolStatus[]>([]);
+
+  useEffect(() => {
+    ListPools()
+      .then((ps) => setPools((ps ?? []).filter((r) => r.pool.scope === "workspace" && r.pool.workspace_id === workspaceID)))
+      .catch(() => {});
+  }, [workspaceID]);
+
+  if (pools.length === 0) {
+    return <div className="text-xs text-slate-500">No workspace-specific pools. Assign a pool from the Pools tab.</div>;
+  }
+  return (
+    <ul className="space-y-1">
+      {pools.map((r) => (
+        <li key={r.pool.id} className="flex items-center gap-2 text-xs">
+          <span className="text-slate-200 font-mono">{r.pool.name}</span>
+          <span className="text-slate-500">({r.pool.role})</span>
+          <span className="font-mono text-slate-400">{r.active}/{r.pool.capacity}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -190,6 +215,10 @@ export function WorkspacesPanel() {
                     <div>
                       <div className="text-xs text-slate-400 mb-2">Labels</div>
                       <LabelsPanel workspaceID={ws.id} />
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-400 mb-2">Pool bindings</div>
+                      <PoolBindings workspaceID={ws.id} />
                     </div>
                   </div>
                 )}

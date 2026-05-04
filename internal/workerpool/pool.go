@@ -154,13 +154,18 @@ func (r *Registry) Sync(rows []types.Pool) {
 // AcquireForPlan reserves a plan slot. Selection order:
 //  1. ws.SkillProfile.PreferredPlanPoolID, if set + enabled + role=plan +
 //     spawn-capable provider + free.
-//  2. Round-robin among enabled role=plan pools whose providers can spawn,
-//     starting at the registry's rolling index.
-//  3. ("", false). NO fallback to role=work — the orchestrator's auto-pull
+//  2. Workspace-specific pools bound to ws.ID (issue #109), by priority.
+//  3. Round-robin among enabled shared role=plan pools.
+//  4. ("", false). NO fallback to role=work — the orchestrator's auto-pull
 //     surfaces this as a paused-state, not a silent retry on the wrong role.
 func (r *Registry) AcquireForPlan(ws types.Workspace) (string, bool) {
 	if id, ok := r.tryPreferred(ws.SkillProfile.PreferredPlanPoolID, types.RolePlan); ok {
 		return id, true
+	}
+	if ws.ID != "" {
+		if id, ok := r.acquireWorkspaceScoped(ws.ID, types.RolePlan); ok {
+			return id, true
+		}
 	}
 	return r.acquireRoundRobin(types.RolePlan)
 }
@@ -170,6 +175,11 @@ func (r *Registry) AcquireForPlan(ws types.Workspace) (string, bool) {
 func (r *Registry) AcquireForWork(ws types.Workspace) (string, bool) {
 	if id, ok := r.tryPreferred(ws.SkillProfile.PreferredWorkPoolID, types.RoleWork); ok {
 		return id, true
+	}
+	if ws.ID != "" {
+		if id, ok := r.acquireWorkspaceScoped(ws.ID, types.RoleWork); ok {
+			return id, true
+		}
 	}
 	return r.acquireRoundRobin(types.RoleWork)
 }
@@ -216,6 +226,47 @@ func (r *Registry) tryPreferred(poolID string, role types.Role) (string, bool) {
 	return "", false
 }
 
+// acquireWorkspaceScoped tries to reserve a slot from pools whose scope=workspace
+// and workspace_id matches the given workspaceID. Pools are tried in priority
+// order (lower value = preferred). No round-robin: workspace-dedicated pools are
+// typically few and the caller falls through to shared pools on failure.
+func (r *Registry) acquireWorkspaceScoped(workspaceID string, role types.Role) (string, bool) {
+	r.mu.Lock()
+	ids := make([]string, 0)
+	for _, id := range r.order {
+		meta, ok := r.meta[id]
+		if !ok {
+			continue
+		}
+		if meta.Role != role || !meta.Enabled || meta.Capacity <= 0 {
+			continue
+		}
+		if !r.canSpawn(meta.Provider) {
+			continue
+		}
+		if meta.Scope != types.PoolScopeWorkspace || meta.WorkspaceID != workspaceID {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	sort.SliceStable(ids, func(i, j int) bool {
+		return r.meta[ids[i]].Priority < r.meta[ids[j]].Priority
+	})
+	r.mu.Unlock()
+	for _, id := range ids {
+		r.mu.RLock()
+		p := r.pools[id]
+		r.mu.RUnlock()
+		if p == nil {
+			continue
+		}
+		if p.TryAcquire() {
+			return id, true
+		}
+	}
+	return "", false
+}
+
 func (r *Registry) acquireRoundRobin(role types.Role) (string, bool) {
 	r.mu.Lock()
 	ids := make([]string, 0, len(r.order))
@@ -228,6 +279,10 @@ func (r *Registry) acquireRoundRobin(role types.Role) (string, bool) {
 			continue
 		}
 		if !r.canSpawn(meta.Provider) {
+			continue
+		}
+		// Skip workspace-specific pools; those are handled by acquireWorkspaceScoped.
+		if meta.Scope == types.PoolScopeWorkspace {
 			continue
 		}
 		ids = append(ids, id)
