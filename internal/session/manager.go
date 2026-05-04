@@ -1106,6 +1106,26 @@ func (m *Manager) Snapshot() []types.Session {
 	return out
 }
 
+// FindActiveExecuteSession returns the session ID and start time of any active
+// execute-mode session for the given workspace and issue (#113). Active means
+// the session state is running, waiting_for_input, or paused_for_question.
+// Returns found=false when no such session exists (safe to call concurrently).
+func (m *Manager) FindActiveExecuteSession(workspaceID string, issueNumber int) (id string, startedAt time.Time, found bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, rs := range m.sessions {
+		s := rs.sess
+		if s.WorkspaceID != workspaceID || s.IssueNumber != issueNumber || s.Mode != types.ModeExecute {
+			continue
+		}
+		switch s.State {
+		case types.StateRunning, types.StateWaitingForInput, types.StatePausedForQuestion:
+			return s.ID, s.StartedAt, true
+		}
+	}
+	return "", time.Time{}, false
+}
+
 // --- §10.4 / §10.5 dispatch ---
 //
 // Worker argv is provided by the LLM provider registry: each pool's Provider

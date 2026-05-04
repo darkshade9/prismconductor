@@ -306,3 +306,113 @@ func TestExecuteContinuePromptBundledMode(t *testing.T) {
 		t.Errorf("bundled prompt %q missing --revision 2", got)
 	}
 }
+
+func TestFindActiveExecuteSession_Found(t *testing.T) {
+	now := time.Now()
+	m := &Manager{
+		sessions: map[string]*runtimeSession{
+			"sess-execute": {sess: &types.Session{
+				ID:          "sess-execute",
+				WorkspaceID: "ws-1",
+				IssueNumber: 42,
+				Mode:        types.ModeExecute,
+				State:       types.StateRunning,
+				StartedAt:   now,
+			}},
+		},
+	}
+
+	id, startedAt, found := m.FindActiveExecuteSession("ws-1", 42)
+	if !found {
+		t.Fatal("expected to find active execute session, got not found")
+	}
+	if id != "sess-execute" {
+		t.Errorf("id = %q, want %q", id, "sess-execute")
+	}
+	if !startedAt.Equal(now) {
+		t.Errorf("startedAt = %v, want %v", startedAt, now)
+	}
+}
+
+func TestFindActiveExecuteSession_WrongMode(t *testing.T) {
+	m := &Manager{
+		sessions: map[string]*runtimeSession{
+			"sess-plan": {sess: &types.Session{
+				ID:          "sess-plan",
+				WorkspaceID: "ws-1",
+				IssueNumber: 42,
+				Mode:        types.ModePlan,
+				State:       types.StateRunning,
+				StartedAt:   time.Now(),
+			}},
+		},
+	}
+
+	_, _, found := m.FindActiveExecuteSession("ws-1", 42)
+	if found {
+		t.Fatal("plan-mode session should not match execute lookup")
+	}
+}
+
+func TestFindActiveExecuteSession_TerminalState(t *testing.T) {
+	m := &Manager{
+		sessions: map[string]*runtimeSession{
+			"sess-done": {sess: &types.Session{
+				ID:          "sess-done",
+				WorkspaceID: "ws-1",
+				IssueNumber: 42,
+				Mode:        types.ModeExecute,
+				State:       types.StateCompleted,
+				StartedAt:   time.Now(),
+			}},
+		},
+	}
+
+	_, _, found := m.FindActiveExecuteSession("ws-1", 42)
+	if found {
+		t.Fatal("completed session should not be returned as active")
+	}
+}
+
+func TestFindActiveExecuteSession_WrongWorkspace(t *testing.T) {
+	m := &Manager{
+		sessions: map[string]*runtimeSession{
+			"sess-other": {sess: &types.Session{
+				ID:          "sess-other",
+				WorkspaceID: "ws-2",
+				IssueNumber: 42,
+				Mode:        types.ModeExecute,
+				State:       types.StateRunning,
+				StartedAt:   time.Now(),
+			}},
+		},
+	}
+
+	_, _, found := m.FindActiveExecuteSession("ws-1", 42)
+	if found {
+		t.Fatal("session in different workspace should not match")
+	}
+}
+
+func TestFindActiveExecuteSession_PausedForQuestion(t *testing.T) {
+	m := &Manager{
+		sessions: map[string]*runtimeSession{
+			"sess-paused": {sess: &types.Session{
+				ID:          "sess-paused",
+				WorkspaceID: "ws-1",
+				IssueNumber: 7,
+				Mode:        types.ModeExecute,
+				State:       types.StatePausedForQuestion,
+				StartedAt:   time.Now(),
+			}},
+		},
+	}
+
+	id, _, found := m.FindActiveExecuteSession("ws-1", 7)
+	if !found {
+		t.Fatal("paused_for_question session should be returned as active")
+	}
+	if id != "sess-paused" {
+		t.Errorf("id = %q, want %q", id, "sess-paused")
+	}
+}
