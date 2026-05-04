@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AddWorkspace, InspectRepo, PickRepoPath } from "../../wailsjs/go/main/App";
 import { types, workspace } from "../../wailsjs/go/models";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { noAutoCorrect } from "../lib/inputs";
 
 const COLOR_PALETTE = ["#22c55e", "#06b6d4", "#a855f7", "#f59e0b", "#ef4444", "#ec4899", "#14b8a6", "#eab308"];
 
@@ -78,6 +79,7 @@ export function AddWorkspaceForm({ onDone }: { onDone: () => void }) {
     <div className="space-y-3 text-sm">
       <div className="flex items-center gap-2">
         <input
+          {...noAutoCorrect}
           type="text"
           value={path}
           onChange={(e) => setPath(e.target.value)}
@@ -117,6 +119,7 @@ export function AddWorkspaceForm({ onDone }: { onDone: () => void }) {
             <label className="block">
               <div className="text-xs text-slate-500 mb-1">ID</div>
               <input
+                {...noAutoCorrect}
                 value={id}
                 onChange={(e) => setID(e.target.value)}
                 className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200"
@@ -125,6 +128,7 @@ export function AddWorkspaceForm({ onDone }: { onDone: () => void }) {
             <label className="block">
               <div className="text-xs text-slate-500 mb-1">Display name</div>
               <input
+                {...noAutoCorrect}
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200"

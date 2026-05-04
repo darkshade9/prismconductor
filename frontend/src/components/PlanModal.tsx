@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { noAutoCorrect } from "../lib/inputs";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ApprovePlan, LatestPlan, PlanCostEstimate, RejectPlan, SetIssueLabels, SubmitAnswers, WriteAnswersOnly } from "../../wailsjs/go/main/App";
@@ -288,6 +289,7 @@ export function PlanModal({
 
               <Section title="Refine plan (free-form)">
                 <textarea
+                  {...noAutoCorrect}
                   value={refineText}
                   onChange={(e) => setRefineText(e.target.value)}
                   rows={3}

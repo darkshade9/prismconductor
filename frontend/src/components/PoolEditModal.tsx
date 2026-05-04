@@ -4,6 +4,7 @@ import {
   SavePool,
 } from "../../wailsjs/go/main/App";
 import { main, types } from "../../wailsjs/go/models";
+import { noAutoCorrect } from "../lib/inputs";
 
 type Role = "plan" | "work" | "orchestrator";
 
@@ -248,6 +249,7 @@ export function PoolEditModal({
             <div>
               <div className="text-xs text-slate-500 mb-1">Endpoint URL</div>
               <input
+                {...noAutoCorrect}
                 value={endpoint}
                 onChange={(e) => setEndpoint(e.target.value)}
                 onBlur={onEndpointBlur}
@@ -261,6 +263,7 @@ export function PoolEditModal({
             <div>
               <div className="text-xs text-slate-500 mb-1">API key (optional)</div>
               <input
+                {...noAutoCorrect}
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
@@ -287,6 +290,7 @@ export function PoolEditModal({
               </select>
             ) : (
               <input
+                {...noAutoCorrect}
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 placeholder="model id (free text)"
@@ -335,6 +339,7 @@ export function PoolEditModal({
           <div>
             <div className="text-xs text-slate-500 mb-1">Name</div>
             <input
+              {...noAutoCorrect}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={`${providerKind}-${modelTail(model) || "pool"}`}
@@ -345,6 +350,7 @@ export function PoolEditModal({
           <div>
             <div className="text-xs text-slate-500 mb-1">Temperature (optional)</div>
             <input
+              {...noAutoCorrect}
               type="number"
               min={0}
               max={2}
@@ -380,6 +386,7 @@ export function PoolEditModal({
                   <div>
                     <div className="text-xs text-slate-500 mb-1">Max turns</div>
                     <input
+                      {...noAutoCorrect}
                       type="number"
                       min={1}
                       step={1}
@@ -392,6 +399,7 @@ export function PoolEditModal({
                   <div>
                     <div className="text-xs text-slate-500 mb-1">Max input tokens</div>
                     <input
+                      {...noAutoCorrect}
                       type="number"
                       min={1}
                       step={1}
@@ -404,6 +412,7 @@ export function PoolEditModal({
                   <div>
                     <div className="text-xs text-slate-500 mb-1">Bash timeout (seconds)</div>
                     <input
+                      {...noAutoCorrect}
                       type="number"
                       min={1}
                       step={1}
@@ -416,6 +425,7 @@ export function PoolEditModal({
                   <div>
                     <div className="text-xs text-slate-500 mb-1">Output cap (KB)</div>
                     <input
+                      {...noAutoCorrect}
                       type="number"
                       min={1}
                       step={1}

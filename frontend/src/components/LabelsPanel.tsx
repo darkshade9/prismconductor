@@ -3,6 +3,7 @@ import { CreateLabel, DeleteLabel, UpdateLabel } from "../../wailsjs/go/main/App
 import { types } from "../../wailsjs/go/models";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
 import { getContrastText, normalizeHex } from "../lib/contrast";
+import { noAutoCorrect } from "../lib/inputs";
 
 type Props = {
   workspaceID: string;
@@ -90,6 +91,7 @@ function NewLabelForm({
       <div className="text-xs text-slate-400">+ New label</div>
       <div className="flex items-center gap-2">
         <input
+          {...noAutoCorrect}
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -112,6 +114,7 @@ function NewLabelForm({
         </button>
       </div>
       <input
+        {...noAutoCorrect}
         type="text"
         value={description}
         onChange={(e) => setDescription(e.target.value)}
@@ -181,6 +184,7 @@ function LabelRow({ workspaceID, label }: { workspaceID: string; label: types.La
             className="h-7 w-10 cursor-pointer bg-slate-900 border border-slate-700 rounded"
           />
           <input
+            {...noAutoCorrect}
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -201,6 +205,7 @@ function LabelRow({ workspaceID, label }: { workspaceID: string; label: types.La
           </button>
         </div>
         <input
+          {...noAutoCorrect}
           type="text"
           value={description}
           onChange={(e) => setDescription(e.target.value)}

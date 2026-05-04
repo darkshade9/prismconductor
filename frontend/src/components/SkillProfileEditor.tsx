@@ -3,6 +3,7 @@ import { DiscoverWorkspaceSkills, ListPools, UpdateWorkspace } from "../../wails
 import { types, workerpool } from "../../wailsjs/go/models";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { SkillDropdown } from "./SkillDropdown";
+import { noAutoCorrect } from "../lib/inputs";
 
 type SkillMode = "bundled" | "hybrid" | "native";
 const MODES: SkillMode[] = ["bundled", "hybrid", "native"];
@@ -209,6 +210,7 @@ function NativeRow({
     <label className="flex items-center gap-2">
       <span className="w-16 text-xs text-slate-500">{label}</span>
       <input
+        {...noAutoCorrect}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder="/start-issue"

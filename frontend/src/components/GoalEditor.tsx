@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { types } from "../../wailsjs/go/models";
 import { useGoalStore } from "../stores/goalStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { noAutoCorrect } from "../lib/inputs";
 
 export function GoalEditor({
   open,
@@ -79,13 +80,13 @@ export function GoalEditor({
         </div>
         <div className="p-4 space-y-3 text-sm overflow-y-auto">
           <Field label="Title">
-            <input value={title} onChange={(e) => setTitle(e.target.value)} className={inputCls} />
+            <input {...noAutoCorrect} value={title} onChange={(e) => setTitle(e.target.value)} className={inputCls} />
           </Field>
           <Field label="Intent (markdown)">
-            <textarea value={intent} onChange={(e) => setIntent(e.target.value)} rows={3} className={inputCls} />
+            <textarea {...noAutoCorrect} value={intent} onChange={(e) => setIntent(e.target.value)} rows={3} className={inputCls} />
           </Field>
           <Field label="Acceptance rule">
-            <textarea value={acceptance} onChange={(e) => setAcceptance(e.target.value)} rows={2} className={inputCls} />
+            <textarea {...noAutoCorrect} value={acceptance} onChange={(e) => setAcceptance(e.target.value)} rows={2} className={inputCls} />
           </Field>
           <Field label="Workspace (optional — blank = cross-workspace)">
             <select value={workspaceID} onChange={(e) => setWorkspaceID(e.target.value)} className={inputCls}>
@@ -97,14 +98,14 @@ export function GoalEditor({
           </Field>
           <div className="grid grid-cols-2 gap-2">
             <Field label="Labels (comma-separated)">
-              <input value={labels} onChange={(e) => setLabels(e.target.value)} className={inputCls} />
+              <input {...noAutoCorrect} value={labels} onChange={(e) => setLabels(e.target.value)} className={inputCls} />
             </Field>
             <Field label="Milestone">
-              <input value={milestone} onChange={(e) => setMilestone(e.target.value)} className={inputCls} />
+              <input {...noAutoCorrect} value={milestone} onChange={(e) => setMilestone(e.target.value)} className={inputCls} />
             </Field>
           </div>
           <Field label="Free-text match (title/body)">
-            <input value={freeText} onChange={(e) => setFreeText(e.target.value)} className={inputCls} />
+            <input {...noAutoCorrect} value={freeText} onChange={(e) => setFreeText(e.target.value)} className={inputCls} />
           </Field>
           {error && <div className="text-red-400 text-xs">{error}</div>}
         </div>

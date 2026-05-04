@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useIssueStore } from "../stores/issueStore";
+import { noAutoCorrect } from "../lib/inputs";
 
 const DEBOUNCE_MS = 200;
 
@@ -42,6 +43,7 @@ export function TitleSearch() {
   return (
     <div className="relative flex items-center">
       <input
+        {...noAutoCorrect}
         ref={inputRef}
         type="text"
         value={value}
