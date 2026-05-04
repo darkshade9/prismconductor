@@ -94,10 +94,7 @@ func (o *Orchestrator) enqueuePending(iss *types.Issue, role types.Role, action 
 		log.Printf("orchestrator: enqueue pending pool (#%d): %v", iss.Number, err)
 		return
 	}
-	if loaded, err := o.store.LoadIssue(iss.WorkspaceID, iss.Number); err == nil && !loaded.WaitingForPool {
-		loaded.WaitingForPool = true
-		_, _ = o.store.SaveIssue(loaded)
-	}
+	_ = o.store.SetIssueWaitingForPool(iss.WorkspaceID, iss.Number, true)
 	o.bus.Publish(eventbus.EvtPendingPoolEnqueued, eventbus.PendingPoolChange{
 		WorkspaceID: iss.WorkspaceID,
 		IssueNumber: iss.Number,
@@ -107,15 +104,19 @@ func (o *Orchestrator) enqueuePending(iss *types.Issue, role types.Role, action 
 
 // clearWaitingForPool clears the WaitingForPool flag and removes any pending
 // rows for the issue. No-op if the issue is already clear.
+//
+// Uses the dedicated SetIssueWaitingForPool atomic SQL update instead of
+// SaveIssue. SaveIssue preserves `waiting_for_pool=true` across re-saves to
+// defend against the GitHub poll cycle clobbering the flag, but that
+// preservation also blocks the legitimate clear path: a Load → mutate →
+// SaveIssue would re-read prev=true and preservation would force the flag
+// back to true, so the flag could never actually be cleared. Witnessed
+// live on issue #144 (PR #147 already in REVIEW, but card still glowing
+// pink "waiting for available agent pool" with no pending_pool_for row).
 func (o *Orchestrator) clearWaitingForPool(workspaceID string, issueNumber int) {
 	if o.store == nil {
 		return
 	}
 	_ = o.store.DeletePendingForIssue(workspaceID, issueNumber)
-	loaded, err := o.store.LoadIssue(workspaceID, issueNumber)
-	if err != nil || !loaded.WaitingForPool {
-		return
-	}
-	loaded.WaitingForPool = false
-	_, _ = o.store.SaveIssue(loaded)
+	_ = o.store.SetIssueWaitingForPool(workspaceID, issueNumber, false)
 }

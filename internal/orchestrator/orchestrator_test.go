@@ -54,6 +54,7 @@ func (s *stubStore) EnqueuePendingPool(string, int, types.Role, string) error { 
 func (s *stubStore) ListPendingPools(int) ([]types.PendingPoolRequest, error)  { return nil, nil }
 func (s *stubStore) DequeuePendingPool(int64) error                            { return nil }
 func (s *stubStore) DeletePendingForIssue(string, int) error                   { return nil }
+func (s *stubStore) SetIssueWaitingForPool(string, int, bool) error            { return nil }
 
 type stubPool struct {
 	free        int

@@ -788,3 +788,90 @@ func TestMarkIssueClosedSetsClosedAt(t *testing.T) {
 		t.Errorf("closed_at %d is before test start %d", *closedAt, before.Unix())
 	}
 }
+
+// SetIssueWaitingForPool MUST bypass SaveIssue's preservation rule. The
+// preservation forces waiting_for_pool back to true on every re-save when
+// prev was true (defends against the GitHub-poll cycle). That preservation
+// also blocked the legitimate clear path: orchestrator's clearWaitingForPool
+// did Load → set false → SaveIssue, and SaveIssue re-read prev=true,
+// preservation triggered, the flag was forced back to true. Witnessed live
+// on issue #144 (PR already in REVIEW, card stuck pink "waiting" with no
+// pending_pool_for row). Atomic json_set bypasses SaveIssue entirely.
+func TestSetIssueWaitingForPool_ClearsBypassingPreservation(t *testing.T) {
+	s := newTestStore(t)
+	// Save with WaitingForPool=true (the conductor's enqueue path).
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID:    "ws1",
+		Number:         144,
+		State:          "open",
+		Column:         types.ColReview,
+		WaitingForPool: true,
+	}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+	// Sanity: the flag is set.
+	iss, err := s.LoadIssue("ws1", 144)
+	if err != nil {
+		t.Fatalf("LoadIssue: %v", err)
+	}
+	if !iss.WaitingForPool {
+		t.Fatal("setup: expected WaitingForPool=true after SaveIssue")
+	}
+
+	// Clear via the dedicated atomic method.
+	if err := s.SetIssueWaitingForPool("ws1", 144, false); err != nil {
+		t.Fatalf("SetIssueWaitingForPool: %v", err)
+	}
+	iss, err = s.LoadIssue("ws1", 144)
+	if err != nil {
+		t.Fatalf("LoadIssue post-clear: %v", err)
+	}
+	if iss.WaitingForPool {
+		t.Fatal("WaitingForPool should be false after SetIssueWaitingForPool(false), but it's true (preservation rule incorrectly fired)")
+	}
+
+	// And a SUBSEQUENT SaveIssue (e.g. from a GitHub poll) must NOT
+	// resurrect the flag — prev is now false in the DB, so preservation
+	// has nothing to preserve.
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      144,
+		State:       "open",
+		Column:      types.ColReview,
+		// WaitingForPool not set in the incoming struct (zero value = false)
+	}); err != nil {
+		t.Fatalf("post-clear SaveIssue: %v", err)
+	}
+	iss, err = s.LoadIssue("ws1", 144)
+	if err != nil {
+		t.Fatalf("LoadIssue post-poll: %v", err)
+	}
+	if iss.WaitingForPool {
+		t.Fatal("WaitingForPool resurrected after a clean poll — preservation rule fired against a falsely-true prev")
+	}
+}
+
+// Sanity: SetIssueWaitingForPool can also SET to true atomically without
+// going through SaveIssue. Used by enqueue paths to avoid load-modify-write
+// races against the GitHub poll cycle.
+func TestSetIssueWaitingForPool_SetsTrue(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      150,
+		State:       "open",
+		Column:      types.ColInProgress,
+	}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+	if err := s.SetIssueWaitingForPool("ws1", 150, true); err != nil {
+		t.Fatalf("SetIssueWaitingForPool: %v", err)
+	}
+	iss, err := s.LoadIssue("ws1", 150)
+	if err != nil {
+		t.Fatalf("LoadIssue: %v", err)
+	}
+	if !iss.WaitingForPool {
+		t.Fatal("WaitingForPool should be true after SetIssueWaitingForPool(true)")
+	}
+}
