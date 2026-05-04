@@ -58,6 +58,18 @@ export function DiscoverWorkspaceSkills(arg1) {
   return window['go']['main']['App']['DiscoverWorkspaceSkills'](arg1);
 }
 
+export function ListAvailableSkills(arg1) {
+  return window['go']['main']['App']['ListAvailableSkills'](arg1);
+}
+
+export function ValidatePipeline(arg1) {
+  return window['go']['main']['App']['ValidatePipeline'](arg1);
+}
+
+export function SaveWorkspacePipeline(arg1, arg2) {
+  return window['go']['main']['App']['SaveWorkspacePipeline'](arg1, arg2);
+}
+
 export function EstimateSpawnCost(arg1, arg2, arg3) {
   return window['go']['main']['App']['EstimateSpawnCost'](arg1, arg2, arg3);
 }

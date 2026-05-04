@@ -1367,11 +1367,14 @@ export namespace types {
 	    work_seconds_plan?: number;
 	    work_seconds_execute?: number;
 	    cost_usd?: number;
-	
+	    pipeline_step_id?: string;
+	    pipeline_loops?: Record<string, number>;
+	    pipeline_version?: number;
+
 	    static createFrom(source: any = {}) {
 	        return new Issue(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.number = source["number"];
@@ -1399,6 +1402,9 @@ export namespace types {
 	        this.work_seconds_plan = source["work_seconds_plan"];
 	        this.work_seconds_execute = source["work_seconds_execute"];
 	        this.cost_usd = source["cost_usd"];
+	        this.pipeline_step_id = source["pipeline_step_id"];
+	        this.pipeline_loops = source["pipeline_loops"];
+	        this.pipeline_version = source["pipeline_version"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1584,11 +1590,12 @@ export namespace types {
 	    input_tokens?: number;
 	    output_tokens?: number;
 	    estimated_cost_cents?: number;
-	
+	    pipeline_step_name?: string;
+
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1607,6 +1614,7 @@ export namespace types {
 	        this.input_tokens = source["input_tokens"];
 	        this.output_tokens = source["output_tokens"];
 	        this.estimated_cost_cents = source["estimated_cost_cents"];
+	        this.pipeline_step_name = source["pipeline_step_name"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1706,6 +1714,82 @@ export namespace types {
 		}
 	}
 	
+	export class PipelineStep {
+	    id: string;
+	    name: string;
+	    skill_ref: SkillRef;
+	    auto_chain: boolean;
+	    max_loops: number;
+	    on_success: string;
+	    on_fail: string;
+
+	    static createFrom(source: any = {}) {
+	        return new PipelineStep(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.skill_ref = this.convertValues(source["skill_ref"], SkillRef);
+	        this.auto_chain = source["auto_chain"];
+	        this.max_loops = source["max_loops"];
+	        this.on_success = source["on_success"];
+	        this.on_fail = source["on_fail"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+	export class WorkspacePipeline {
+	    steps: PipelineStep[];
+	    version: number;
+
+	    static createFrom(source: any = {}) {
+	        return new WorkspacePipeline(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.steps = this.convertValues(source["steps"], PipelineStep);
+	        this.version = source["version"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
 	export class Workspace {
 	    id: string;
 	    display_name: string;
@@ -1719,11 +1803,12 @@ export namespace types {
 	    conventions: ConventionHints;
 	    enabled: boolean;
 	    auto_archive?: AutoArchive;
-	
+	    pipeline?: WorkspacePipeline;
+
 	    static createFrom(source: any = {}) {
 	        return new Workspace(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1738,6 +1823,7 @@ export namespace types {
 	        this.conventions = this.convertValues(source["conventions"], ConventionHints);
 	        this.enabled = source["enabled"];
 	        this.auto_archive = this.convertValues(source["auto_archive"], AutoArchive);
+	        this.pipeline = this.convertValues(source["pipeline"], WorkspacePipeline);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

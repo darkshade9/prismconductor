@@ -18,6 +18,32 @@ type Workspace struct {
 	Conventions   ConventionHints `json:"conventions"`
 	Enabled       bool            `json:"enabled"`
 	AutoArchive   AutoArchive     `json:"auto_archive,omitempty"`
+	// Pipeline holds the custom pipeline configuration for this workspace.
+	// Nil means "use the default Plan→Execute→Close flow" (issue #146).
+	Pipeline *WorkspacePipeline `json:"pipeline,omitempty"`
+}
+
+// WorkspacePipeline is the per-workspace pipeline configuration (issue #146).
+// Steps define a DAG of work items that run after the core Plan+Execute cycle.
+// A nil pipeline means use the default Execute→Close behavior.
+type WorkspacePipeline struct {
+	Steps   []PipelineStep `json:"steps"`
+	Version int            `json:"version"` // incremented on each save
+}
+
+// PipelineStep is one node in the pipeline DAG (issue #146).
+type PipelineStep struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	SkillRef  SkillRef `json:"skill_ref"`
+	// AutoChain controls whether the next step spawns automatically on success.
+	// false (default) = gated: user must click Continue before the next step spawns.
+	AutoChain bool `json:"auto_chain"`
+	// MaxLoops is the maximum number of times this step may run for a single card.
+	// 0 means the step is not a loop target. Steps in a cycle must have MaxLoops > 0.
+	MaxLoops  int    `json:"max_loops"`
+	OnSuccess string `json:"on_success"` // step ID of next step on PASS; "" = done
+	OnFail    string `json:"on_fail"`    // step ID of next step on FAIL; "" = stop/BLOCKED
 }
 
 // AutoArchive configures per-workspace automatic archiving of DONE cards whose
@@ -249,6 +275,12 @@ type Issue struct {
 	// pool had free capacity (issue #40). Cleared on successful drain.
 	WaitingForPool bool `json:"waiting_for_pool,omitempty"`
 
+	// Pipeline tracking fields (issue #146). Stamped at first pipeline-step
+	// spawn so in-flight cards continue on the saved pipeline version.
+	PipelineStepID  string         `json:"pipeline_step_id,omitempty"`
+	PipelineLoops   map[string]int `json:"pipeline_loops,omitempty"`
+	PipelineVersion int            `json:"pipeline_version,omitempty"`
+
 	// WorkSeconds is the cumulative active work time (plan + execute sessions)
 	// accumulated from completed sessions. Updated atomically when a session
 	// ends; preserved across GitHub poll re-saves (issue #46).
@@ -350,6 +382,11 @@ type Session struct {
 	// TODO/PLAN. The session row is preserved for audit; the UI ignores
 	// acknowledged sessions when computing lastFailure/activeSession overlays.
 	AcknowledgedAt *int64 `json:"acknowledged_at,omitempty"`
+
+	// PipelineStepName is non-empty when this session is running a custom
+	// pipeline step (issue #146). Used by the card StatusRow to display the
+	// active step name instead of the generic "working" label.
+	PipelineStepName string `json:"pipeline_step_name,omitempty"`
 
 	// TranscriptOffset is the byte offset into the transcript file of the
 	// last fully-processed line (issue #54). Lives on the sessions column,
