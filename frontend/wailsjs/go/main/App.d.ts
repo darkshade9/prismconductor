@@ -41,6 +41,12 @@ export function DiscoverWorkspaceSkills(arg1:string):Promise<Array<types.SkillRe
 
 export function EstimateSpawnCost(arg1:string,arg2:number,arg3:string):Promise<main.SpawnEstimate>;
 
+export function ListAvailableSkills(arg1:string):Promise<Array<types.SkillRef>>;
+
+export function ValidatePipeline(arg1:types.WorkspacePipeline):Promise<void>;
+
+export function SaveWorkspacePipeline(arg1:string,arg2:types.WorkspacePipeline):Promise<void>;
+
 export function FetchIssueDetail(arg1:string,arg2:number):Promise<types.Issue>;
 
 export function FetchPRChecks(arg1:string,arg2:number):Promise<string>;

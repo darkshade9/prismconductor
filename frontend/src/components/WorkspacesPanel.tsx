@@ -3,6 +3,7 @@ import { GCWorktrees, ListPools, RemoveWorkspace, RunAutoArchiveNow, UpdateWorks
 import { types, workerpool } from "../../wailsjs/go/models";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { AddWorkspaceForm } from "./AddWorkspaceForm";
+import { PipelineEditor } from "./PipelineEditor";
 import { SkillProfileEditor } from "./SkillProfileEditor";
 import { LabelsPanel } from "./LabelsPanel";
 import { noAutoCorrect } from "../lib/inputs";
@@ -213,6 +214,10 @@ export function WorkspacesPanel() {
                 {isExpanded && (
                   <div className="mt-2 space-y-4">
                     <SkillProfileEditor workspace={ws} />
+                    <div>
+                      <div className="text-xs text-slate-400 mb-2">Pipeline</div>
+                      <PipelineEditor workspace={ws} />
+                    </div>
                     <AutoArchiveEditor workspace={ws} onSave={refresh} />
                     <div>
                       <div className="text-xs text-slate-400 mb-2">Labels</div>

@@ -34,6 +34,7 @@ import (
 	"prismconductor/internal/llm"
 	"prismconductor/internal/orchestrator"
 	"prismconductor/internal/session"
+	"prismconductor/internal/pipeline"
 	"prismconductor/internal/skills"
 	"prismconductor/internal/skills/bundle"
 	"prismconductor/internal/store"
@@ -1785,6 +1786,50 @@ func (a *App) OpenBundledSkill(name string) error {
 	}
 	wruntime.BrowserOpenURL(a.ctx, "file://"+path)
 	return nil
+}
+
+// --- Pipeline (§issue #146) ---
+
+// ListAvailableSkills returns all skills available for use as pipeline steps:
+// bundled skills plus any discovered in the workspace's repo directories.
+func (a *App) ListAvailableSkills(workspaceID string) ([]types.SkillRef, error) {
+	if a.wsReg == nil {
+		return nil, fmt.Errorf("workspace registry not ready")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return nil, fmt.Errorf("workspace %q not found", workspaceID)
+	}
+	return skills.ScanForPipeline(ws.RepoPath, bundle.FS)
+}
+
+// ValidatePipeline checks the pipeline for structural errors: duplicate IDs,
+// unknown step references, and uncapped cycles (q3: no).
+func (a *App) ValidatePipeline(p types.WorkspacePipeline) error {
+	return pipeline.Validate(&p)
+}
+
+// SaveWorkspacePipeline persists the pipeline configuration for a workspace.
+// The pipeline version is incremented on each save so in-flight cards that
+// were stamped with an older version continue on their saved pipeline.
+func (a *App) SaveWorkspacePipeline(workspaceID string, p types.WorkspacePipeline) error {
+	if a.wsReg == nil {
+		return fmt.Errorf("workspace registry not ready")
+	}
+	if err := pipeline.Validate(&p); err != nil {
+		return fmt.Errorf("invalid pipeline: %w", err)
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("workspace %q not found", workspaceID)
+	}
+	if ws.Pipeline != nil {
+		p.Version = ws.Pipeline.Version + 1
+	} else {
+		p.Version = 1
+	}
+	ws.Pipeline = &p
+	return a.wsReg.Update(ws)
 }
 
 // --- Plans + Q&A loop (§9, §10) ---

@@ -476,6 +476,7 @@ function StatusRow({
       activeSession.state === "running" &&
       prNumber != null &&
       column === "in_progress";
+    const pipelineStepName = activeSession.pipeline_step_name;
     const label = isBlocked
       ? "blocked"
       : activeSession.state === "waiting_for_input"
@@ -484,6 +485,8 @@ function StatusRow({
         : "needs input"
       : planMode
       ? "planning"
+      : pipelineStepName
+      ? pipelineStepName
       : isContinue
       ? `continuing PR #${prNumber}`
       : "working";
