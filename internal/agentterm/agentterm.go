@@ -61,7 +61,15 @@ func New(onData DataHandler, onExit ExitHandler) *Manager {
 
 // Start spawns a PTY-backed subprocess for workspaceID, killing any existing
 // session first. Returns the child PID.
-func (m *Manager) Start(workspaceID, bin string, args []string, cols, rows uint16) (int, error) {
+//
+// cwd is the working directory the subprocess inherits — almost always the
+// workspace's RepoPath. When empty, the subprocess inherits the conductor's
+// own cwd (which on macOS Wails is typically `/` because the app bundle
+// launches from Finder); that produced a real bug where `claude`, `aider`,
+// etc. opened with `pwd` pointing at the wrong directory and couldn't see
+// the user's repo until they manually `cd`'d. Always pass the workspace
+// RepoPath from app.go's StartAgentSession.
+func (m *Manager) Start(workspaceID, bin string, args []string, cwd string, cols, rows uint16) (int, error) {
 	m.mu.Lock()
 	old, hadOld := m.sessions[workspaceID]
 	if hadOld {
@@ -75,6 +83,9 @@ func (m *Manager) Start(workspaceID, bin string, args []string, cols, rows uint1
 
 	cmd := exec.Command(bin, args...)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {

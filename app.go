@@ -3610,11 +3610,29 @@ func (a *App) ListAvailableAgents() []types.AgentInfo {
 
 // StartAgentSession spawns an ephemeral PTY-backed agent for the workspace.
 // Any existing session for that workspace is killed first.
+//
+// Resolves the workspace's RepoPath as the subprocess cwd. Without this,
+// the agent inherits the conductor's own cwd (on macOS Wails: typically
+// `/` because Finder-launched .app bundles start there), so `claude` /
+// `aider` / etc. open with `pwd` pointing at the wrong directory and
+// can't see the user's repo until they manually `cd`. We refuse to spawn
+// without a resolvable workspace — the agent panel is workspace-scoped.
 func (a *App) StartAgentSession(workspaceID, agentBin string, args []string, cols, rows uint16) (*types.AgentTermSession, error) {
 	if a.agentTerm == nil {
 		return nil, fmt.Errorf("agent terminal manager unavailable")
 	}
-	pid, err := a.agentTerm.Start(workspaceID, agentBin, args, cols, rows)
+	if a.wsReg == nil {
+		return nil, fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return nil, fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	cwd := ws.RepoPath
+	if cwd == "" {
+		return nil, fmt.Errorf("workspace %q has no repo_path configured", workspaceID)
+	}
+	pid, err := a.agentTerm.Start(workspaceID, agentBin, args, cwd, cols, rows)
 	if err != nil {
 		return nil, err
 	}
