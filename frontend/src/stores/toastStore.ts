@@ -12,6 +12,8 @@ export type Toast = {
   issue_number: number;
   pr_url?: string;
   action: ToastAction;
+  /** When true the toast will not auto-dismiss — caller must dismiss() it explicitly. */
+  persist?: boolean;
 };
 
 const MAX_VISIBLE = 3;
@@ -26,6 +28,14 @@ export const useToastStore = create<State>((set) => ({
   recent: [],
   push: (t) =>
     set((s) => {
+      // If a toast with the same id already exists replace it in place so
+      // persistent "fetching…" toasts update without position churn.
+      const idx = s.recent.findIndex((x) => x.id === t.id);
+      if (idx >= 0) {
+        const next = [...s.recent];
+        next[idx] = t;
+        return { recent: next };
+      }
       const next = [...s.recent, t];
       while (next.length > MAX_VISIBLE) next.shift();
       return { recent: next };

@@ -217,7 +217,56 @@ function App() {
       refreshArchivedCount();
     });
     const pushToast = useToastStore.getState().push;
+    const dismissToast = useToastStore.getState().dismiss;
     const offToast = EventsOn("toast", (t: ToastT) => pushToast(t));
+
+    const offWsAdded = EventsOn(
+      "bus.workspace_added",
+      async (data: { workspace_id: string; workspace_name: string }) => {
+        await refreshWorkspaces();
+        useWorkspaceStore.getState().setSelected(data.workspace_id);
+        pushToast({
+          id: `ws-fetch-${data.workspace_id}`,
+          level: "info",
+          title: data.workspace_name || data.workspace_id,
+          body: "Fetching issues…",
+          workspace_id: data.workspace_id,
+          issue_number: 0,
+          action: "none",
+          persist: true,
+        });
+      },
+    );
+
+    const offWsFetchDone = EventsOn(
+      "bus.workspace_fetch_complete",
+      (data: { workspace_id: string; workspace_name: string; success: boolean; issue_count: number; error?: string }) => {
+        dismissToast(`ws-fetch-${data.workspace_id}`);
+        refreshIssues(data.workspace_id);
+        if (data.success) {
+          pushToast({
+            id: `ws-fetch-ok-${data.workspace_id}-${Date.now()}`,
+            level: "success",
+            title: data.workspace_name || data.workspace_id,
+            body: `Fetched ${data.issue_count} issue${data.issue_count === 1 ? "" : "s"}`,
+            workspace_id: data.workspace_id,
+            issue_number: 0,
+            action: "none",
+          });
+        } else {
+          pushToast({
+            id: `ws-fetch-err-${data.workspace_id}-${Date.now()}`,
+            level: "error",
+            title: data.workspace_name || data.workspace_id,
+            body: data.error ?? "Failed to fetch issues",
+            workspace_id: data.workspace_id,
+            issue_number: 0,
+            action: "none",
+          });
+        }
+      },
+    );
+
     return () => {
       if (typeof offLine === "function") offLine();
       if (typeof offState === "function") offState();
@@ -242,6 +291,8 @@ function App() {
       if (typeof offPause === "function") offPause();
       if (typeof offArchived === "function") offArchived();
       if (typeof offToast === "function") offToast();
+      if (typeof offWsAdded === "function") offWsAdded();
+      if (typeof offWsFetchDone === "function") offWsFetchDone();
     };
   }, [appendLine, setMeta, refreshWorkspaces, refreshGoals, refreshIssues, markPlanReady, clearPlanReady, selectedWorkspace, refreshArchived, refreshArchivedCount]);
 

@@ -43,6 +43,10 @@ const (
 	// Issue #124: PR merge-conflict detection and resolution worker.
 	EvtPRConflictsDetected EventType = "pr_conflicts_detected"
 	EvtPRConflictsResolved EventType = "pr_conflicts_resolved"
+
+	// Issue #108: auto-refresh issues when a workspace is added.
+	EvtWorkspaceAdded        EventType = "workspace_added"
+	EvtWorkspaceFetchComplete EventType = "workspace_fetch_complete"
 )
 
 type Event struct {
@@ -116,6 +120,16 @@ type PRConflictsResolved struct {
 	WorkspaceID string `json:"workspace_id"`
 	IssueNumber int    `json:"issue_number"`
 	PRNumber    int    `json:"pr_number"`
+}
+
+// WorkspaceFetchComplete is the payload for EvtWorkspaceFetchComplete (#108). Published
+// after an immediate fetch triggered by AddWorkspace completes (success or failure).
+type WorkspaceFetchComplete struct {
+	WorkspaceID   string `json:"workspace_id"`
+	WorkspaceName string `json:"workspace_name"`
+	Success       bool   `json:"success"`
+	IssueCount    int    `json:"issue_count"`
+	Error         string `json:"error,omitempty"`
 }
 
 type Handler func(Event)
