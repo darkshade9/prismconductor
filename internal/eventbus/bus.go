@@ -47,6 +47,9 @@ const (
 	// Issue #108: auto-refresh issues when a workspace is added.
 	EvtWorkspaceAdded        EventType = "workspace_added"
 	EvtWorkspaceFetchComplete EventType = "workspace_fetch_complete"
+
+	// Issue #157: NEEDS_PR state — execute completed but push failed.
+	EvtNeedsPR EventType = "needs_pr"
 )
 
 type Event struct {
@@ -130,6 +133,18 @@ type WorkspaceFetchComplete struct {
 	Success       bool   `json:"success"`
 	IssueCount    int    `json:"issue_count"`
 	Error         string `json:"error,omitempty"`
+}
+
+// NeedsPREvent is the payload for EvtNeedsPR (#157). Published when an execute
+// session emits the NEEDS_PR: sentinel, signalling that the code is committed
+// locally but the push could not complete.
+type NeedsPREvent struct {
+	WorkspaceID string `json:"workspace_id"`
+	IssueNumber int    `json:"issue_number"`
+	Branch      string `json:"branch"`
+	WorktreeDir string `json:"worktree_dir"`
+	Reason      string `json:"reason"`
+	Kind        string `json:"kind"` // "commit_signing" | "push"
 }
 
 type Handler func(Event)

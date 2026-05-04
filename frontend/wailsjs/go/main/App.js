@@ -22,6 +22,10 @@ export function ArchiveDone(arg1) {
   return window['go']['main']['App']['ArchiveDone'](arg1);
 }
 
+export function AttachManualPR(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AttachManualPR'](arg1, arg2, arg3);
+}
+
 export function CancelSession(arg1) {
   return window['go']['main']['App']['CancelSession'](arg1);
 }

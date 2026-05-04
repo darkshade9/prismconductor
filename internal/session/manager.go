@@ -81,6 +81,11 @@ type PlanReadyHandler func(sess types.Session, planPath string)
 // it on the issue row, and publishing EvtPROpened.
 type PROpenedHandler func(sess types.Session, prURL string)
 
+// NeedsPRHandler is fired when the worker prints the "NEEDS_PR: <reason>"
+// sentinel (#157). The handler is responsible for persisting NeedsPRInfo on
+// the issue row, moving the card to REVIEW, and publishing EvtNeedsPR.
+type NeedsPRHandler func(sess types.Session, branch, worktreeDir, reason string)
+
 // ActivityHandler receives a session-liveness ping (most recent tool call,
 // running tool count). Used to drive the UI's "still alive, doing X" hint.
 // Implementations should debounce — emissions are already throttled at the
@@ -99,6 +104,7 @@ type Manager struct {
 	onStateChange  StateChangeHandler
 	onPlanReady    PlanReadyHandler
 	onPROpened     PROpenedHandler
+	onNeedsPR      NeedsPRHandler
 	onActivity     ActivityHandler
 	onRateLimit    RateLimitHandler
 	providers      *llm.Registry
@@ -277,6 +283,10 @@ func (m *Manager) SetOnPlanReady(h PlanReadyHandler) { m.onPlanReady = h }
 // SetOnPROpened registers the handler invoked when a worker prints the
 // "PR_OPENED: <url>" sentinel.
 func (m *Manager) SetOnPROpened(h PROpenedHandler) { m.onPROpened = h }
+
+// SetOnNeedsPR registers the handler invoked when a worker prints the
+// "NEEDS_PR: <reason>" sentinel (#157).
+func (m *Manager) SetOnNeedsPR(h NeedsPRHandler) { m.onNeedsPR = h }
 
 // SetOnActivity registers a handler called on tool-call activity (throttled
 // to ~2/sec/session). Used to drive the UI's per-card liveness indicator.
@@ -995,6 +1005,9 @@ func mapTerminalState(prev types.SessionState, waitErr error) types.SessionState
 	if prev == types.StatePausedForQuestion {
 		return types.StatePausedForQuestion
 	}
+	if prev == types.StateNeedsPR {
+		return types.StateNeedsPR
+	}
 	if waitErr != nil {
 		return types.StateFailed
 	}
@@ -1093,6 +1106,23 @@ func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 		}
 	case sentinelAtLineStart(line, PatternComplete):
 		rs.sess.State = types.StateCompleted
+	case sentinelAtLineStart(line, PatternNeedsPR):
+		// NEEDS_PR (#157): execute completed the work but push/signing failed.
+		// Transition to the terminal StateNeedsPR state and fire the handler so
+		// app.go can move the card to REVIEW with a NeedsPRInfo badge.
+		rs.sess.State = types.StateNeedsPR
+		idx := strings.Index(line, PatternNeedsPR)
+		reason := strings.TrimSpace(line[idx+len(PatternNeedsPR):])
+		if len(reason) > 500 {
+			reason = reason[:500]
+		}
+		rs.sess.BlockedReason = reason
+		if m.store != nil {
+			_ = m.store.SaveSession(rs.sess, rs.transcriptPath)
+		}
+		if m.onNeedsPR != nil {
+			m.onNeedsPR(*rs.sess, rs.branch, rs.worktreeDir, reason)
+		}
 	case sentinelAtLineStart(line, PatternBlocked):
 		rs.sess.State = types.StateBlocked
 		// Capture the reason text after the BLOCKED: prefix so the UI can

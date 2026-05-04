@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
-import { Replan, ReplanForce, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue, ResolveConflicts } from "../../wailsjs/go/main/App";
+import { Replan, ReplanForce, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue, ResolveConflicts, AttachManualPR } from "../../wailsjs/go/main/App";
+import { ClipboardSetText } from "../../wailsjs/runtime/runtime";
 import { RecoverButton } from "./RecoverButton";
 import { types } from "../../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "../stores/sessionStore";
@@ -47,6 +48,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   const testsFailingInfo = view?.tests_failing_info ?? null;
   const conflictsInfo = view?.conflicts_info ?? null;
   const orphanQuestion = view?.orphan_question ?? null;
+  const needsPRInfo = view?.needs_pr_info ?? null;
   // Activity is live-streaming data not captured in the view — still from sessionStore.
   const activity: SessionActivity | null = useSessionStore((s) =>
     activeSession ? (s.sessions[activeSession.id]?.activity ?? null) : null
@@ -129,6 +131,8 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
           ? "border-purple-500 card-glow-execute"
           : issue.waiting_for_pool
           ? "border-pink-500 card-glow-waiting"
+          : !activeSession && needsPRInfo && !issue.pr_number
+          ? "border-emerald-700 card-glow-needs-pr"
           : !activeSession && lastFailure
           ? "border-red-500 card-glow-blocked"
           : !activeSession && testsFailingInfo
@@ -218,6 +222,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         prNumber={issue.pr_number ?? null}
         testsFailingInfo={testsFailingInfo}
         conflictsInfo={conflictsInfo}
+        needsPRInfo={needsPRInfo}
         onContinue={() => setContinueOpen(true)}
         onClearFailure={() => ClearIssueFailure(issue.workspace_id, issue.number).catch((err: any) => alert(String(err?.message ?? err)))}
         onCancelSession={activeSession ? () => CancelSession(activeSession.id).catch((err: any) => alert(String(err?.message ?? err))) : null}
@@ -401,6 +406,13 @@ type OrphanQuestionInfo = {
   since: number;
 };
 
+type NeedsPRInfo = {
+  branch: string;
+  worktree_dir: string;
+  reason: string;
+  kind: string;
+};
+
 function StatusRow({
   activeSession,
   activity,
@@ -419,6 +431,7 @@ function StatusRow({
   prNumber,
   testsFailingInfo,
   conflictsInfo,
+  needsPRInfo,
   onContinue,
   onClearFailure,
   onCancelSession,
@@ -441,6 +454,7 @@ function StatusRow({
   prNumber: number | null;
   testsFailingInfo: TestsFailingInfo | null;
   conflictsInfo: ConflictsInfo | null;
+  needsPRInfo: NeedsPRInfo | null;
   onContinue: () => void;
   onClearFailure: () => void;
   onCancelSession: (() => void) | null;
@@ -565,6 +579,86 @@ function StatusRow({
       </>
     );
   }
+  // NEEDS_PR badge: show when NeedsPRInfo is set and no PR has been attached yet.
+  const showNeedsPR = needsPRInfo && !prNumber && !activeSession && !pausedSession && !waitingForPool;
+  if (showNeedsPR && needsPRInfo) {
+    const pushCmd = `cd ${needsPRInfo.worktree_dir} && git push -u origin ${needsPRInfo.branch}`;
+    const isCommitSigning = needsPRInfo.kind === "commit_signing";
+    const fullCmd = isCommitSigning
+      ? `cd ${needsPRInfo.worktree_dir} && git add -A && git commit -S -m 'feat: implement changes' && git push -u origin ${needsPRInfo.branch}`
+      : pushCmd;
+    const [attachOpen, setAttachOpen] = useState(false);
+    const [prURLInput, setPRURLInput] = useState("");
+    return (
+      <>
+        <div className="text-[11px] mt-1.5 space-y-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Pulse className="bg-emerald-600" />
+            <span className="text-emerald-400 font-medium">push needed</span>
+            <span className="text-slate-500">— commits in worktree</span>
+          </div>
+          <div className="text-slate-400 text-[10px] truncate pl-3.5" title={needsPRInfo.reason}>
+            {needsPRInfo.reason || "could not push"}
+          </div>
+          <div className="flex gap-1.5 flex-wrap pl-3.5">
+            <button
+              onClick={(e) => { e.stopPropagation(); ClipboardSetText(fullCmd); }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="px-1.5 py-0.5 rounded text-[10px] border border-emerald-800 text-emerald-400 hover:border-emerald-600 hover:text-emerald-300"
+              title={fullCmd}
+            >
+              ⎘ Copy {isCommitSigning ? "commit+push" : "push"} command
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); BrowserOpenURL("file://" + needsPRInfo.worktree_dir); }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="px-1.5 py-0.5 rounded text-[10px] border border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+              title={needsPRInfo.worktree_dir}
+            >
+              ⌂ Open folder
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setAttachOpen(!attachOpen); }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="px-1.5 py-0.5 rounded text-[10px] border border-purple-800 text-purple-400 hover:border-purple-600 hover:text-purple-300"
+            >
+              ↗ I opened the PR
+            </button>
+          </div>
+          {attachOpen && (
+            <div className="pl-3.5 flex gap-1.5" onClick={(e) => e.stopPropagation()}>
+              <input
+                className="flex-1 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-[10px] text-slate-200 placeholder-slate-600"
+                placeholder="https://github.com/…/pull/123"
+                value={prURLInput}
+                onChange={(e) => setPRURLInput(e.target.value)}
+                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+              />
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  AttachManualPR(workspaceID, issueNumber, prURLInput)
+                    .then(() => { setAttachOpen(false); setPRURLInput(""); })
+                    .catch((err: any) => alert(String(err?.message ?? err)));
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="px-1.5 py-0.5 rounded text-[10px] border border-purple-700 text-purple-300 hover:border-purple-500"
+              >
+                Attach
+              </button>
+            </div>
+          )}
+        </div>
+        {menuEl}
+      </>
+    );
+  }
+
   const showConflicts =
     conflictsInfo && column === "review" && !activeSession && !pausedSession && !waitingForPool;
   if (showConflicts && conflictsInfo) {

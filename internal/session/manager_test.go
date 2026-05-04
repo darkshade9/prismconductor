@@ -55,6 +55,57 @@ func TestMapTerminalStateNonZeroExitFailsByDefault(t *testing.T) {
 	}
 }
 
+func TestMapTerminalStateNeedsPRSurvivesCleanExit(t *testing.T) {
+	got := mapTerminalState(types.StateNeedsPR, nil)
+	if got != types.StateNeedsPR {
+		t.Errorf("needs_pr + clean exit → %s, want needs_pr", got)
+	}
+}
+
+func TestMapTerminalStateNeedsPRSurvivesNonZeroExit(t *testing.T) {
+	got := mapTerminalState(types.StateNeedsPR, errors.New("exit 1"))
+	if got != types.StateNeedsPR {
+		t.Errorf("needs_pr + non-zero exit → %s, want needs_pr", got)
+	}
+}
+
+func TestMatchPatternsNeedsPR(t *testing.T) {
+	var gotBranch, gotWorktree, gotReason string
+	store := &fakePersister{}
+	m := &Manager{
+		store: store,
+		onNeedsPR: func(sess types.Session, branch, worktreeDir, reason string) {
+			gotBranch = branch
+			gotWorktree = worktreeDir
+			gotReason = reason
+		},
+	}
+	rs := &runtimeSession{
+		sess:        &types.Session{ID: "sess-42", State: types.StateRunning},
+		branch:      "feat/issue-42-foo",
+		worktreeDir: "/tmp/wt",
+	}
+	m.matchPatterns(rs, "@asst NEEDS_PR: push rejected (GH006)")
+	if rs.sess.State != types.StateNeedsPR {
+		t.Fatalf("state after NEEDS_PR sentinel = %s, want needs_pr", rs.sess.State)
+	}
+	if rs.sess.BlockedReason != "push rejected (GH006)" {
+		t.Errorf("blocked_reason = %q, want 'push rejected (GH006)'", rs.sess.BlockedReason)
+	}
+	if gotBranch != "feat/issue-42-foo" {
+		t.Errorf("handler branch = %q, want feat/issue-42-foo", gotBranch)
+	}
+	if gotWorktree != "/tmp/wt" {
+		t.Errorf("handler worktree = %q, want /tmp/wt", gotWorktree)
+	}
+	if gotReason != "push rejected (GH006)" {
+		t.Errorf("handler reason = %q, want 'push rejected (GH006)'", gotReason)
+	}
+	if len(store.saves) == 0 {
+		t.Error("expected session to be saved after NEEDS_PR sentinel")
+	}
+}
+
 // fakePersister records UpdateSessionState calls without touching SQLite.
 type fakePersister struct {
 	saves     []types.Session

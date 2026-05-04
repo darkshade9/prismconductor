@@ -90,6 +90,7 @@ var issueRelevantEvents = map[eventbus.EventType]bool{
 	eventbus.EvtPRChecksRecovered:   true,
 	eventbus.EvtPRConflictsDetected: true,
 	eventbus.EvtPRConflictsResolved: true,
+	eventbus.EvtNeedsPR:             true,
 }
 
 func (a *Assembler) handleEvent(e eventbus.Event) {
@@ -311,6 +312,7 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		TestsFailingInfo: testsFailingInfo,
 		ConflictsInfo:    conflictsInfo,
 		OrphanQuestion:   orphanQuestion,
+		NeedsPRInfo:      iss.NeedsPRInfo,
 	}, nil
 }
 
@@ -488,6 +490,8 @@ func extractIssueKey(e eventbus.Event) (wsID string, issueNum int) {
 	case eventbus.PRConflictsDetected:
 		return p.WorkspaceID, p.IssueNumber
 	case eventbus.PRConflictsResolved:
+		return p.WorkspaceID, p.IssueNumber
+	case eventbus.NeedsPREvent:
 		return p.WorkspaceID, p.IssueNumber
 	case map[string]any:
 		wsID, _ = p["workspace_id"].(string)
