@@ -50,6 +50,10 @@ const (
 
 	// Issue #157: NEEDS_PR state — execute completed but push failed.
 	EvtNeedsPR EventType = "needs_pr"
+
+	// Issue #159: PR comment surface — inbound badge and outbound post.
+	EvtPRCommentReceived EventType = "pr_comment_received"
+	EvtPRCommentPosted   EventType = "pr_comment_posted"
 )
 
 type Event struct {
@@ -145,6 +149,17 @@ type NeedsPREvent struct {
 	WorktreeDir string `json:"worktree_dir"`
 	Reason      string `json:"reason"`
 	Kind        string `json:"kind"` // "commit_signing" | "push"
+}
+
+// PRCommentReceived is the payload for EvtPRCommentReceived (#159). Published
+// when the poller detects a new inbound PR comment not authored by the
+// conductor's own gh user.
+type PRCommentReceived struct {
+	WorkspaceID string `json:"workspace_id"`
+	IssueNumber int    `json:"issue_number"`
+	PRNumber    int    `json:"pr_number"`
+	CommentID   int64  `json:"comment_id"`
+	Author      string `json:"author"`
 }
 
 type Handler func(Event)

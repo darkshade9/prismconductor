@@ -891,6 +891,7 @@ export namespace issueview {
 	    conflicts_info?: ConflictsInfo;
 	    orphan_question?: OrphanQuestionInfo;
 	    needs_pr_info?: types.NeedsPRInfo;
+	    unread_comment_count: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new IssueView(source);
@@ -910,6 +911,7 @@ export namespace issueview {
 	        this.conflicts_info = this.convertValues(source["conflicts_info"], ConflictsInfo);
 	        this.orphan_question = this.convertValues(source["orphan_question"], OrphanQuestionInfo);
 	        this.needs_pr_info = this.convertValues(source["needs_pr_info"], types.NeedsPRInfo);
+	        this.unread_comment_count = source["unread_comment_count"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1530,6 +1532,58 @@ export namespace types {
 	    }
 	}
 	
+	export class PRComment {
+	    workspace_id: string;
+	    issue_number: number;
+	    comment_id: number;
+	    author: string;
+	    body: string;
+	    kind: string;
+	    file_path?: string;
+	    line_number?: number;
+	    // Go type: time
+	    created_at: any;
+	    // Go type: time
+	    read_at?: any;
+	    pending_post?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new PRComment(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.workspace_id = source["workspace_id"];
+	        this.issue_number = source["issue_number"];
+	        this.comment_id = source["comment_id"];
+	        this.author = source["author"];
+	        this.body = source["body"];
+	        this.kind = source["kind"];
+	        this.file_path = source["file_path"];
+	        this.line_number = source["line_number"];
+	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.read_at = this.convertValues(source["read_at"], null);
+	        this.pending_post = source["pending_post"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class SkillRef {
 	    path: string;
 	    source: string;
@@ -1785,6 +1839,8 @@ export namespace types {
 	    skills_migrated?: boolean;
 	    auto_self_heal?: boolean;
 	    self_heal_attempt_cap?: number;
+	    auto_continue_on_comment?: boolean;
+	    notify_on_bot_comments?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new SkillProfile(source);
@@ -1807,6 +1863,8 @@ export namespace types {
 	        this.skills_migrated = source["skills_migrated"];
 	        this.auto_self_heal = source["auto_self_heal"];
 	        this.self_heal_attempt_cap = source["self_heal_attempt_cap"];
+	        this.auto_continue_on_comment = source["auto_continue_on_comment"];
+	        this.notify_on_bot_comments = source["notify_on_bot_comments"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

@@ -295,6 +295,109 @@ func (c *Client) FetchOpenPRsForBranch(ctx context.Context, ws types.Workspace, 
 	return prs[0].GetNumber(), prs[0].GetHTMLURL(), nil
 }
 
+// FetchIssueComments returns conversation-level comments on a GitHub issue
+// (the PR issue thread), optionally filtered to only those created after
+// `since`. Pass zero time to get all comments. Issue #159.
+func (c *Client) FetchIssueComments(ctx context.Context, ws types.Workspace, issueNumber int, since time.Time) ([]types.PRComment, error) {
+	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {
+		return nil, fmt.Errorf("workspace %q missing github_owner / github_repo", ws.ID)
+	}
+	opts := &gh.IssueListCommentsOptions{
+		ListOptions: gh.ListOptions{PerPage: 50},
+	}
+	if !since.IsZero() {
+		opts.Since = &since
+	}
+	var out []types.PRComment
+	for {
+		page, resp, err := c.api.Issues.ListComments(ctx, ws.GitHubOwner, ws.GitHubRepo, issueNumber, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, cm := range page {
+			out = append(out, types.PRComment{
+				WorkspaceID: ws.ID,
+				IssueNumber: issueNumber,
+				CommentID:   cm.GetID(),
+				Author:      cm.GetUser().GetLogin(),
+				Body:        cm.GetBody(),
+				Kind:        types.PRCommentKindConversation,
+				CreatedAt:   cm.GetCreatedAt().Time,
+			})
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return out, nil
+}
+
+// FetchPRReviewComments returns inline diff (review) comments on a PR.
+// Issue #159.
+func (c *Client) FetchPRReviewComments(ctx context.Context, ws types.Workspace, prNumber int, since time.Time) ([]types.PRComment, error) {
+	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {
+		return nil, fmt.Errorf("workspace %q missing github_owner / github_repo", ws.ID)
+	}
+	opts := &gh.PullRequestListCommentsOptions{
+		ListOptions: gh.ListOptions{PerPage: 50},
+	}
+	if !since.IsZero() {
+		opts.Since = since
+	}
+	var out []types.PRComment
+	for {
+		page, resp, err := c.api.PullRequests.ListComments(ctx, ws.GitHubOwner, ws.GitHubRepo, prNumber, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, cm := range page {
+			out = append(out, types.PRComment{
+				WorkspaceID: ws.ID,
+				IssueNumber: prNumber,
+				CommentID:   cm.GetID(),
+				Author:      cm.GetUser().GetLogin(),
+				Body:        cm.GetBody(),
+				Kind:        types.PRCommentKindReview,
+				FilePath:    cm.GetPath(),
+				LineNumber:  cm.GetLine(),
+				CreatedAt:   cm.GetCreatedAt().Time,
+			})
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return out, nil
+}
+
+// PostIssueComment posts a text comment on the GitHub issue (PR thread).
+// Returns the newly created comment ID. Issue #159.
+func (c *Client) PostIssueComment(ctx context.Context, ws types.Workspace, issueNumber int, body string) (int64, error) {
+	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {
+		return 0, fmt.Errorf("workspace %q missing github_owner / github_repo", ws.ID)
+	}
+	cm, _, err := c.api.Issues.CreateComment(ctx, ws.GitHubOwner, ws.GitHubRepo, issueNumber, &gh.IssueComment{
+		Body: gh.String(body),
+	})
+	if err != nil {
+		return 0, err
+	}
+	return cm.GetID(), nil
+}
+
+// GetAuthenticatedUser returns the login of the currently authenticated gh CLI
+// user. Used to filter out the conductor's own comments from the unread badge.
+// Issue #159.
+func (c *Client) GetAuthenticatedUser(ctx context.Context) (string, error) {
+	u, _, err := c.api.Users.Get(ctx, "")
+	if err != nil {
+		return "", err
+	}
+	return u.GetLogin(), nil
+}
+
 // SetIssueLabels replaces an issue's labels with the given set.
 func (c *Client) SetIssueLabels(ctx context.Context, ws types.Workspace, issueNumber int, names []string) error {
 	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {

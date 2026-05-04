@@ -163,6 +163,36 @@ export function SkillProfileEditor({ workspace }: { workspace: types.Workspace }
           onChange={(v) => update({ auto_apply_labels: v })}
         />
       </div>
+
+      <div className="flex items-start justify-between border-t border-slate-800 pt-3">
+        <div className="flex-1 mr-3">
+          <div className="text-sm text-slate-200">Auto-spawn Continue Work on Request Fix</div>
+          <div className="text-[11px] text-slate-500 mt-0.5">
+            When a REVIEW card comment is flagged as Request Fix, automatically spawn a Continue
+            Work session without a confirmation dialog.
+          </div>
+        </div>
+        <Toggle
+          label=""
+          checked={sp.auto_continue_on_comment !== false}
+          onChange={(v) => update({ auto_continue_on_comment: v })}
+        />
+      </div>
+
+      <div className="flex items-start justify-between border-t border-slate-800 pt-3">
+        <div className="flex-1 mr-3">
+          <div className="text-sm text-slate-200">Show bot comments as unread</div>
+          <div className="text-[11px] text-slate-500 mt-0.5">
+            Surface comments from known bot accounts (Dependabot, Renovate, GitHub Actions) as
+            New Comment badges. Off by default.
+          </div>
+        </div>
+        <Toggle
+          label=""
+          checked={sp.notify_on_bot_comments === true}
+          onChange={(v) => update({ notify_on_bot_comments: v })}
+        />
+      </div>
     </div>
   );
 }

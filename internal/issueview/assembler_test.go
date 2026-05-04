@@ -40,6 +40,10 @@ func (f *fakeStore) GetPool(id string) (types.Pool, error) {
 	return types.Pool{}, fmt.Errorf("pool not found")
 }
 
+func (f *fakeStore) ListUnreadPRComments(_ string, _ int) ([]types.PRComment, error) {
+	return nil, nil
+}
+
 // --- helpers ---
 
 func makeSession(state types.SessionState, startedAt time.Time, blockedReason string, acknowledged bool) types.Session {

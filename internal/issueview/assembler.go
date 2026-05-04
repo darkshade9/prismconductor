@@ -38,6 +38,7 @@ type issueStore interface {
 	LatestPlan(workspaceID string, issueNumber int) (*types.Plan, error)
 	ListSessionsForIssue(workspaceID string, issueNumber int) ([]types.Session, error)
 	GetPool(id string) (types.Pool, error)
+	ListUnreadPRComments(workspaceID string, issueNumber int) ([]types.PRComment, error)
 }
 
 // Assembler assembles canonical IssueView structs and re-emits
@@ -90,7 +91,8 @@ var issueRelevantEvents = map[eventbus.EventType]bool{
 	eventbus.EvtPRChecksRecovered:   true,
 	eventbus.EvtPRConflictsDetected: true,
 	eventbus.EvtPRConflictsResolved: true,
-	eventbus.EvtNeedsPR:             true,
+	eventbus.EvtNeedsPR:           true,
+	eventbus.EvtPRCommentReceived: true,
 }
 
 func (a *Assembler) handleEvent(e eventbus.Event) {
@@ -300,19 +302,28 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		}
 	}
 
+	// Count unread PR comments for the badge (#159). Only for REVIEW cards.
+	var unreadCommentCount int
+	if iss.Column == types.ColReview {
+		if unread, err := a.store.ListUnreadPRComments(workspaceID, issueNumber); err == nil {
+			unreadCommentCount = len(unread)
+		}
+	}
+
 	return IssueView{
-		Issue:            iss,
-		LatestPlan:       plan,
-		ActiveSession:    active,
-		PausedSession:    paused,
-		LastFailure:      lastFail,
-		LastSession:      lastSession,
-		PoolBadge:        poolBadge,
-		DerivedColumn:    derivedColumn(iss, plan, active),
-		TestsFailingInfo: testsFailingInfo,
-		ConflictsInfo:    conflictsInfo,
-		OrphanQuestion:   orphanQuestion,
-		NeedsPRInfo:      iss.NeedsPRInfo,
+		Issue:              iss,
+		LatestPlan:         plan,
+		ActiveSession:      active,
+		PausedSession:      paused,
+		LastFailure:        lastFail,
+		LastSession:        lastSession,
+		PoolBadge:          poolBadge,
+		DerivedColumn:      derivedColumn(iss, plan, active),
+		TestsFailingInfo:   testsFailingInfo,
+		ConflictsInfo:      conflictsInfo,
+		OrphanQuestion:     orphanQuestion,
+		NeedsPRInfo:        iss.NeedsPRInfo,
+		UnreadCommentCount: unreadCommentCount,
 	}, nil
 }
 
@@ -492,6 +503,8 @@ func extractIssueKey(e eventbus.Event) (wsID string, issueNum int) {
 	case eventbus.PRConflictsResolved:
 		return p.WorkspaceID, p.IssueNumber
 	case eventbus.NeedsPREvent:
+		return p.WorkspaceID, p.IssueNumber
+	case eventbus.PRCommentReceived:
 		return p.WorkspaceID, p.IssueNumber
 	case map[string]any:
 		wsID, _ = p["workspace_id"].(string)
