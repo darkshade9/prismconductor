@@ -135,6 +135,14 @@ func (a *Assembler) handleEvent(e eventbus.Event) {
 	a.reassembleAndEmit(wsID, issueNum)
 }
 
+// Reassemble forces a fresh assembly + emit for the given issue.
+// Public counterpart of reassembleAndEmit, exported so callers like
+// the Clear Failure handler can force the frontend's IssueView to
+// converge with backend truth even when nothing in the DB changed.
+func (a *Assembler) Reassemble(wsID string, issueNum int) {
+	a.reassembleAndEmit(wsID, issueNum)
+}
+
 func (a *Assembler) reassembleAndEmit(wsID string, issueNum int) {
 	view, err := a.Assemble(wsID, issueNum)
 	if err != nil {
