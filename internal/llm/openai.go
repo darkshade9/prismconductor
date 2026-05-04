@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"prismconductor/internal/types"
 )
@@ -29,14 +28,14 @@ type openaiProvider struct {
 
 // NewOpenAIProvider returns a provider with no usage sink.
 func NewOpenAIProvider() Provider {
-	return openaiProvider{client: &http.Client{Timeout: 5 * time.Minute}}
+	return openaiProvider{client: NewHTTPClient(DefaultHTTPTimeout)}
 }
 
 // NewOpenAIProviderWithSink returns a provider that calls sink after each
 // successful call with any rate-limit snapshots found in response headers.
 func NewOpenAIProviderWithSink(sink UsageSink) Provider {
 	return openaiProvider{
-		client:    &http.Client{Timeout: 5 * time.Minute},
+		client:    NewHTTPClient(DefaultHTTPTimeout),
 		usageSink: sink,
 	}
 }

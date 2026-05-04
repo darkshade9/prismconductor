@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	"prismconductor/internal/types"
 )
@@ -19,7 +18,7 @@ type lmstudioProvider struct {
 }
 
 func NewLMStudioProvider() Provider {
-	return lmstudioProvider{client: &http.Client{Timeout: 5 * time.Minute}}
+	return lmstudioProvider{client: NewHTTPClient(DefaultHTTPTimeout)}
 }
 
 func (lmstudioProvider) Kind() types.Provider    { return types.ProviderLMStudio }

@@ -502,3 +502,63 @@ func TestFindActiveExecuteSession_PausedForQuestion(t *testing.T) {
 		t.Errorf("id = %q, want %q", id, "sess-paused")
 	}
 }
+
+// TestKillSubprocessLandsInFailedState verifies that calling Kill on a running
+// subprocess session cancels the process, causes tailAndParse to write a
+// terminal state (failed), and removes the session from Manager.sessions.
+func TestKillSubprocessLandsInFailedState(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX-only")
+	}
+	tdir := t.TempDir()
+	store := &fakePersister{}
+	m := NewManager(nil, nil)
+	m.Configure(filepath.Join(tdir, "transcripts"), store, nil)
+
+	ws := types.Workspace{ID: "ws-kill", RepoPath: tdir}
+	issue := types.Issue{Number: 42, WorkspaceID: ws.ID}
+
+	// A long-running subprocess that will not exit on its own.
+	sess, err := m.spawnWithDir(ws, issue, types.ModePlan,
+		[]string{"/bin/sh", "-c", "sleep 60"},
+		"", "", "", types.Pool{}, "")
+	if err != nil {
+		t.Fatalf("spawnWithDir: %v", err)
+	}
+
+	// Brief delay to ensure the shell is running before we Kill it.
+	time.Sleep(50 * time.Millisecond)
+
+	if err := m.Kill(sess.ID); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		m.mu.RLock()
+		_, there := m.sessions[sess.ID]
+		m.mu.RUnlock()
+		if !there {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	m.mu.RLock()
+	_, stillThere := m.sessions[sess.ID]
+	m.mu.RUnlock()
+	if stillThere {
+		t.Fatal("session still in m.sessions after Kill + deadline")
+	}
+
+	// State must be failed (non-zero exit code from killed subprocess).
+	var lastState string
+	for _, upd := range store.stateUpd {
+		if strings.HasPrefix(upd, sess.ID+":") {
+			lastState = strings.TrimPrefix(upd, sess.ID+":")
+		}
+	}
+	if lastState != "failed" {
+		t.Errorf("state after Kill = %q, want failed; all updates=%v", lastState, store.stateUpd)
+	}
+}
