@@ -285,6 +285,40 @@ func (s *Store) UnarchiveAll(workspaceID string) error {
 	return err
 }
 
+// SetIssueWaitingForPool atomically writes `$.waiting_for_pool` inside the
+// JSON blob via json_set, bypassing SaveIssue's preservation logic.
+//
+// Why this exists as a dedicated method: SaveIssue preserves
+// `waiting_for_pool=true` across re-saves (see issues.go:96 — needed so the
+// GitHub poller's 5-min SaveIssue cycle doesn't clobber the conductor's
+// queued-spawn flag back to false). That preservation rule is correct for
+// the poll case but BLOCKS the legitimate clear path: orchestrator's
+// clearWaitingForPool would Load → set false → SaveIssue, but SaveIssue
+// re-reads prev (still true), preservation kicks in, and the flag is forced
+// back to true. The flag could never actually be cleared.
+//
+// json_set avoids the read-modify-write entirely; the indexed column-style
+// fix that worked for UpdateSessionState (#sessions.go:UpdateSessionState).
+//
+// Use only from paths that should authoritatively set/clear the flag
+// (orchestrator drain success, explicit user action). NOT from anywhere
+// that should respect the GitHub-poll preservation rule.
+func (s *Store) SetIssueWaitingForPool(workspaceID string, number int, waiting bool) error {
+	if s == nil || s.DB == nil {
+		return errors.New("store unavailable")
+	}
+	v := "false"
+	if waiting {
+		v = "true"
+	}
+	_, err := s.DB.Exec(
+		`UPDATE issues
+		    SET json = json_set(json, '$.waiting_for_pool', json(?))
+		  WHERE workspace_id = ? AND number = ?`,
+		v, workspaceID, number)
+	return err
+}
+
 // MoveIssueColumn updates the column for an issue and resets manual_order to
 // the bottom of the destination column.
 func (s *Store) MoveIssueColumn(workspaceID string, number int, column types.BoardColumn) error {

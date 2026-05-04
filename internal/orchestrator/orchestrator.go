@@ -30,6 +30,7 @@ type Store interface {
 	ListPendingPools(limit int) ([]types.PendingPoolRequest, error)
 	DequeuePendingPool(id int64) error
 	DeletePendingForIssue(workspaceID string, issueNumber int) error
+	SetIssueWaitingForPool(workspaceID string, issueNumber int, waiting bool) error
 }
 
 // PoolRouter is the slice of *workerpool.Registry we need (issue #27,

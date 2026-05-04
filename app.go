@@ -1005,10 +1005,7 @@ func (a *App) MoveIssueColumn(workspaceID string, number int, column string) err
 					// card.
 					log.Printf("auto-spawn plan #%d: no plan pool available — enqueuing", number)
 					_ = a.store.EnqueuePendingPool(workspaceID, number, types.RolePlan, "drag_to_plan")
-					if iss, lerr := a.store.LoadIssue(workspaceID, number); lerr == nil && !iss.WaitingForPool {
-						iss.WaitingForPool = true
-						_, _ = a.store.SaveIssue(iss)
-					}
+					_ = a.store.SetIssueWaitingForPool(workspaceID, number, true)
 					a.bus.Publish(eventbus.EvtPendingPoolEnqueued, eventbus.PendingPoolChange{
 						WorkspaceID: workspaceID,
 						IssueNumber: number,
@@ -2259,10 +2256,7 @@ func (a *App) ApprovePlan(workspaceID string, issueNumber, revision int) error {
 		// No work slot available — persist intent and show waiting decoration.
 		// The card stays in IN_PROGRESS; drain fires it when a slot frees.
 		_ = a.store.EnqueuePendingPool(workspaceID, issueNumber, types.RoleWork, "approve_execute")
-		if iss, lerr := a.store.LoadIssue(workspaceID, issueNumber); lerr == nil {
-			iss.WaitingForPool = true
-			_, _ = a.store.SaveIssue(iss)
-		}
+		_ = a.store.SetIssueWaitingForPool(workspaceID, issueNumber, true)
 		a.bus.Publish(eventbus.EvtPendingPoolEnqueued, eventbus.PendingPoolChange{
 			WorkspaceID: workspaceID,
 			IssueNumber: issueNumber,
@@ -2353,10 +2347,7 @@ func (a *App) ContinueWork(workspaceID string, issueNumber int, note string) err
 	pool, ok := a.acquireWorkPool(ws)
 	if !ok {
 		_ = a.store.EnqueuePendingPool(workspaceID, issueNumber, types.RoleWork, "continue_execute")
-		if iss, lerr := a.store.LoadIssue(workspaceID, issueNumber); lerr == nil {
-			iss.WaitingForPool = true
-			_, _ = a.store.SaveIssue(iss)
-		}
+		_ = a.store.SetIssueWaitingForPool(workspaceID, issueNumber, true)
 		a.bus.Publish(eventbus.EvtPendingPoolEnqueued, eventbus.PendingPoolChange{
 			WorkspaceID: workspaceID,
 			IssueNumber: issueNumber,
