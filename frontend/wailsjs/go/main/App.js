@@ -326,6 +326,10 @@ export function ResolveConflicts(arg1, arg2) {
   return window['go']['main']['App']['ResolveConflicts'](arg1, arg2);
 }
 
+export function RotateRemoteWorkerKey(arg1, arg2) {
+  return window['go']['main']['App']['RotateRemoteWorkerKey'](arg1, arg2);
+}
+
 export function RunAutoArchiveNow(arg1) {
   return window['go']['main']['App']['RunAutoArchiveNow'](arg1);
 }

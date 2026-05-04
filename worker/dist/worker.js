@@ -213,10 +213,37 @@ function buildExecutePrompt(params) {
 // Main export
 // ---------------------------------------------------------------------------
 
+// Constant-time string comparison to prevent timing attacks on the bearer token.
+function timingSafeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // Health check is public — required for reachability probes.
+    if (request.method === "GET" && path === "/health") {
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // All session endpoints require a valid conductor API key.
+    const expectedKey = env.CONDUCTOR_API_KEY;
+    if (expectedKey) {
+      const auth = request.headers.get("Authorization") ?? "";
+      const providedKey = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+      if (!timingSafeEqual(expectedKey, providedKey)) {
+        return new Response("unauthorized", { status: 401 });
+      }
+    }
 
     if (request.method === "POST" && path === "/sessions") {
       let body;
@@ -266,12 +293,6 @@ export default {
 
     if (request.method === "GET" && path === "/sessions/active") {
       return new Response(JSON.stringify({ sessions: [] }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    if (request.method === "GET" && path === "/health") {
-      return new Response(JSON.stringify({ ok: true }), {
         headers: { "Content-Type": "application/json" },
       });
     }

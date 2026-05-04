@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { DeployRemoteWorker, GCWorktrees, ListPools, RemoveWorkspace, RunAutoArchiveNow, UpdateWorkspace } from "../../wailsjs/go/main/App";
+import { DeployRemoteWorker, GCWorktrees, ListPools, RemoveWorkspace, RotateRemoteWorkerKey, RunAutoArchiveNow, UpdateWorkspace } from "../../wailsjs/go/main/App";
 import { types, workerpool } from "../../wailsjs/go/models";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { AddWorkspaceModal } from "./AddWorkspaceModal";
@@ -154,7 +154,8 @@ function RemoteAuthPanel({ workspace, onSave }: { workspace: types.Workspace; on
   const [githubPAT, setGitHubPAT] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState(false);
+  const [ok, setOk] = useState<string | null>(null);
+  const [confirmRotate, setConfirmRotate] = useState(false);
 
   async function redeploy() {
     if (!cfToken || !githubPAT) {
@@ -163,11 +164,30 @@ function RemoteAuthPanel({ workspace, onSave }: { workspace: types.Workspace; on
     }
     setBusy(true);
     setError(null);
-    setOk(false);
+    setOk(null);
     try {
       await DeployRemoteWorker(workspace.id, cfToken.trim(), githubPAT.trim());
-      setOk(true);
+      setOk("Re-deployed successfully.");
       await onSave();
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rotateKey() {
+    if (!cfToken) {
+      setError("Cloudflare API Token is required to rotate the key.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setOk(null);
+    setConfirmRotate(false);
+    try {
+      await RotateRemoteWorkerKey(workspace.id, cfToken.trim());
+      setOk("Worker API key rotated. Old key is now invalid.");
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -211,14 +231,48 @@ function RemoteAuthPanel({ workspace, onSave }: { workspace: types.Workspace; on
           />
         </label>
         {error && <div className="text-red-400 text-xs">{error}</div>}
-        {ok && <div className="text-emerald-400 text-xs">Re-deployed successfully.</div>}
-        <button
-          onClick={redeploy}
-          disabled={!cfToken || !githubPAT || busy}
-          className="text-xs px-2 py-1 bg-sky-800 hover:bg-sky-700 rounded disabled:opacity-40"
-        >
-          {busy ? "Deploying…" : "Re-deploy worker"}
-        </button>
+        {ok && <div className="text-emerald-400 text-xs">{ok}</div>}
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={redeploy}
+            disabled={!cfToken || !githubPAT || busy}
+            className="text-xs px-2 py-1 bg-sky-800 hover:bg-sky-700 rounded disabled:opacity-40"
+          >
+            {busy ? "Working…" : "Re-deploy worker"}
+          </button>
+          {rc && !confirmRotate && (
+            <button
+              onClick={() => setConfirmRotate(true)}
+              disabled={!cfToken || busy}
+              className="text-xs px-2 py-1 bg-amber-900 hover:bg-amber-800 rounded disabled:opacity-40"
+            >
+              Rotate worker API key
+            </button>
+          )}
+          {rc && confirmRotate && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-amber-400">Rotation invalidates other machines. Confirm?</span>
+              <button
+                onClick={rotateKey}
+                disabled={busy}
+                className="text-xs px-2 py-1 bg-red-800 hover:bg-red-700 rounded disabled:opacity-40"
+              >
+                Rotate now
+              </button>
+              <button
+                onClick={() => setConfirmRotate(false)}
+                className="text-xs text-slate-400 hover:text-slate-200"
+              >
+                Cancel
+          </button>
+            </div>
+          )}
+        </div>
+        {rc && (
+          <div className="text-xs text-slate-600 mt-1">
+            To use this workspace on another machine: rotate the key here, then re-deploy from the other machine. Or export the key from machine A and import it on machine B via Settings.
+          </div>
+        )}
       </div>
     </div>
   );

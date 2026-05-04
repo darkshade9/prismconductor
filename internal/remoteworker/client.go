@@ -39,6 +39,7 @@ type SpawnResponse struct {
 type RemoteCmd struct {
 	endpoint  string
 	sessionID string
+	apiKey    string
 	done      chan struct{}
 	termErr   error
 	cancel    context.CancelFunc
@@ -53,7 +54,7 @@ func (r *RemoteCmd) Wait() error {
 // Kill cancels the SSE goroutine and sends DELETE /sessions/:id to the worker.
 func (r *RemoteCmd) Kill() error {
 	r.cancel()
-	return deleteSession(r.endpoint, r.sessionID)
+	return deleteSession(r.endpoint, r.sessionID, r.apiKey)
 }
 
 // Pid returns 0; remote sessions have no local PID.
@@ -66,9 +67,15 @@ func (r *RemoteCmd) SessionID() string { return r.sessionID }
 // copies SSE transcript lines to tf (the local transcript file), and returns a
 // RemoteCmd that the session manager can Wait/Kill as usual.
 //
+// apiKey must be the conductor API key stored in the local keychain; an empty
+// value causes an immediate error so the HTTP call is never attempted.
+//
 // Callers must not close tf; the returned RemoteCmd's goroutine owns the write
 // side and the caller's tailAndParse owns the read side.
-func Spawn(ctx context.Context, endpoint string, params SpawnParams, tf *os.File) (*RemoteCmd, error) {
+func Spawn(ctx context.Context, endpoint, apiKey string, params SpawnParams, tf *os.File) (*RemoteCmd, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("remote worker: conductor API key not found — re-deploy or rotate the worker key in Settings → Workspaces")
+	}
 	body, _ := json.Marshal(params)
 	url := strings.TrimRight(endpoint, "/") + "/sessions"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
@@ -76,6 +83,7 @@ func Spawn(ctx context.Context, endpoint string, params SpawnParams, tf *os.File
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -101,13 +109,14 @@ func Spawn(ctx context.Context, endpoint string, params SpawnParams, tf *os.File
 	rc := &RemoteCmd{
 		endpoint:  endpoint,
 		sessionID: sr.SessionID,
+		apiKey:    apiKey,
 		done:      make(chan struct{}),
 		cancel:    cancel,
 	}
 
 	go func() {
 		defer close(rc.done)
-		rc.termErr = streamToFile(childCtx, endpoint, sr.SessionID, tf)
+		rc.termErr = streamToFile(childCtx, endpoint, sr.SessionID, apiKey, tf)
 	}()
 
 	return rc, nil
@@ -116,7 +125,7 @@ func Spawn(ctx context.Context, endpoint string, params SpawnParams, tf *os.File
 // streamToFile connects to GET /sessions/:id/stream (SSE) and writes each
 // data line into tf. Returns nil on clean EOF (session completed), or the
 // context error on cancellation.
-func streamToFile(ctx context.Context, endpoint, sessionID string, tf *os.File) error {
+func streamToFile(ctx context.Context, endpoint, sessionID, apiKey string, tf *os.File) error {
 	url := fmt.Sprintf("%s/sessions/%s/stream", strings.TrimRight(endpoint, "/"), sessionID)
 	const maxRetries = 5
 	lastEventID := ""
@@ -130,6 +139,7 @@ func streamToFile(ctx context.Context, endpoint, sessionID string, tf *os.File) 
 			return err
 		}
 		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 		if lastEventID != "" {
 			req.Header.Set("Last-Event-ID", lastEventID)
 		}
@@ -191,12 +201,13 @@ func readSSE(ctx context.Context, r io.Reader, tf *os.File, lastEventID *string)
 }
 
 // deleteSession sends DELETE /sessions/:id to the remote worker (best-effort).
-func deleteSession(endpoint, sessionID string) error {
+func deleteSession(endpoint, sessionID, apiKey string) error {
 	url := fmt.Sprintf("%s/sessions/%s", strings.TrimRight(endpoint, "/"), sessionID)
 	req, err := http.NewRequest("DELETE", url, nil)
 	if err != nil {
 		return err
 	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err

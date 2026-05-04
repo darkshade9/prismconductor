@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -773,6 +775,11 @@ func (a *App) RemoveWorkspace(id string) error {
 	}
 	if ws, ok := a.wsReg.Get(id); ok {
 		workspace.RemoteCleanup(ws, a.secretStore)
+		if ws.RemoteConfig != nil {
+			if err := remoteworker.DeleteKey(id); err != nil {
+				log.Printf("RemoveWorkspace: delete API key for %s: %v", id, err)
+			}
+		}
 	}
 	if a.store != nil {
 		if err := a.store.RebindWorkspacePools(id); err != nil {
@@ -872,6 +879,23 @@ func (a *App) DeployRemoteWorker(workspaceID, cfToken, githubPAT string) (Remote
 		}
 	}
 
+	// Generate a 256-bit conductor API key and store it both in CF Secrets
+	// and in the local key store so the conductor can authenticate requests.
+	apiKey, err := randomKey256()
+	if err != nil {
+		return RemoteDeployResult{}, fmt.Errorf("generate conductor API key: %w", err)
+	}
+	if err := remoteworker.UpsertSecret(accountID, cfToken, deploy.WorkerName, "CONDUCTOR_API_KEY", apiKey); err != nil {
+		return RemoteDeployResult{}, fmt.Errorf("store conductor API key secret: %w", err)
+	}
+	warn, err := remoteworker.SetKey(workspaceID, apiKey)
+	if err != nil {
+		return RemoteDeployResult{}, fmt.Errorf("store conductor API key locally: %w", err)
+	}
+	if warn != "" {
+		a.emitToast("warning", "Remote Workspace", warn, nil)
+	}
+
 	// Update workspace RemoteConfig.
 	rc := &types.RemoteConfig{
 		CFAccountID:         accountID,
@@ -879,8 +903,9 @@ func (a *App) DeployRemoteWorker(workspaceID, cfToken, githubPAT string) (Remote
 		CFWorkerEndpointURL: deploy.CFWorkerEndpointURL,
 		CFDeploymentVersion: deploy.DeploymentVersion,
 		SecretRefs: types.RemoteSecretRefs{
-			GitHubPATRef:  "GITHUB_PAT",
-			CFAPITokenRef: tokenKey,
+			GitHubPATRef:       "GITHUB_PAT",
+			CFAPITokenRef:      tokenKey,
+			ConductorAPIKeyRef: "CONDUCTOR_API_KEY",
 		},
 	}
 	ws.ExecutionTarget = types.ExecutionTargetRemote
@@ -954,6 +979,39 @@ func (a *App) StoreCFTokenFileFallback(workspaceID, cfToken string) error {
 	return nil
 }
 
+// RotateRemoteWorkerKey generates a fresh 256-bit conductor API key, stores it
+// as a CF Secret on the worker, and updates the local key store. The old key
+// becomes invalid immediately. A fresh cfToken must be provided because CF
+// tokens are never stored locally.
+func (a *App) RotateRemoteWorkerKey(workspaceID, cfToken string) error {
+	if a.wsReg == nil {
+		return fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("workspace %s not found", workspaceID)
+	}
+	rc := ws.RemoteConfig
+	if rc == nil || rc.CFAccountID == "" || rc.CFWorkerName == "" {
+		return fmt.Errorf("workspace %s is not a deployed remote workspace", workspaceID)
+	}
+	newKey, err := randomKey256()
+	if err != nil {
+		return fmt.Errorf("generate key: %w", err)
+	}
+	if err := remoteworker.UpsertSecret(rc.CFAccountID, cfToken, rc.CFWorkerName, "CONDUCTOR_API_KEY", newKey); err != nil {
+		return fmt.Errorf("update CF secret: %w", err)
+	}
+	warn, err := remoteworker.SetKey(workspaceID, newKey)
+	if err != nil {
+		return fmt.Errorf("update local key: %w", err)
+	}
+	if warn != "" {
+		a.emitToast("warning", "Remote Workspace", warn, nil)
+	}
+	return nil
+}
+
 // ReplaceCFToken rotates the stored CF API token for a workspace. It overwrites
 // the existing keyring (or file fallback) entry so subsequent CF operations use
 // the new token without requiring re-deploy.
@@ -1009,6 +1067,16 @@ func (a *App) IsKeyringAvailable() bool {
 	}
 	_ = a.secretStore.Delete(probe)
 	return true
+}
+
+// randomKey256 returns a cryptographically random 256-bit key encoded as
+// base64url (no padding). Safe to use as a bearer token.
+func randomKey256() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // --- Goals ---
