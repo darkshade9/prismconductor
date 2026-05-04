@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -35,6 +36,7 @@ import (
 	"prismconductor/internal/llm"
 	"prismconductor/internal/orchestrator"
 	"prismconductor/internal/remoteworker"
+	"prismconductor/internal/secretstore"
 	"prismconductor/internal/session"
 	"prismconductor/internal/pipeline"
 	"prismconductor/internal/skills"
@@ -79,6 +81,9 @@ type App struct {
 
 	// Issue #161: ephemeral PTY-backed agent terminal sessions.
 	agentTerm *agentterm.Manager
+
+	// Issue #178: OS-native secret store for CF API tokens.
+	secretStore secretstore.Store
 }
 
 type issueDetailEntry struct {
@@ -93,6 +98,9 @@ func (a *App) startup(ctx context.Context) {
 
 	cfgDir, _ := configDir()
 	a.cfgDir = cfgDir
+
+	// Issue #178: OS-native secret store for CF API tokens.
+	a.secretStore = secretstore.NewKeychainStore()
 
 	// Capture every log.Printf into a ring buffer so the UI can show them.
 	a.logs = logbuffer.New(1000)
@@ -758,9 +766,13 @@ func (a *App) UpdateWorkspace(ws types.Workspace) error {
 
 // RemoveWorkspace removes a workspace by ID. Any pools bound to this workspace
 // are silently rebound to shared so capacity isn't orphaned (issue #109, q1).
+// For remote workspaces the CF API token is removed from the OS keyring (issue #178).
 func (a *App) RemoveWorkspace(id string) error {
 	if a.wsReg == nil {
 		return fmt.Errorf("workspace registry unavailable")
+	}
+	if ws, ok := a.wsReg.Get(id); ok {
+		workspace.RemoteCleanup(ws, a.secretStore)
 	}
 	if a.store != nil {
 		if err := a.store.RebindWorkspacePools(id); err != nil {
@@ -803,6 +815,11 @@ type RemoteDeployResult struct {
 	WorkerName          string `json:"worker_name"`
 	CFWorkerEndpointURL string `json:"cf_worker_endpoint_url"`
 	DeploymentVersion   string `json:"deployment_version"`
+	// KeyringUnavailable is true when the OS keyring could not store the CF
+	// API token (headless Linux without a Secret Service daemon). The frontend
+	// should offer an explicit file-fallback consent banner in this case and
+	// call StoreCFTokenFileFallback if the user accepts.
+	KeyringUnavailable bool `json:"keyring_unavailable,omitempty"`
 }
 
 // DeployRemoteWorker uploads the embedded worker bundle to the user's
@@ -838,6 +855,23 @@ func (a *App) DeployRemoteWorker(workspaceID, cfToken, githubPAT string) (Remote
 		return RemoteDeployResult{}, fmt.Errorf("store GitHub PAT secret: %w", err)
 	}
 
+	// Persist the CF API token in the OS keyring so subsequent CF operations
+	// can retrieve it without prompting the user again. The token value never
+	// touches the DB or logs — only the namespaced key name (the "ref") is
+	// persisted in the workspace metadata.
+	tokenKey := secretstore.CFTokenKey(workspaceID)
+	var keyringUnavailable bool
+	if err := a.secretStore.Set(tokenKey, cfToken); err != nil {
+		if errors.Is(err, secretstore.ErrKeyringUnavailable) {
+			log.Printf("DeployRemoteWorker: OS keyring unavailable for %s; token not stored (user consent required for file fallback)", workspaceID)
+			keyringUnavailable = true
+			tokenKey = "" // ref remains unset until user opts in via StoreCFTokenFileFallback
+		} else {
+			log.Printf("DeployRemoteWorker: keyring set for %s: %v (non-fatal, token not persisted)", workspaceID, err)
+			tokenKey = ""
+		}
+	}
+
 	// Update workspace RemoteConfig.
 	rc := &types.RemoteConfig{
 		CFAccountID:         accountID,
@@ -845,7 +879,8 @@ func (a *App) DeployRemoteWorker(workspaceID, cfToken, githubPAT string) (Remote
 		CFWorkerEndpointURL: deploy.CFWorkerEndpointURL,
 		CFDeploymentVersion: deploy.DeploymentVersion,
 		SecretRefs: types.RemoteSecretRefs{
-			GitHubPATRef: "GITHUB_PAT",
+			GitHubPATRef:  "GITHUB_PAT",
+			CFAPITokenRef: tokenKey,
 		},
 	}
 	ws.ExecutionTarget = types.ExecutionTargetRemote
@@ -858,7 +893,122 @@ func (a *App) DeployRemoteWorker(workspaceID, cfToken, githubPAT string) (Remote
 		WorkerName:          deploy.WorkerName,
 		CFWorkerEndpointURL: deploy.CFWorkerEndpointURL,
 		DeploymentVersion:   deploy.DeploymentVersion,
+		KeyringUnavailable:  keyringUnavailable,
 	}, nil
+}
+
+// --- CF token helpers (issue #178) ---
+
+// cfTokenForWorkspace retrieves the stored CF API token for a remote workspace.
+// It reads the CFAPITokenRef from the workspace metadata and delegates to the
+// appropriate backend (keyring or file fallback). Returns an error if no token
+// is stored or the lookup fails.
+func (a *App) cfTokenForWorkspace(wsID string) (string, error) {
+	ws, ok := a.wsReg.Get(wsID)
+	if !ok {
+		return "", fmt.Errorf("workspace %s not found", wsID)
+	}
+	if ws.RemoteConfig == nil {
+		return "", fmt.Errorf("workspace %s has no remote config", wsID)
+	}
+	ref := ws.RemoteConfig.SecretRefs.CFAPITokenRef
+	if ref == "" {
+		return "", fmt.Errorf("workspace %s has no stored CF token ref", wsID)
+	}
+	tok, err := secretstore.GetFromRef(ref, secretstore.DefaultSecretsDir())
+	if err != nil {
+		return "", fmt.Errorf("retrieve CF token for %s: %w", wsID, err)
+	}
+	return tok, nil
+}
+
+// StoreCFTokenFileFallback stores the CF API token for a workspace using the
+// file-based fallback (~/.config/PrismConductor/secrets/<wsID>.key, 0600 perms).
+// This is the explicit opt-in path shown to the user when the OS keyring is
+// unavailable (headless Linux). The user must consent before this is called.
+func (a *App) StoreCFTokenFileFallback(workspaceID, cfToken string) error {
+	if a.wsReg == nil {
+		return fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("workspace %s not found", workspaceID)
+	}
+	if ws.RemoteConfig == nil {
+		return fmt.Errorf("workspace %s has no remote config", workspaceID)
+	}
+
+	dir := secretstore.DefaultSecretsDir()
+	fs := secretstore.NewFileStore(dir)
+	key := secretstore.CFTokenKey(workspaceID)
+	if err := fs.Set(key, cfToken); err != nil {
+		return fmt.Errorf("write file secret: %w", err)
+	}
+	filePath := fs.FilePath(key)
+	log.Printf("StoreCFTokenFileFallback: token for %s stored at %s (user-consented file fallback)", workspaceID, filePath)
+
+	ws.RemoteConfig.SecretRefs.CFAPITokenRef = secretstore.FileFallbackPrefix + filePath
+	if err := a.wsReg.Update(ws); err != nil {
+		return fmt.Errorf("update workspace: %w", err)
+	}
+	return nil
+}
+
+// ReplaceCFToken rotates the stored CF API token for a workspace. It overwrites
+// the existing keyring (or file fallback) entry so subsequent CF operations use
+// the new token without requiring re-deploy.
+func (a *App) ReplaceCFToken(workspaceID, newToken string) error {
+	if a.wsReg == nil {
+		return fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("workspace %s not found", workspaceID)
+	}
+	if ws.RemoteConfig == nil {
+		return fmt.Errorf("workspace %s has no remote config", workspaceID)
+	}
+	ref := ws.RemoteConfig.SecretRefs.CFAPITokenRef
+
+	if ref == "" {
+		// No existing ref — attempt to store in keyring; fall through to file
+		// fallback error so the caller can surface the consent banner.
+		key := secretstore.CFTokenKey(workspaceID)
+		if err := a.secretStore.Set(key, newToken); err != nil {
+			if errors.Is(err, secretstore.ErrKeyringUnavailable) {
+				return secretstore.ErrKeyringUnavailable
+			}
+			return fmt.Errorf("keyring set: %w", err)
+		}
+		ws.RemoteConfig.SecretRefs.CFAPITokenRef = key
+		return a.wsReg.Update(ws)
+	}
+
+	// Overwrite existing ref location (keyring or file).
+	if err := secretstore.DeleteFromRef(ref); err != nil {
+		log.Printf("ReplaceCFToken: delete old ref %q: %v (continuing)", ref, err)
+	}
+
+	key := secretstore.CFTokenKey(workspaceID)
+	if err := a.secretStore.Set(key, newToken); err != nil {
+		if errors.Is(err, secretstore.ErrKeyringUnavailable) {
+			return secretstore.ErrKeyringUnavailable
+		}
+		return fmt.Errorf("keyring set: %w", err)
+	}
+	ws.RemoteConfig.SecretRefs.CFAPITokenRef = key
+	return a.wsReg.Update(ws)
+}
+
+// IsKeyringAvailable reports whether the OS-native keyring is reachable. The
+// frontend uses this to decide whether to show the file-fallback consent banner.
+func (a *App) IsKeyringAvailable() bool {
+	const probe = "prismconductor.__keyring_probe__"
+	if err := a.secretStore.Set(probe, "1"); err != nil {
+		return false
+	}
+	_ = a.secretStore.Delete(probe)
+	return true
 }
 
 // --- Goals ---

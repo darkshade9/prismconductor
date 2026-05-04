@@ -1117,6 +1117,7 @@ export namespace main {
 	    worker_name: string;
 	    cf_worker_endpoint_url: string;
 	    deployment_version: string;
+	    keyring_unavailable?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new RemoteDeployResult(source);
@@ -1127,6 +1128,7 @@ export namespace main {
 	        this.worker_name = source["worker_name"];
 	        this.cf_worker_endpoint_url = source["cf_worker_endpoint_url"];
 	        this.deployment_version = source["deployment_version"];
+	        this.keyring_unavailable = source["keyring_unavailable"];
 	    }
 	}
 	export class SpawnEstimate {
