@@ -4,7 +4,10 @@
 // state-drift bugs (issue #98).
 package issueview
 
-import "prismconductor/internal/types"
+import (
+	"prismconductor/internal/cardstate"
+	"prismconductor/internal/types"
+)
 
 // PoolBadge is the resolved provider badge for a card. Derived from the
 // most-recent session's pool_id so the card can show the provider icon without
@@ -36,15 +39,10 @@ type ConflictsInfo struct {
 	ConflictingFiles []string `json:"conflicting_files"`
 }
 
-// PlanFailedInfo is populated when the most recent plan-mode session ended in
-// a failed state without emitting a BLOCKED: sentinel (those are already
-// surfaced via LastFailure). Cleared when a plan session succeeds or the card
-// moves to REVIEW/DONE (#191).
-type PlanFailedInfo struct {
-	SessionID string `json:"session_id"`
-	// Reason is a short human-readable explanation. May be empty.
-	Reason string `json:"reason,omitempty"`
-}
+// PlanFailedInfo is an alias for cardstate.PlanFailedInfo, re-exported here so
+// existing assembler code can reference it by the issueview package name.
+// The underlying type lives in cardstate to avoid an import cycle (#30).
+type PlanFailedInfo = cardstate.PlanFailedInfo
 
 // OrphanQuestionInfo is populated when a paused_for_question session's question
 // file is absent from disk (#153). The frontend uses this to render a recovery
@@ -96,6 +94,17 @@ type IssueView struct {
 	// (#159). Non-zero only for REVIEW-column cards. Drives the "New Comment
 	// (N)" badge.
 	UnreadCommentCount int `json:"unread_comment_count"`
+
+	// CardState is the single authoritative visual state derived by the backend
+	// (#30). Phase 1: emitted alongside the existing per-field view; the
+	// frontend falls back to its own derivation when this field is absent.
+	// Phase 2: the frontend cuts over to rendering from CardState alone.
+	CardState cardstate.CardState `json:"card_state,omitempty"`
+
+	// CardStateDetails carries diagnostic context for the current CardState:
+	// blocked reason, session ID, failure cause, etc. Nil-safe: always check
+	// CardState first.
+	CardStateDetails *cardstate.CardStateDetails `json:"card_state_details,omitempty"`
 }
 
 // OrphanPRInfo is surfaced when an execute session pushed a branch but failed

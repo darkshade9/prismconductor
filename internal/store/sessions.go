@@ -647,3 +647,59 @@ func (s *Store) AcknowledgeLatestFailure(workspaceID string, issueNumber int) (*
 	}
 	return &sess, nil
 }
+
+// BackfillMissingFailureCause sets FailureCause.Kind = "unknown_pre_card_state_v2"
+// on every terminal failed/blocked session row whose JSON blob has no
+// failure_cause field. Called once at startup so the UI never renders a
+// null failure reason for legacy rows (issue #30 q3).
+//
+// Returns the number of rows updated.
+func (s *Store) BackfillMissingFailureCause() (int, error) {
+	if s == nil || s.DB == nil {
+		return 0, errors.New("store unavailable")
+	}
+	rows, err := s.DB.Query(
+		`SELECT id, json FROM sessions
+		 WHERE state IN ('failed', 'blocked')
+		   AND json_extract(json, '$.failure_cause') IS NULL`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	type candidate struct {
+		id  string
+		raw string
+	}
+	var candidates []candidate
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.id, &c.raw); err != nil {
+			return 0, err
+		}
+		candidates = append(candidates, c)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	updated := 0
+	cause := &types.FailureCause{Kind: "unknown_pre_card_state_v2"}
+	for _, c := range candidates {
+		var sess types.Session
+		rawMap, err := jsonutil.Load([]byte(c.raw), &sess)
+		if err != nil {
+			continue
+		}
+		sess.FailureCause = cause
+		b, err := jsonutil.Save(rawMap, &sess)
+		if err != nil {
+			continue
+		}
+		if _, err := s.DB.Exec(`UPDATE sessions SET json = ? WHERE id = ?`, string(b), c.id); err != nil {
+			continue
+		}
+		updated++
+	}
+	return updated, nil
+}

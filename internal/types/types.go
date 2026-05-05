@@ -460,6 +460,21 @@ const (
 	QuestionYesNo        QuestionType = "yes_no"
 )
 
+// FailureCause is a structured record of why a session reached a terminal
+// failed or blocked state. Captured at the moment the terminal sentinel is
+// written so that the UI can always surface a human-readable reason (#30).
+type FailureCause struct {
+	// Kind classifies the failure origin. Known values:
+	//   "blocked"                  — worker emitted BLOCKED: sentinel
+	//   "exit_code"                — process exited with non-zero code
+	//   "signal"                   — process terminated by signal
+	//   "unknown_pre_card_state_v2" — legacy row backfilled at startup
+	Kind     string `json:"kind"`
+	Reason   string `json:"reason,omitempty"`
+	ExitCode int    `json:"exit_code,omitempty"`
+	Signal   string `json:"signal,omitempty"`
+}
+
 // --- Session (§6.5) ---
 
 type Session struct {
@@ -514,6 +529,10 @@ type Session struct {
 
 	// Branch is the git branch this execute session ran on (#194).
 	Branch string `json:"branch,omitempty"`
+
+	// FailureCause is set when the session reaches a terminal failed/blocked
+	// state. Nil for completed, paused, and needs_pr sessions (#30).
+	FailureCause *FailureCause `json:"failure_cause,omitempty"`
 }
 
 // MidRunAnswer is the §6.4-shaped answer payload for a mid-run question
