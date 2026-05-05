@@ -5,7 +5,7 @@ import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
 import { Replan, ReplanForce, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue, ResolveConflicts, AttachManualPR, PrepareManualPushCommand, OpenOrphanPR } from "../../wailsjs/go/main/App";
 import { ClipboardSetText } from "../../wailsjs/runtime/runtime";
 import { RecoverButton } from "./RecoverButton";
-import { types } from "../../wailsjs/go/models";
+import { types, issueview } from "../../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "../stores/sessionStore";
 import { useLabelsStore, EMPTY_LABELS } from "../stores/labelsStore";
 import { useIssueViewStore } from "../stores/useIssueViewStore";
@@ -21,6 +21,37 @@ import { cn } from "../lib/cn";
 import { CopyMenu, CopyAction, toQuotedBlock } from "./CopyMenu";
 import { useGlowColorsStore, type GlowState } from "../stores/useGlowColorsStore";
 import { resolveGlowClass, resolveCardBorderGlow } from "../lib/glow";
+
+// CardStateValue mirrors the backend cardstate.CardState enum (#30).
+// These values are emitted by the assembler and read additively here while
+// the frontend falls back to its own derivation when the field is absent.
+type CardStateValue =
+  | "todo"
+  | "plan_ready"
+  | "planning"
+  | "needs_answer"
+  | "in_progress"
+  | "blocked"
+  | "waiting_for_pool"
+  | "needs_pr"
+  | "orphan_question"
+  | "merge_conflict"
+  | "tests_failing"
+  | "plan_failed"
+  | "review"
+  | "done";
+
+// Extended view type that includes the new card_state fields not yet in
+// the auto-generated models.ts (wails generate module adds them on next build).
+type IssueViewWithCardState = issueview.IssueView & {
+  card_state?: CardStateValue;
+  card_state_details?: {
+    reason?: string;
+    session_id?: string;
+    session_mode?: string;
+    blocked_reason?: string;
+  };
+};
 
 export type CardProps = {
   issue: types.Issue;
@@ -44,7 +75,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   // Canonical IssueView from the backend assembler (#98). Provides
   // pre-derived session state, pool badge, and plan-ready flag without
   // requiring the card to reconcile multiple stores.
-  const view = useIssueViewStore((s) => s.get(issue.workspace_id, issue.number));
+  const view = useIssueViewStore((s) => s.get(issue.workspace_id, issue.number)) as IssueViewWithCardState | null;
   const activeSession: types.Session | null = view?.active_session ?? null;
   const pausedSession: types.Session | null = view?.paused_session ?? null;
   const lastFailure: types.Session | null = view?.last_failure ?? null;
@@ -90,19 +121,42 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   const blocked = (issue.dependencies ?? []).length > 0;
   const isPrimitive = !blocked && (issue.priority ?? 0) >= 0.7;
 
-  // Determine which customizable glow state applies (priority mirrors the old className ladder).
+  // Determine which customizable glow state applies.
+  // When card_state is present (backend-derived, #30), map it directly to a
+  // GlowState; otherwise fall back to the legacy per-field derivation.
   const glowColors = useGlowColorsStore((s) => s.colors);
   const glowState = ((): GlowState | null => {
+    const cs = view?.card_state;
+    if (cs) {
+      // Backend-authoritative path (additive — active when card_state present).
+      switch (cs) {
+        case "planning":        return "planning";
+        case "in_progress":     return "inProgress";
+        case "plan_ready":      return "planReady";
+        case "orphan_question": return "planReady";
+        case "needs_answer":    return "planReady";
+        case "blocked":
+        case "merge_conflict":
+        case "tests_failing":
+        case "plan_failed":     return "blocked";
+        case "review":          return "review";
+        // waiting_for_pool and needs_pr use hardcoded glows below.
+        case "waiting_for_pool":
+        case "needs_pr":
+        case "todo":
+        case "done":
+        default:                return null;
+      }
+    }
+    // Legacy derivation — kept as fallback until full Phase 2 cutover.
     if (pausedSession) return "planReady";
     if (activeSession?.state === "blocked") return "blocked";
     if (activeSession?.mode === "plan") return "planning";
     if (activeSession?.mode === "execute") return "inProgress";
-    // waitingForPool and needsPR use hardcoded glows below.
     if (issue.waiting_for_pool) return null;
     if (!activeSession && needsPRInfo && !issue.pr_number) return null;
     if (!activeSession && (lastFailure || testsFailingInfo || conflictsInfo)) return "blocked";
     if (planReady) return "planReady";
-    // REVIEW green glow: PR exists and checks pass.
     if (
       issue.column === "review" &&
       issue.pr_number != null &&

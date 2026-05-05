@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 
+	"prismconductor/internal/cardstate"
 	"prismconductor/internal/eventbus"
 	"prismconductor/internal/types"
 )
@@ -384,6 +385,28 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		orphanPRInfo = &OrphanPRInfo{Branch: orphanBranch}
 	}
 
+	// Derive the single authoritative CardState and its companion details (#30).
+	// Additive: emitted alongside the existing per-field view so the frontend
+	// can fall back to its own derivation until the Phase 2 cutover.
+	cs, csDetails := cardstate.DeriveCardState(cardstate.DeriveParams{
+		Column:            derivedColumn(iss, plan, active, lastFail),
+		PRNumber:          iss.PRNumber,
+		WaitingForPool:    iss.WaitingForPool,
+		ActiveSession:     active,
+		PausedSession:     paused,
+		LastFailure:       lastFail,
+		Plan:              plan,
+		NeedsPRInfo:       iss.NeedsPRInfo,
+		HasTestsFailing:   testsFailingInfo != nil,
+		HasConflicts:      conflictsInfo != nil,
+		HasOrphanQuestion: orphanQuestion != nil,
+		PlanFailed:        planFailed,
+	})
+	var csDetailsPtr *cardstate.CardStateDetails
+	if cs != cardstate.CardStateTodo && cs != cardstate.CardStateDone {
+		csDetailsPtr = &csDetails
+	}
+
 	return IssueView{
 		Issue:              iss,
 		LatestPlan:         plan,
@@ -400,6 +423,8 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		PlanFailed:         planFailed,
 		OrphanPRInfo:       orphanPRInfo,
 		UnreadCommentCount: unreadCommentCount,
+		CardState:          cs,
+		CardStateDetails:   csDetailsPtr,
 	}, nil
 }
 

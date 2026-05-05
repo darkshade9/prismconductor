@@ -1,3 +1,60 @@
+export namespace cardstate {
+	
+	export class CardStateDetails {
+	    reason?: string;
+	    session_id?: string;
+	    session_mode?: string;
+	    blocked_reason?: string;
+	    failure_cause?: types.FailureCause;
+	
+	    static createFrom(source: any = {}) {
+	        return new CardStateDetails(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.reason = source["reason"];
+	        this.session_id = source["session_id"];
+	        this.session_mode = source["session_mode"];
+	        this.blocked_reason = source["blocked_reason"];
+	        this.failure_cause = this.convertValues(source["failure_cause"], types.FailureCause);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class PlanFailedInfo {
+	    session_id: string;
+	    reason?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PlanFailedInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.session_id = source["session_id"];
+	        this.reason = source["reason"];
+	    }
+	}
+
+}
+
 export namespace diagnose {
 	
 	export class IssueDiagnosis {
@@ -854,20 +911,6 @@ export namespace issueview {
 	    }
 	}
 
-	export class PlanFailedInfo {
-	    session_id: string;
-	    reason?: string;
-
-	    static createFrom(source: any = {}) {
-	        return new PlanFailedInfo(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.session_id = source['session_id'];
-	        this.reason = source['reason'];
-	    }
-	}
 	export class TestsFailingInfo {
 	    failing_jobs: string[];
 	    failing_check_run_urls: string[];
@@ -919,9 +962,11 @@ export namespace issueview {
 	    conflicts_info?: ConflictsInfo;
 	    orphan_question?: OrphanQuestionInfo;
 	    needs_pr_info?: types.NeedsPRInfo;
-	    plan_failed?: PlanFailedInfo;
+	    plan_failed?: cardstate.PlanFailedInfo;
 	    orphan_pr_info?: OrphanPRInfo;
 	    unread_comment_count: number;
+	    card_state?: string;
+	    card_state_details?: cardstate.CardStateDetails;
 	
 	    static createFrom(source: any = {}) {
 	        return new IssueView(source);
@@ -941,9 +986,11 @@ export namespace issueview {
 	        this.conflicts_info = this.convertValues(source["conflicts_info"], ConflictsInfo);
 	        this.orphan_question = this.convertValues(source["orphan_question"], OrphanQuestionInfo);
 	        this.needs_pr_info = this.convertValues(source["needs_pr_info"], types.NeedsPRInfo);
-	        this.plan_failed = this.convertValues(source["plan_failed"], PlanFailedInfo);
+	        this.plan_failed = this.convertValues(source["plan_failed"], cardstate.PlanFailedInfo);
 	        this.orphan_pr_info = this.convertValues(source["orphan_pr_info"], OrphanPRInfo);
 	        this.unread_comment_count = source["unread_comment_count"];
+	        this.card_state = source["card_state"];
+	        this.card_state_details = this.convertValues(source["card_state_details"], cardstate.CardStateDetails);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1285,6 +1332,24 @@ export namespace types {
 	        this.env_vars = source["env_vars"];
 	        this.pre_commands = source["pre_commands"];
 	        this.shell = source["shell"];
+	    }
+	}
+	export class FailureCause {
+	    kind: string;
+	    reason?: string;
+	    exit_code?: number;
+	    signal?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FailureCause(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.reason = source["reason"];
+	        this.exit_code = source["exit_code"];
+	        this.signal = source["signal"];
 	    }
 	}
 	export class FileIntent {
@@ -1904,6 +1969,7 @@ export namespace types {
 	    input_tokens?: number;
 	    output_tokens?: number;
 	    estimated_cost_cents?: number;
+	    failure_cause?: FailureCause;
 	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
@@ -1928,6 +1994,7 @@ export namespace types {
 	        this.input_tokens = source["input_tokens"];
 	        this.output_tokens = source["output_tokens"];
 	        this.estimated_cost_cents = source["estimated_cost_cents"];
+	        this.failure_cause = this.convertValues(source["failure_cause"], FailureCause);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

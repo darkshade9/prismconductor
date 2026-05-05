@@ -1074,6 +1074,16 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 			rs.sess.ID, rs.sess.IssueNumber, time.Since(rs.sess.StartedAt).Seconds())
 		rs.sess.State = types.StateCompleted
 	}
+	// Stamp FailureCause for terminal failed sessions that don't already have
+	// one (i.e. process died without emitting BLOCKED:). Ensures the UI always
+	// has a structured reason for failed cards (#30 q2).
+	if rs.sess.State == types.StateFailed && rs.sess.FailureCause == nil {
+		cause := &types.FailureCause{Kind: "exit_code", Reason: "worker exited with non-zero status"}
+		if waitErr != nil {
+			cause.Reason = waitErr.Error()
+		}
+		rs.sess.FailureCause = cause
+	}
 	end := time.Now()
 	rs.sess.EndedAt = &end
 	if m.store != nil {
@@ -1352,7 +1362,12 @@ func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 				reason = reason[:500]
 			}
 			rs.sess.BlockedReason = reason
-			// Re-save the full JSON so BlockedReason survives restart.
+			// Stamp FailureCause so the card always has a structured reason (#30).
+			rs.sess.FailureCause = &types.FailureCause{
+				Kind:   "blocked",
+				Reason: reason,
+			}
+			// Re-save the full JSON so BlockedReason and FailureCause survive restart.
 			// UpdateSessionState only updates the `state` column.
 			if m.store != nil {
 				_ = m.store.SaveSession(rs.sess, rs.transcriptPath)
