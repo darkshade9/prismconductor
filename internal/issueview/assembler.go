@@ -349,6 +349,11 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		}
 	}
 
+	// Derive plan failure: plan sessions that ended Failed without a BLOCKED:
+	// reason are invisible to selectSessions/LastFailure but represent a real
+	// failure the user must see (#191).
+	planFailed := derivePlanFailed(iss, sessions, active)
+
 	return IssueView{
 		Issue:              iss,
 		LatestPlan:         plan,
@@ -362,8 +367,59 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		ConflictsInfo:      conflictsInfo,
 		OrphanQuestion:     orphanQuestion,
 		NeedsPRInfo:        iss.NeedsPRInfo,
+		PlanFailed:         planFailed,
 		UnreadCommentCount: unreadCommentCount,
 	}, nil
+}
+
+// derivePlanFailed finds the most recent plan session that ended in StateFailed
+// without a BlockedReason (those are already surfaced via LastFailure). Returns
+// nil when suppressed by a later successful plan, an active plan session, or
+// when the card is in REVIEW/DONE.
+func derivePlanFailed(iss types.Issue, sessions []types.Session, active *types.Session) *PlanFailedInfo {
+	if iss.Column == types.ColReview || iss.Column == types.ColDone {
+		return nil
+	}
+	if active != nil && active.Mode == types.ModePlan {
+		return nil
+	}
+
+	var candidate *types.Session
+	var mostRecentPlanCompleted *types.Session
+	for i := range sessions {
+		s := &sessions[i]
+		if s.Mode != types.ModePlan {
+			continue
+		}
+		if s.State == types.StateCompleted {
+			if mostRecentPlanCompleted == nil || s.StartedAt.After(mostRecentPlanCompleted.StartedAt) {
+				mostRecentPlanCompleted = s
+			}
+		}
+		// Only track failures without a BlockedReason — those WITH one are
+		// already shown as LastFailure and we avoid doubling the badge.
+		if s.State != types.StateFailed || s.BlockedReason != "" {
+			continue
+		}
+		ackd := s.AcknowledgedAt != nil && *s.AcknowledgedAt != 0
+		if ackd {
+			continue
+		}
+		if candidate == nil || s.StartedAt.After(candidate.StartedAt) {
+			candidate = s
+		}
+	}
+	if candidate == nil {
+		return nil
+	}
+	// Suppress when a successful plan session followed the failure.
+	if mostRecentPlanCompleted != nil && mostRecentPlanCompleted.StartedAt.After(candidate.StartedAt) {
+		return nil
+	}
+	return &PlanFailedInfo{
+		SessionID: candidate.ID,
+		Reason:    "plan session ended without success",
+	}
 }
 
 // SetSelfHealAttempts updates the in-memory self-heal attempt counter for the

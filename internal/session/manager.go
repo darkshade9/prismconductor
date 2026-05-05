@@ -128,6 +128,11 @@ type Manager struct {
 // Sentinel so callers can branch on it cleanly via errors.Is.
 var ErrDuplicateSpawn = errors.New("duplicate spawn refused: same (workspace, issue, mode) already in flight")
 
+// ErrRemoteNotReady is returned by SpawnPlan when the workspace has
+// ExecutionTarget=remote but RemoteConfig or CFWorkerEndpointURL is not
+// configured. The caller should surface this as an immediate card error.
+var ErrRemoteNotReady = errors.New("remote workspace not ready: no worker endpoint configured")
+
 type runtimeSession struct {
 	sess           *types.Session
 	cmd            sessionCmd
@@ -304,7 +309,14 @@ func (m *Manager) SetProviders(r *llm.Registry) { m.providers = r }
 // SpawnPlan launches a plan-mode worker per §10.1 / §10.4. The pool's provider
 // determines the spawn strategy: Claude returns argv (subprocess), the four
 // OpenAI-compat providers return llm.ErrNotSupported (harness, §10.5).
+//
+// Issue #191: when ws.ExecutionTarget is "remote", delegates to spawnRemotePlan
+// instead of running a local subprocess. Returns ErrRemoteNotReady immediately
+// if the remote endpoint is not configured so the caller can surface an error.
 func (m *Manager) SpawnPlan(ws types.Workspace, issue types.Issue, pool types.Pool) (*types.Session, error) {
+	if ws.ExecutionTarget == types.ExecutionTargetRemote {
+		return m.spawnRemotePlan(ws, issue, pool)
+	}
 	args, prompt, err := m.buildPlanCommand(ws, issue, pool)
 	if err != nil {
 		return nil, err

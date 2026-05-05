@@ -36,6 +36,16 @@ type ConflictsInfo struct {
 	ConflictingFiles []string `json:"conflicting_files"`
 }
 
+// PlanFailedInfo is populated when the most recent plan-mode session ended in
+// a failed state without emitting a BLOCKED: sentinel (those are already
+// surfaced via LastFailure). Cleared when a plan session succeeds or the card
+// moves to REVIEW/DONE (#191).
+type PlanFailedInfo struct {
+	SessionID string `json:"session_id"`
+	// Reason is a short human-readable explanation. May be empty.
+	Reason string `json:"reason,omitempty"`
+}
+
 // OrphanQuestionInfo is populated when a paused_for_question session's question
 // file is absent from disk (#153). The frontend uses this to render a recovery
 // badge and enable the Recover action without re-checking the filesystem.
@@ -70,6 +80,12 @@ type IssueView struct {
 	// NeedsPRInfo mirrors Issue.NeedsPRInfo for direct frontend access (#157).
 	// Set when the execute session completed the work but could not push.
 	NeedsPRInfo *types.NeedsPRInfo `json:"needs_pr_info,omitempty"`
+
+	// PlanFailed is set when the most recent plan session ended in a failed
+	// state without a captured BLOCKED: reason (those are already shown via
+	// LastFailure). Lets the UI show a visible red badge on PLAN-column cards
+	// that silently failed to produce a plan (#191).
+	PlanFailed *PlanFailedInfo `json:"plan_failed,omitempty"`
 
 	// UnreadCommentCount is the number of unread PR comments on this issue
 	// (#159). Non-zero only for REVIEW-column cards. Drives the "New Comment
