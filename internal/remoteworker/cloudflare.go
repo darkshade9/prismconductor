@@ -122,12 +122,12 @@ func DeployWorker(accountID, token, workspaceID string, workerScript []byte) (De
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 
+	// Bindings are NOT declared here: Cloudflare rejects secret_text bindings
+	// that lack a "text" value (API error 10021). UpsertSecret calls after
+	// deploy create the bindings atomically with the secret value.
 	meta := map[string]any{
-		"main_module": "worker.js",
+		"main_module":        "worker.js",
 		"compatibility_date": "2024-01-01",
-		"bindings": []map[string]string{
-			{"type": "secret_text", "name": secretGHPAT},
-		},
 	}
 	metaJSON, _ := json.Marshal(meta)
 	mPart, err := mw.CreatePart(map[string][]string{
