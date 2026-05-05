@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { AddWorkspace, DeployRemoteWorker, TestCloudflareToken, TestGitHubPAT } from "../../wailsjs/go/main/App";
+import { AddWorkspace, DeployRemoteWorker, GetRepoDefaultBranch, TestCloudflareToken, TestGitHubPAT } from "../../wailsjs/go/main/App";
 import { main, types } from "../../wailsjs/go/models";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { noAutoCorrect } from "../lib/inputs";
+import { deriveWorkspaceID, parseRepoURL } from "../lib/parseRepoURL";
 
 type Step = "cf-token" | "github-pat" | "repo" | "deploy" | "done";
 
@@ -29,6 +30,7 @@ export const GITHUB_FINE_GRAINED_SCOPES = [
 
 export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
   const refresh = useWorkspaceStore((s) => s.refresh);
+  const existingWorkspaces = useWorkspaceStore((s) => s.workspaces);
 
   const [step, setStep] = useState<Step>("cf-token");
   const [busy, setBusy] = useState(false);
@@ -41,12 +43,15 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
 
   // Step 2 — GitHub PAT
   const [githubPAT, setGitHubPAT] = useState("");
-  const [patVerified, setPATVerified] = useState(false);
 
-  // Step 3 — repo identity
+  // Step 3 — repo identity (derived from a single URL input)
+  const [repoURL, setRepoURL] = useState("");
+  const [urlError, setURLError] = useState<string | null>(null);
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
-  const [defaultBranch, setDefaultBranch] = useState("main");
+  const [defaultBranch, setDefaultBranch] = useState("");
+  const [branchFetchState, setBranchFetchState] = useState<"idle" | "loading" | "error" | "done">("idle");
+  const [branchFetchError, setBranchFetchError] = useState<string | null>(null);
   const [wsID, setWsID] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [color, setColor] = useState(COLOR_PALETTE[1]);
@@ -55,6 +60,46 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
   const [deployResult, setDeployResult] = useState<main.RemoteDeployResult | null>(null);
 
   // ---
+
+  async function handleRepoURLChange(raw: string) {
+    setRepoURL(raw);
+    setURLError(null);
+    setBranchFetchError(null);
+
+    const parsed = parseRepoURL(raw);
+    if (!parsed) {
+      if (raw.trim()) setURLError("Invalid GitHub URL — use https://github.com/owner/repo or git@github.com:owner/repo");
+      setOwner("");
+      setRepo("");
+      setDefaultBranch("");
+      setBranchFetchState("idle");
+      return;
+    }
+
+    setOwner(parsed.owner);
+    setRepo(parsed.repo);
+
+    // Auto-suggest workspace ID and display name immediately.
+    const existingIDs = existingWorkspaces.map((w) => w.id);
+    setWsID((prev) => (!prev || prev === deriveWorkspaceID(owner, repo, existingIDs)) ? deriveWorkspaceID(parsed.owner, parsed.repo, existingIDs) : prev);
+    setDisplayName((prev) => (!prev || prev === `${owner}/${repo}`) ? `${parsed.owner}/${parsed.repo}` : prev);
+
+    // Fetch default branch from GitHub (requires PAT).
+    if (!githubPAT.trim()) {
+      setBranchFetchState("idle");
+      return;
+    }
+
+    setBranchFetchState("loading");
+    try {
+      const branch = await GetRepoDefaultBranch(githubPAT.trim(), parsed.owner, parsed.repo);
+      setDefaultBranch(branch);
+      setBranchFetchState("done");
+    } catch (e: any) {
+      setBranchFetchState("error");
+      setBranchFetchError(String(e?.message ?? e));
+    }
+  }
 
   async function testCFToken() {
     setError(null);
@@ -72,32 +117,23 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
 
   async function testGitHubPAT() {
     setError(null);
-    if (!owner || !repo) {
-      setStep("repo");
-      return;
-    }
-    setBusy(true);
-    try {
-      await TestGitHubPAT(githubPAT.trim(), owner, repo);
-      setPATVerified(true);
-      setStep("repo");
-    } catch (e: any) {
-      setError(String(e?.message ?? e));
-    } finally {
-      setBusy(false);
-    }
+    setStep("repo");
   }
 
   async function testPATWithRepo() {
-    if (!owner || !repo) {
-      setError("Owner and repo are required.");
+    const parsed = parseRepoURL(repoURL);
+    if (!parsed) {
+      setError("Enter a valid GitHub repository URL first.");
+      return;
+    }
+    if (!wsID) {
+      setError("Workspace ID is required.");
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      await TestGitHubPAT(githubPAT.trim(), owner, repo);
-      setPATVerified(true);
+      await TestGitHubPAT(githubPAT.trim(), parsed.owner, parsed.repo);
       setStep("deploy");
     } catch (e: any) {
       setError(String(e?.message ?? e));
@@ -285,38 +321,51 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
       {step === "repo" && (
         <div className="space-y-3">
           <div className="text-xs text-slate-400">
-            Identify the GitHub repository this workspace will work on.
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="block">
-              <FieldLabel
-                label="Owner"
-                tip={<p>The GitHub user or organization that owns the repository, e.g. <code className="bg-slate-700 px-0.5 rounded">octocat</code>.</p>}
-              />
-              <input
-                {...noAutoCorrect}
-                value={owner}
-                onChange={(e) => setOwner(e.target.value)}
-                placeholder="octocat"
-                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200"
-              />
-            </label>
-            <label className="block">
-              <FieldLabel
-                label="Repository"
-                tip={<p>The repository name (without the owner prefix), e.g. <code className="bg-slate-700 px-0.5 rounded">my-repo</code>. Your PAT must have Contents and Pull requests access to this repo.</p>}
-              />
-              <input
-                {...noAutoCorrect}
-                value={repo}
-                onChange={(e) => setRepo(e.target.value)}
-                placeholder="my-repo"
-                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200"
-              />
-            </label>
+            Paste the GitHub repository URL — owner, repo, and default branch will be filled in automatically.
           </div>
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">Default branch</div>
+            <FieldLabel
+              label="Repository URL"
+              tip={
+                <div className="space-y-1">
+                  <p>Paste any GitHub URL form:</p>
+                  <ul className="space-y-0.5 font-mono text-[11px]">
+                    <li>https://github.com/owner/repo</li>
+                    <li>https://github.com/owner/repo.git</li>
+                    <li>git@github.com:owner/repo.git</li>
+                  </ul>
+                </div>
+              }
+            />
+            <input
+              {...noAutoCorrect}
+              value={repoURL}
+              onChange={(e) => handleRepoURLChange(e.target.value)}
+              placeholder="https://github.com/owner/repo"
+              className={
+                "w-full bg-slate-800 border rounded px-2 py-1.5 text-slate-200 font-mono text-xs " +
+                (urlError ? "border-red-500" : "border-slate-700")
+              }
+            />
+            {urlError && <div className="text-red-400 text-xs mt-1">{urlError}</div>}
+          </label>
+
+          {owner && repo && (
+            <div className="text-xs text-slate-500 font-mono">
+              {owner} / {repo}
+            </div>
+          )}
+
+          <label className="block">
+            <div className="flex items-center gap-1 text-xs text-slate-500 mb-1">
+              Default branch
+              {branchFetchState === "loading" && (
+                <span className="text-slate-500 animate-pulse">fetching…</span>
+              )}
+              {branchFetchState === "done" && (
+                <span className="text-emerald-400">✓ fetched</span>
+              )}
+            </div>
             <input
               {...noAutoCorrect}
               value={defaultBranch}
@@ -324,18 +373,24 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
               placeholder="main"
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200"
             />
+            {branchFetchState === "error" && branchFetchError && (
+              <div className="text-amber-400 text-xs mt-1">
+                Could not fetch default branch — {branchFetchError}. Enter it manually.
+              </div>
+            )}
           </label>
+
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
               <FieldLabel
                 label="Workspace ID"
-                tip={<p>A unique slug for this workspace, e.g. <code className="bg-slate-700 px-0.5 rounded">my-repo-remote</code>. Used as part of the CF Worker name — lowercase letters, numbers, and hyphens only.</p>}
+                tip={<p>A unique slug for this workspace, e.g. <code className="bg-slate-700 px-0.5 rounded">my-repo</code>. Used as part of the CF Worker name — lowercase letters, numbers, and hyphens only.</p>}
               />
               <input
                 {...noAutoCorrect}
                 value={wsID}
                 onChange={(e) => setWsID(e.target.value)}
-                placeholder="my-repo-remote"
+                placeholder="my-repo"
                 className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200"
               />
             </label>
@@ -345,11 +400,12 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
                 {...noAutoCorrect}
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="My Repo (Remote)"
+                placeholder="owner/repo"
                 className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200"
               />
             </label>
           </div>
+
           <div>
             <div className="text-xs text-slate-500 mb-1">Card color</div>
             <div className="flex gap-1">
@@ -363,6 +419,7 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
               ))}
             </div>
           </div>
+
           {error && <div className="text-red-400 text-xs">{error}</div>}
           <div className="flex justify-between pt-1">
             <button onClick={() => setStep("github-pat")} className="text-xs text-slate-500 hover:text-slate-300">

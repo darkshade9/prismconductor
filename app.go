@@ -838,6 +838,13 @@ func (a *App) TestGitHubPAT(pat, owner, repo string) error {
 	return remoteworker.VerifyGitHubPAT(pat, owner, repo)
 }
 
+// GetRepoDefaultBranch returns the default branch of owner/repo as reported
+// by the GitHub API. Called by the remote-workspace wizard after the user
+// pastes a repository URL so the branch field can be pre-filled.
+func (a *App) GetRepoDefaultBranch(pat, owner, repo string) (string, error) {
+	return remoteworker.GetRepoDefaultBranch(pat, owner, repo)
+}
+
 // RemoteDeployResult is the frontend-visible result of DeployRemoteWorker.
 type RemoteDeployResult struct {
 	WorkerName          string `json:"worker_name"`
