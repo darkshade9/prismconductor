@@ -54,6 +54,10 @@ const (
 	// Issue #159: PR comment surface — inbound badge and outbound post.
 	EvtPRCommentReceived EventType = "pr_comment_received"
 	EvtPRCommentPosted   EventType = "pr_comment_posted"
+
+	// Issue #194: orphan-branch detection and recovery.
+	EvtOrphanPRDetected EventType = "orphan_pr_detected"
+	EvtOrphanPRCleared  EventType = "orphan_pr_cleared"
 )
 
 type Event struct {
@@ -160,6 +164,19 @@ type PRCommentReceived struct {
 	PRNumber    int    `json:"pr_number"`
 	CommentID   int64  `json:"comment_id"`
 	Author      string `json:"author"`
+}
+
+// OrphanPRDetected is the payload for EvtOrphanPRDetected (#194).
+type OrphanPRDetected struct {
+	WorkspaceID string `json:"workspace_id"`
+	IssueNumber int    `json:"issue_number"`
+	Branch      string `json:"branch"`
+}
+
+// OrphanPRCleared is the payload for EvtOrphanPRCleared (#194).
+type OrphanPRCleared struct {
+	WorkspaceID string `json:"workspace_id"`
+	IssueNumber int    `json:"issue_number"`
 }
 
 type Handler func(Event)

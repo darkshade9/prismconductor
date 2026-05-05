@@ -10,7 +10,7 @@ import {
 } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 
-export type Column = "todo" | "plan" | "in_progress" | "review" | "done";
+export type Column = "todo" | "plan" | "in_progress" | "review" | "done" | "blocked";
 
 type State = {
   issues: types.Issue[];

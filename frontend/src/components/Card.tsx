@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
-import { Replan, ReplanForce, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue, ResolveConflicts, AttachManualPR, PrepareManualPushCommand } from "../../wailsjs/go/main/App";
+import { Replan, ReplanForce, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue, ResolveConflicts, AttachManualPR, PrepareManualPushCommand, OpenOrphanPR } from "../../wailsjs/go/main/App";
 import { ClipboardSetText } from "../../wailsjs/runtime/runtime";
 import { RecoverButton } from "./RecoverButton";
 import { types } from "../../wailsjs/go/models";
@@ -53,6 +53,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   const orphanQuestion = view?.orphan_question ?? null;
   const needsPRInfo = view?.needs_pr_info ?? null;
   const planFailed = view?.plan_failed ?? null;
+  const orphanPRInfo = view?.orphan_pr_info ?? null;
   // Activity is live-streaming data not captured in the view — still from sessionStore.
   const activity: SessionActivity | null = useSessionStore((s) =>
     activeSession ? (s.sessions[activeSession.id]?.activity ?? null) : null
@@ -243,6 +244,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         orphanQuestion={orphanQuestion}
         planReady={planReady}
         planFailed={planFailed}
+        orphanPRInfo={orphanPRInfo}
         blocked={blocked}
         isPrimitive={isPrimitive}
         dependencies={issue.dependencies ?? []}
@@ -461,6 +463,10 @@ type PlanFailedInfo = {
   reason?: string;
 };
 
+type OrphanPRInfo = {
+  branch: string;
+};
+
 function StatusRow({
   activeSession,
   activity,
@@ -469,6 +475,7 @@ function StatusRow({
   orphanQuestion,
   planReady,
   planFailed,
+  orphanPRInfo,
   blocked,
   isPrimitive,
   dependencies,
@@ -493,6 +500,7 @@ function StatusRow({
   orphanQuestion: OrphanQuestionInfo | null;
   planReady: { revision: number } | null;
   planFailed: PlanFailedInfo | null;
+  orphanPRInfo: OrphanPRInfo | null;
   blocked: boolean;
   isPrimitive: boolean;
   dependencies: number[];
@@ -733,6 +741,52 @@ function StatusRow({
               </button>
             </div>
           )}
+        </div>
+        {menuEl}
+      </>
+    );
+  }
+
+  // Orphan PR recovery: execute session pushed a branch but died before opening a PR (#194).
+  if (orphanPRInfo && !activeSession && !pausedSession && !needsPRInfo) {
+    const [opening, setOpening] = useState(false);
+    return (
+      <>
+        <div className="text-[11px] mt-1.5 space-y-0.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Pulse className="bg-red-400" />
+            <span className="text-red-300 font-medium">BLOCKED — branch pushed, no PR</span>
+          </div>
+          <div className="text-slate-400 text-[10px] truncate pl-3.5" title={orphanPRInfo.branch}>
+            {orphanPRInfo.branch}
+          </div>
+          <div className="flex gap-1.5 pl-3.5">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpening(true);
+                OpenOrphanPR(workspaceID, issueNumber)
+                  .catch((err: any) => alert(String(err?.message ?? err)))
+                  .finally(() => setOpening(false));
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              disabled={opening}
+              className="px-1.5 py-0.5 rounded text-[10px] border border-emerald-700 text-emerald-300 hover:border-emerald-500 hover:text-emerald-200 disabled:opacity-50"
+              title={`Open a draft PR for branch ${orphanPRInfo.branch}`}
+            >
+              {opening ? "Opening…" : "↗ Open PR for pushed branch"}
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onClearFailure(); }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="px-1.5 py-0.5 rounded text-[10px] border border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+              title="Dismiss this recovery prompt"
+            >
+              ✕ Dismiss
+            </button>
+          </div>
         </div>
         {menuEl}
       </>

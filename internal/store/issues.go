@@ -104,6 +104,11 @@ func (s *Store) SaveIssue(iss types.Issue) (bool, error) {
 			if prev.NeedsPRInfo != nil {
 				iss.NeedsPRInfo = prev.NeedsPRInfo
 			}
+			// Preserve FailureReason: set by the conductor on execute failure;
+			// the GitHub poll has no opinion on it (#194).
+			if prev.FailureReason != "" {
+				iss.FailureReason = prev.FailureReason
+			}
 		}
 	}
 	iss.Column = col
@@ -884,4 +889,16 @@ WHERE column_name = 'done'
 		return 0, err
 	}
 	return int(n), nil
+}
+
+// SetIssueFailureReason writes the failure_reason into the issue JSON blob.
+// Used when an execute session fails; cleared on ClearIssueFailure (#194).
+func (s *Store) SetIssueFailureReason(workspaceID string, issueNumber int, reason string) error {
+	if s == nil || s.DB == nil {
+		return errors.New("store unavailable")
+	}
+	_, err := s.DB.Exec(
+		`UPDATE issues SET json = json_set(json, '$.failure_reason', ?) WHERE workspace_id = ? AND number = ?`,
+		reason, workspaceID, issueNumber)
+	return err
 }

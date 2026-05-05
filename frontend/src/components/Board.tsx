@@ -31,6 +31,7 @@ const COLUMNS: { id: ColumnID; title: string }[] = [
   { id: "in_progress", title: "IN_PROGRESS" },
   { id: "review", title: "REVIEW" },
   { id: "done", title: "DONE" },
+  { id: "blocked", title: "BLOCKED" },
 ];
 
 const cardID = (i: types.Issue) => `${i.workspace_id}#${i.number}`;
@@ -60,6 +61,7 @@ const fromCardID = (id: string) => {
 export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => void }) {
   const { issues, refresh, applyLocalMove, applyLocalReorder, moveColumn, reorder, searchQuery } = useIssueStore();
   const loadIssueViews = useIssueViewStore((s) => s.loadForWorkspace);
+  const getView = useIssueViewStore((s) => s.get);
   const { workspaces, selectedID } = useWorkspaceStore();
   const { selected: labelSelected, mode: labelMode } = useLabelFilterStore();
   const [filteredTodoNums, setFilteredTodoNums] = useState<Set<string> | null>(null);
@@ -107,6 +109,8 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
 
   // Group issues by column. For TODO, drop anything excluded by the active goal,
   // and order by orchestrator priority desc when no manual reorder has happened.
+  // BLOCKED is derived: cards route to BLOCKED when their IssueView.derived_column
+  // is "blocked", regardless of the stored issue.column value (#194).
   const grouped = useMemo(() => {
     const out: Record<ColumnID, types.Issue[]> = {
       todo: [],
@@ -114,10 +118,13 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
       in_progress: [],
       review: [],
       done: [],
+      blocked: [],
     };
     const labelSet = labelSelected.length > 0 ? new Set(labelSelected) : null;
     for (const i of issues) {
-      const col = (i.column || "todo") as ColumnID;
+      const view = getView(i.workspace_id, i.number);
+      const derivedCol = (view?.derived_column || i.column || "todo") as ColumnID;
+      const col = derivedCol;
       if (col === "todo" && filteredTodoNums && !filteredTodoNums.has(cardID(i))) continue;
       if (!matchesQuery(i.title, searchQuery)) continue;
       if (labelSet) {
@@ -134,7 +141,7 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
     // every item shares manual_order=0 (no human reorder yet), use priority.
     out.todo = sortTodoByPriority(out.todo);
     return out;
-  }, [issues, filteredTodoNums, searchQuery, labelSelected, labelMode]);
+  }, [issues, filteredTodoNums, searchQuery, labelSelected, labelMode, getView]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 

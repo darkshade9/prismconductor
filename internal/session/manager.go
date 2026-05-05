@@ -66,6 +66,9 @@ type Persister interface {
 	// UpdateSessionUsage persists per-session token counts and estimated cost
 	// to the dedicated columns and JSON blob (issue #101).
 	UpdateSessionUsage(sess *types.Session, transcriptPath string) error
+	// UpdateSessionDiagnostics persists exit diagnostics captured after the
+	// subprocess exits (#194).
+	UpdateSessionDiagnostics(id string, exitCode *int, signal string, waitMs int64, lastStderr string) error
 }
 
 // StateChangeHandler is fired on every state transition. Used by the App layer
@@ -202,6 +205,10 @@ type runtimeSession struct {
 	// so the worktree is preserved on the normal Completed cleanup path.
 	// Protected by actMu.
 	autoKilledForPROpen bool
+
+	// lastOutputBuf is a rolling buffer of the last ~200 bytes of transcript
+	// output for failure diagnostics (#194). Protected by actMu.
+	lastOutputBuf []byte
 }
 
 // sessionCmd is the §10.5 abstraction over both spawn strategies. The
@@ -670,6 +677,7 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 		State:       types.StateRunning,
 		StartedAt:   time.Now(),
 		PoolID:      pool.ID,
+		Branch:      branch,
 	}
 	sess.Transcript = transcriptPath
 
@@ -953,6 +961,12 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 			if len(line) > 0 {
 				rs.actMu.Lock()
 				rs.lastLineAt = time.Now()
+				const maxOutputBuf = 200
+				combined := append(rs.lastOutputBuf, []byte(line)...)
+				if len(combined) > maxOutputBuf {
+					combined = combined[len(combined)-maxOutputBuf:]
+				}
+				rs.lastOutputBuf = combined
 				rs.actMu.Unlock()
 				m.feedLine(rs, strings.TrimRight(line, "\r\n"))
 				rs.transcriptOffset += int64(len(line))
@@ -973,6 +987,12 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 						if len(line) > 0 {
 							rs.actMu.Lock()
 							rs.lastLineAt = time.Now()
+							const maxOutputBuf = 200
+							combined := append(rs.lastOutputBuf, []byte(line)...)
+							if len(combined) > maxOutputBuf {
+								combined = combined[len(combined)-maxOutputBuf:]
+							}
+							rs.lastOutputBuf = combined
 							rs.actMu.Unlock()
 							m.feedLine(rs, strings.TrimRight(line, "\r\n"))
 							rs.transcriptOffset += int64(len(line))
@@ -1001,12 +1021,28 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 		_ = m.store.UpdateSessionTranscriptOffset(rs.sess.ID, rs.transcriptOffset)
 	}
 	prev := rs.sess.State
+	waitStart := time.Now()
 	if !waited {
 		// We broke out without observing Wait — typically because ctx was
 		// cancelled. Wait now to reap the child and capture its exit code.
 		waitErr = <-done
 	}
+	rs.sess.CmdWaitTimeMs = time.Since(waitStart).Milliseconds()
 	rs.sess.State = mapTerminalState(rs.sess.State, waitErr)
+
+	// Capture subprocess exit diagnostics for failed execute sessions (#194).
+	if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			code := exitErr.ExitCode()
+			rs.sess.ExitCode = &code
+			if !exitErr.ProcessState.Exited() {
+				rs.sess.Signal = exitErr.ProcessState.String()
+			}
+		}
+	}
+	rs.actMu.Lock()
+	rs.sess.LastStderrChunk = strings.TrimSpace(string(rs.lastOutputBuf))
+	rs.actMu.Unlock()
 	rs.actMu.Lock()
 	autoKilled := rs.autoKilledForPROpen
 	rs.actMu.Unlock()
@@ -1042,6 +1078,17 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 		rs.sess.OutputTokens = outputTok
 		rs.sess.EstimatedCostCents = costCents
 		_ = m.store.UpdateSessionUsage(rs.sess, rs.transcriptPath)
+		// Persist exit diagnostics for failed execute sessions (#194).
+		if rs.sess.Mode == types.ModeExecute &&
+			(rs.sess.State == types.StateFailed || rs.sess.State == types.StateBlocked) {
+			_ = m.store.UpdateSessionDiagnostics(
+				rs.sess.ID,
+				rs.sess.ExitCode,
+				rs.sess.Signal,
+				rs.sess.CmdWaitTimeMs,
+				rs.sess.LastStderrChunk,
+			)
+		}
 		// Accumulate LLM cost from Claude stream-json result event (issue #47).
 		// Only Claude subprocess sessions emit this; harness sessions don't.
 		cd := rs.parser.LastCost()

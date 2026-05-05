@@ -409,3 +409,34 @@ func (c *Client) SetIssueLabels(ctx context.Context, ws types.Workspace, issueNu
 	_, _, err := c.api.Issues.ReplaceLabelsForIssue(ctx, ws.GitHubOwner, ws.GitHubRepo, issueNumber, names)
 	return err
 }
+
+// CreateDraftPR opens a draft pull request for the given branch, targeting the
+// repository's default branch. Returns the PR number and HTML URL (#194).
+func (c *Client) CreateDraftPR(ctx context.Context, ws types.Workspace, branch, issueTitle string, issueNumber int) (int, string, error) {
+	if ws.GitHubOwner == "" || ws.GitHubRepo == "" {
+		return 0, "", fmt.Errorf("workspace %q missing github_owner / github_repo", ws.ID)
+	}
+	// Resolve the repo's default branch to use as the base.
+	repo, _, err := c.api.Repositories.Get(ctx, ws.GitHubOwner, ws.GitHubRepo)
+	if err != nil {
+		return 0, "", fmt.Errorf("get repo: %w", err)
+	}
+	base := repo.GetDefaultBranch()
+	if base == "" {
+		base = "main"
+	}
+	draft := true
+	title := fmt.Sprintf("%s (#%d)", issueTitle, issueNumber)
+	body := fmt.Sprintf("Closes #%d\n\n_PR created via PrismConductor orphan-branch recovery._", issueNumber)
+	pr, _, err := c.api.PullRequests.Create(ctx, ws.GitHubOwner, ws.GitHubRepo, &gh.NewPullRequest{
+		Title: &title,
+		Head:  &branch,
+		Base:  &base,
+		Body:  &body,
+		Draft: &draft,
+	})
+	if err != nil {
+		return 0, "", err
+	}
+	return pr.GetNumber(), pr.GetHTMLURL(), nil
+}

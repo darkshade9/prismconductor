@@ -452,6 +452,58 @@ func (s *Store) WorkspaceSpendCents(workspaceID string, since time.Time) (float6
 	return total, err
 }
 
+// UpdateSessionDiagnostics persists subprocess exit diagnostics for failed
+// execute sessions (#194). Written only after session teardown.
+func (s *Store) UpdateSessionDiagnostics(id string, exitCode *int, signal string, waitMs int64, lastStderr string) error {
+	if s == nil || s.DB == nil {
+		return nil
+	}
+	var codeVal any
+	if exitCode != nil {
+		codeVal = *exitCode
+	}
+	_, err := s.DB.Exec(
+		`UPDATE sessions SET
+			exit_code = ?,
+			signal = ?,
+			cmd_wait_time_ms = ?,
+			last_stderr_chunk = ?
+		 WHERE id = ?`,
+		codeVal, nullableString(signal), waitMs, nullableString(lastStderr), id)
+	return err
+}
+
+// MostRecentFailedExecuteSession returns the most recent unacknowledged failed
+// or blocked execute session with a branch name for (workspaceID, issueNumber).
+// Used by the orphan-PR poller to find pushed branches with no open PR (#194).
+func (s *Store) MostRecentFailedExecuteSession(workspaceID string, issueNumber int) (*types.Session, error) {
+	if s == nil || s.DB == nil {
+		return nil, nil
+	}
+	var raw string
+	err := s.DB.QueryRow(`
+		SELECT json FROM sessions
+		WHERE workspace_id = ? AND issue_number = ?
+		  AND state IN ('failed','blocked')
+		  AND json_extract(json, '$.mode') = 'execute'
+		  AND json_extract(json, '$.branch') IS NOT NULL
+		  AND json_extract(json, '$.branch') <> ''
+		  AND (acknowledged_at IS NULL OR acknowledged_at = 0)
+		ORDER BY json_extract(json, '$.started_at') DESC
+		LIMIT 1`, workspaceID, issueNumber).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var sess types.Session
+	if _, err := jsonutil.Load([]byte(raw), &sess); err != nil {
+		return nil, err
+	}
+	return &sess, nil
+}
+
 // SessionTranscriptPath returns the spool path for a session id.
 func (s *Store) SessionTranscriptPath(id string) (string, error) {
 	if s == nil || s.DB == nil {

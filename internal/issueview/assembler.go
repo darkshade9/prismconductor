@@ -51,6 +51,7 @@ type Assembler struct {
 	cache         map[string]string           // "wsID#num" → last-emitted JSON
 	checkFails    map[string]*checkFailEntry  // "wsID#num" → latest check failure
 	conflictFails map[string]*conflictEntry   // "wsID#num" → latest conflict state
+	orphanPRs     map[string]string           // "wsID#num" → branch name (#194)
 
 	// repoPathFn resolves a workspace ID to its local repo path. When set,
 	// Assemble probes the questions directory to detect orphan question files
@@ -66,6 +67,7 @@ func New(bus *eventbus.Bus, st issueStore) *Assembler {
 		cache:         make(map[string]string),
 		checkFails:    make(map[string]*checkFailEntry),
 		conflictFails: make(map[string]*conflictEntry),
+		orphanPRs:     make(map[string]string),
 	}
 	bus.Subscribe(a.handleEvent)
 	return a
@@ -93,6 +95,8 @@ var issueRelevantEvents = map[eventbus.EventType]bool{
 	eventbus.EvtPRConflictsResolved: true,
 	eventbus.EvtNeedsPR:           true,
 	eventbus.EvtPRCommentReceived: true,
+	eventbus.EvtOrphanPRDetected:  true,
+	eventbus.EvtOrphanPRCleared:   true,
 }
 
 func (a *Assembler) handleEvent(e eventbus.Event) {
@@ -141,6 +145,20 @@ func (a *Assembler) handleEvent(e eventbus.Event) {
 			delete(a.conflictFails, key)
 			a.mu.Unlock()
 		}
+	case eventbus.EvtOrphanPRDetected:
+		if p, ok := e.Payload.(eventbus.OrphanPRDetected); ok {
+			key := p.WorkspaceID + "#" + strconv.Itoa(p.IssueNumber)
+			a.mu.Lock()
+			a.orphanPRs[key] = p.Branch
+			a.mu.Unlock()
+		}
+	case eventbus.EvtOrphanPRCleared, eventbus.EvtPROpened:
+		if wsID != "" && issueNum != 0 {
+			key := wsID + "#" + strconv.Itoa(issueNum)
+			a.mu.Lock()
+			delete(a.orphanPRs, key)
+			a.mu.Unlock()
+		}
 	}
 	// Session-state changes are LOAD-BEARING for the frontend's glow ladder
 	// (running execute → purple, blocked → red, etc). The cache-diff gate
@@ -159,7 +177,9 @@ func (a *Assembler) handleEvent(e eventbus.Event) {
 		eventbus.EvtPRConflictsResolved,
 		eventbus.EvtPROpened,
 		eventbus.EvtPRMerged,
-		eventbus.EvtPRClosedUnmerged:
+		eventbus.EvtPRClosedUnmerged,
+		eventbus.EvtOrphanPRDetected,
+		eventbus.EvtOrphanPRCleared:
 		a.reassembleAndForceEmit(wsID, issueNum)
 		return
 	}
@@ -354,6 +374,16 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 	// failure the user must see (#191).
 	planFailed := derivePlanFailed(iss, sessions, active)
 
+	// Orphan PR: branch pushed by a failed execute session with no open PR (#194).
+	issKey := workspaceID + "#" + strconv.Itoa(issueNumber)
+	a.mu.Lock()
+	orphanBranch := a.orphanPRs[issKey]
+	a.mu.Unlock()
+	var orphanPRInfo *OrphanPRInfo
+	if orphanBranch != "" {
+		orphanPRInfo = &OrphanPRInfo{Branch: orphanBranch}
+	}
+
 	return IssueView{
 		Issue:              iss,
 		LatestPlan:         plan,
@@ -362,12 +392,13 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		LastFailure:        lastFail,
 		LastSession:        lastSession,
 		PoolBadge:          poolBadge,
-		DerivedColumn:      derivedColumn(iss, plan, active),
+		DerivedColumn:      derivedColumn(iss, plan, active, lastFail),
 		TestsFailingInfo:   testsFailingInfo,
 		ConflictsInfo:      conflictsInfo,
 		OrphanQuestion:     orphanQuestion,
 		NeedsPRInfo:        iss.NeedsPRInfo,
 		PlanFailed:         planFailed,
+		OrphanPRInfo:       orphanPRInfo,
 		UnreadCommentCount: unreadCommentCount,
 	}, nil
 }
@@ -556,9 +587,10 @@ func selectSessions(iss types.Issue, sessions []types.Session) (active, paused, 
 // Precedence (mirrors plan §98 DerivedColumn rules):
 //  1. PR open/merged → trust the persisted column (already "review" or "done")
 //  2. Active session running → "in_progress"
-//  3. Plan ready (not yet approved) → "plan"
-//  4. Fall back to Issue.Column or "todo"
-func derivedColumn(iss types.Issue, plan *types.Plan, active *types.Session) types.BoardColumn {
+//  3. Failed execute session (unacknowledged) → "blocked" (#194)
+//  4. Plan ready (not yet approved) → "plan"
+//  5. Fall back to Issue.Column or "todo"
+func derivedColumn(iss types.Issue, plan *types.Plan, active *types.Session, lastFail *types.Session) types.BoardColumn {
 	if iss.PRNumber != nil {
 		if iss.Column == "" {
 			return types.ColReview
@@ -567,6 +599,14 @@ func derivedColumn(iss types.Issue, plan *types.Plan, active *types.Session) typ
 	}
 	if active != nil {
 		return types.ColInProgress
+	}
+	// Move cards to the BLOCKED repair column when a failed execute session
+	// exists and the user hasn't acknowledged it yet.
+	if lastFail != nil && lastFail.Mode == types.ModeExecute {
+		ackd := lastFail.AcknowledgedAt != nil && *lastFail.AcknowledgedAt != 0
+		if !ackd {
+			return types.ColBlocked
+		}
 	}
 	if plan != nil && plan.ReadyToExecute && plan.ApprovedAt == nil {
 		return types.ColPlan

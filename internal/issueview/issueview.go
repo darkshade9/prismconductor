@@ -87,8 +87,19 @@ type IssueView struct {
 	// that silently failed to produce a plan (#191).
 	PlanFailed *PlanFailedInfo `json:"plan_failed,omitempty"`
 
+	// OrphanPRInfo is set when the poller detects a feat/issue-N-* branch
+	// pushed by a failed execute session but no open PR targeting it (#194).
+	// The frontend renders an "Open PR" recovery button on the card.
+	OrphanPRInfo *OrphanPRInfo `json:"orphan_pr_info,omitempty"`
+
 	// UnreadCommentCount is the number of unread PR comments on this issue
 	// (#159). Non-zero only for REVIEW-column cards. Drives the "New Comment
 	// (N)" badge.
 	UnreadCommentCount int `json:"unread_comment_count"`
+}
+
+// OrphanPRInfo is surfaced when an execute session pushed a branch but failed
+// before opening a PR (#194). Enables the "Open PR" recovery button.
+type OrphanPRInfo struct {
+	Branch string `json:"branch"`
 }
