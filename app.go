@@ -456,6 +456,19 @@ func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionSta
 		return
 	}
 
+	// When an execute session fails, persist the failure reason on the issue
+	// and move the card to the BLOCKED column so it appears in a dedicated
+	// repair column instead of staying silently in IN_PROGRESS (#194).
+	if sess.Mode == types.ModeExecute &&
+		(sess.State == types.StateBlocked || sess.State == types.StateFailed) &&
+		a.store != nil {
+		reason := sess.BlockedReason
+		if reason == "" {
+			reason = "execute session ended without success"
+		}
+		_ = a.store.SetIssueFailureReason(sess.WorkspaceID, sess.IssueNumber, reason)
+	}
+
 	// When an execute session COMPLETES on a card that had merge conflicts
 	// recorded, optimistically clear the conflict info so the card doesn't
 	// stay glowing red after the resolver demonstrably finished. The
@@ -1447,6 +1460,16 @@ func (a *App) ClearIssueFailure(workspaceID string, issueNumber int) error {
 	if err != nil {
 		return err
 	}
+	// Clear the persisted failure_reason so the card no longer shows the
+	// blocked tooltip after the user acknowledges the failure (#194).
+	_ = a.store.SetIssueFailureReason(workspaceID, issueNumber, "")
+	// Emit orphan PR cleared so the assembler removes the recovery button.
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtOrphanPRCleared, eventbus.OrphanPRCleared{
+			WorkspaceID: workspaceID,
+			IssueNumber: issueNumber,
+		})
+	}
 	if sess != nil {
 		wruntime.EventsEmit(a.ctx, "session.state", *sess)
 		// Publish to the in-process bus too so the IssueView assembler
@@ -1470,6 +1493,57 @@ func (a *App) ClearIssueFailure(workspaceID string, issueNumber int) error {
 		// at least makes the UI converge with backend truth.
 		a.assembler.Reassemble(workspaceID, issueNumber)
 	}
+	return nil
+}
+
+// OpenOrphanPR creates a draft PR for a pushed branch from a failed execute
+// session that never opened a PR. Transitions the card to REVIEW on success
+// (#194). Returns an error if no orphan session exists or the API call fails.
+func (a *App) OpenOrphanPR(workspaceID string, issueNumber int) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	sess, err := a.store.MostRecentFailedExecuteSession(workspaceID, issueNumber)
+	if err != nil {
+		return fmt.Errorf("lookup failed execute session: %w", err)
+	}
+	if sess == nil || sess.Branch == "" {
+		return fmt.Errorf("no failed execute session with a pushed branch for issue #%d", issueNumber)
+	}
+	if a.gh == nil {
+		return fmt.Errorf("github client not configured")
+	}
+	iss, err := a.store.LoadIssue(workspaceID, issueNumber)
+	if err != nil {
+		return fmt.Errorf("load issue: %w", err)
+	}
+	prNum, prURL, err := a.gh.CreateDraftPR(a.ctx, ws, sess.Branch, iss.Title, issueNumber)
+	if err != nil {
+		return fmt.Errorf("create draft PR: %w", err)
+	}
+	if err := a.store.MarkPROpened(workspaceID, issueNumber, prNum, prURL); err != nil {
+		return fmt.Errorf("mark PR opened: %w", err)
+	}
+	// Clear orphan state and emit PR-opened so the assembler moves the card.
+	_ = a.store.SetIssueFailureReason(workspaceID, issueNumber, "")
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtPROpened, map[string]any{
+			"workspace_id": workspaceID,
+			"issue_number": issueNumber,
+			"pr_number":    prNum,
+			"pr_url":       prURL,
+		})
+	}
+	wruntime.EventsEmit(a.ctx, "pr.opened", map[string]any{
+		"workspace_id": workspaceID,
+		"issue_number": issueNumber,
+		"pr_number":    prNum,
+		"pr_url":       prURL,
+	})
 	return nil
 }
 

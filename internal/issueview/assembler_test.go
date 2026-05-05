@@ -187,14 +187,14 @@ func TestSelectSessions_NoReason_NotTrackedAsFailure(t *testing.T) {
 
 func TestDerivedColumn_PRNumber_TrustsReview(t *testing.T) {
 	iss := types.Issue{Column: types.ColReview, PRNumber: prNumber(42)}
-	if col := derivedColumn(iss, nil, nil); col != types.ColReview {
+	if col := derivedColumn(iss, nil, nil, nil); col != types.ColReview {
 		t.Errorf("got %v want review", col)
 	}
 }
 
 func TestDerivedColumn_PRNumber_TrustsDone(t *testing.T) {
 	iss := types.Issue{Column: types.ColDone, PRNumber: prNumber(42)}
-	if col := derivedColumn(iss, nil, nil); col != types.ColDone {
+	if col := derivedColumn(iss, nil, nil, nil); col != types.ColDone {
 		t.Errorf("got %v want done", col)
 	}
 }
@@ -202,34 +202,34 @@ func TestDerivedColumn_PRNumber_TrustsDone(t *testing.T) {
 func TestDerivedColumn_ActiveSession_InProgress(t *testing.T) {
 	iss := types.Issue{Column: types.ColTodo}
 	sess := makeSession(types.StateRunning, t1, "", false)
-	if col := derivedColumn(iss, nil, &sess); col != types.ColInProgress {
+	if col := derivedColumn(iss, nil, &sess, nil); col != types.ColInProgress {
 		t.Errorf("got %v want in_progress", col)
 	}
 }
 
 func TestDerivedColumn_PlanReady(t *testing.T) {
 	iss := types.Issue{Column: types.ColTodo}
-	if col := derivedColumn(iss, planPtr(true, false), nil); col != types.ColPlan {
+	if col := derivedColumn(iss, planPtr(true, false), nil, nil); col != types.ColPlan {
 		t.Errorf("got %v want plan", col)
 	}
 }
 
 func TestDerivedColumn_PlanApproved_NoOverride(t *testing.T) {
 	iss := types.Issue{Column: types.ColTodo}
-	if col := derivedColumn(iss, planPtr(true, true), nil); col != types.ColTodo {
+	if col := derivedColumn(iss, planPtr(true, true), nil, nil); col != types.ColTodo {
 		t.Errorf("got %v want todo (approved plan should not force plan column)", col)
 	}
 }
 
 func TestDerivedColumn_Fallback_EmptyColumn(t *testing.T) {
-	if col := derivedColumn(types.Issue{}, nil, nil); col != types.ColTodo {
+	if col := derivedColumn(types.Issue{}, nil, nil, nil); col != types.ColTodo {
 		t.Errorf("got %v want todo", col)
 	}
 }
 
 func TestDerivedColumn_Fallback_StoredColumn(t *testing.T) {
 	iss := types.Issue{Column: types.ColInProgress}
-	if col := derivedColumn(iss, nil, nil); col != types.ColInProgress {
+	if col := derivedColumn(iss, nil, nil, nil); col != types.ColInProgress {
 		t.Errorf("got %v want in_progress", col)
 	}
 }

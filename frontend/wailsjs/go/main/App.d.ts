@@ -234,3 +234,5 @@ export function WorkspaceSpendToday(arg1:string):Promise<number>;
 export function WriteAgentInput(arg1:string,arg2:string):Promise<void>;
 
 export function WriteAnswersOnly(arg1:main.AnswerSubmission):Promise<void>;
+
+export function OpenOrphanPR(arg1:string,arg2:number):Promise<void>;

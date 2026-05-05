@@ -24,6 +24,7 @@ type Store interface {
 	MarkPRClosedUnmerged(workspaceID string, number int) error
 	SaveLabels(workspaceID string, labels []types.Label) error
 	UpsertPRComment(c types.PRComment) (bool, error)
+	MostRecentFailedExecuteSession(workspaceID string, issueNumber int) (*types.Session, error)
 }
 
 // WorkspaceSource lets the poller pick up newly-added workspaces between ticks.
@@ -361,6 +362,44 @@ func (p *Poller) pollOne(ctx context.Context, ws types.Workspace) error {
 			continue
 		}
 		p.publishPR(eventbus.EvtPROpened, ws, iss)
+	}
+
+	// Orphan-branch detection (#194): for issues with a failed execute session
+	// that have a branch but no open PR, check GitHub for a PR targeting that
+	// branch. Bounded by issues with failed execute sessions (typically 0–2).
+	for _, iss := range prev {
+		if iss.PRNumber != nil {
+			continue // PR already attached
+		}
+		if iss.NeedsPRInfo != nil {
+			continue // already handled by NEEDS_PR path
+		}
+		sess, err := p.Store.MostRecentFailedExecuteSession(ws.ID, iss.Number)
+		if err != nil || sess == nil || sess.Branch == "" {
+			continue
+		}
+		prNum, prURL, err := p.Client.FetchOpenPRsForBranch(ctx, ws, sess.Branch)
+		if err != nil {
+			log.Printf("orphan-pr poll %s#%d: %v", ws.ID, iss.Number, err)
+			continue
+		}
+		if prNum != 0 {
+			// PR was opened manually; auto-attach it.
+			if err := p.Store.MarkPROpened(ws.ID, iss.Number, prNum, prURL); err != nil {
+				log.Printf("orphan-pr: mark pr opened %s#%d: %v", ws.ID, iss.Number, err)
+				continue
+			}
+			p.publishPR(eventbus.EvtPROpened, ws, iss)
+		} else {
+			// Branch pushed but no PR yet — surface recovery button.
+			if p.Bus != nil {
+				p.Bus.Publish(eventbus.EvtOrphanPRDetected, eventbus.OrphanPRDetected{
+					WorkspaceID: ws.ID,
+					IssueNumber: iss.Number,
+					Branch:      sess.Branch,
+				})
+			}
+		}
 	}
 
 	// Piggy-back label fetch on the same tick. Failures are logged and don't

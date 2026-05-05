@@ -371,6 +371,11 @@ type Issue struct {
 	// opened against NeedsPRInfo.Branch and auto-attaches it (#157).
 	// Cleared by MarkPROpened.
 	NeedsPRInfo *NeedsPRInfo `json:"needs_pr_info,omitempty"`
+
+	// FailureReason is a concise human-readable explanation of why the most
+	// recent execute session failed. Set when an execute session reaches
+	// StateBlocked or StateFailed; cleared on ClearIssueFailure (#194).
+	FailureReason string `json:"failure_reason,omitempty"`
 }
 
 // NeedsPRInfo holds the context needed to display the NEEDS_PR badge and poll
@@ -397,8 +402,12 @@ const (
 	ColTodo       BoardColumn = "todo"
 	ColPlan       BoardColumn = "plan"
 	ColInProgress BoardColumn = "in_progress"
-	ColReview     BoardColumn = "review"
-	ColDone       BoardColumn = "done"
+	// ColBlocked is the repair column for issues whose execute session died
+	// mid-flow without opening a PR. Cards sit here until the user acknowledges
+	// the failure or opens the orphan PR (#194).
+	ColBlocked BoardColumn = "blocked"
+	ColReview  BoardColumn = "review"
+	ColDone    BoardColumn = "done"
 )
 
 // --- Plan (§6.4) ---
@@ -496,6 +505,15 @@ type Session struct {
 	InputTokens        int64   `json:"input_tokens,omitempty"`
 	OutputTokens       int64   `json:"output_tokens,omitempty"`
 	EstimatedCostCents float64 `json:"estimated_cost_cents,omitempty"`
+
+	// Issue #194: diagnostics captured at subprocess exit for failed execute sessions.
+	ExitCode        *int   `json:"exit_code,omitempty"`
+	Signal          string `json:"signal,omitempty"`
+	CmdWaitTimeMs   int64  `json:"cmd_wait_time_ms,omitempty"`
+	LastStderrChunk string `json:"last_stderr_chunk,omitempty"`
+
+	// Branch is the git branch this execute session ran on (#194).
+	Branch string `json:"branch,omitempty"`
 }
 
 // MidRunAnswer is the §6.4-shaped answer payload for a mid-run question

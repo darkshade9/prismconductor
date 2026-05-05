@@ -841,6 +841,19 @@ export namespace issueview {
 	    }
 	}
 
+	export class OrphanPRInfo {
+	    branch: string;
+
+	    static createFrom(source: any = {}) {
+	        return new OrphanPRInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.branch = source["branch"];
+	    }
+	}
+
 	export class PlanFailedInfo {
 	    session_id: string;
 	    reason?: string;
@@ -907,6 +920,7 @@ export namespace issueview {
 	    orphan_question?: OrphanQuestionInfo;
 	    needs_pr_info?: types.NeedsPRInfo;
 	    plan_failed?: PlanFailedInfo;
+	    orphan_pr_info?: OrphanPRInfo;
 	    unread_comment_count: number;
 	
 	    static createFrom(source: any = {}) {
@@ -928,6 +942,7 @@ export namespace issueview {
 	        this.orphan_question = this.convertValues(source["orphan_question"], OrphanQuestionInfo);
 	        this.needs_pr_info = this.convertValues(source["needs_pr_info"], types.NeedsPRInfo);
 	        this.plan_failed = this.convertValues(source["plan_failed"], PlanFailedInfo);
+	        this.orphan_pr_info = this.convertValues(source["orphan_pr_info"], OrphanPRInfo);
 	        this.unread_comment_count = source["unread_comment_count"];
 	    }
 	

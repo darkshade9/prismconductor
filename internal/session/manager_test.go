@@ -142,6 +142,9 @@ func (p *fakePersister) AccumulateIssueWork(_ string, _ int, _ types.SessionMode
 }
 func (p *fakePersister) AccumulateIssueCost(_ string, _ int, _ float64) error { return nil }
 func (p *fakePersister) UpdateSessionUsage(_ *types.Session, _ string) error  { return nil }
+func (p *fakePersister) UpdateSessionDiagnostics(_ string, _ *int, _ string, _ int64, _ string) error {
+	return nil
+}
 
 func TestMatchPatternsQuestionPending(t *testing.T) {
 	const qid = "11111111-2222-3333-4444-555555555555"
