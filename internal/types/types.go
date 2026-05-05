@@ -83,6 +83,11 @@ type Workspace struct {
 	// RemoteConfig holds Cloudflare configuration for remote workspaces.
 	// Nil for local workspaces.
 	RemoteConfig *RemoteConfig `json:"remote_config,omitempty"`
+	// Provisioning is true while a remote workspace is mid-creation (deploy
+	// started but not yet fully committed). Rows stuck in this state longer
+	// than ~10 minutes are cleaned up by the startup reconciler (issue #192).
+	Provisioning   bool       `json:"provisioning,omitempty"`
+	ProvisioningAt *time.Time `json:"provisioning_at,omitempty"`
 }
 
 // WorkspacePipeline is the per-workspace pipeline configuration (issue #146).

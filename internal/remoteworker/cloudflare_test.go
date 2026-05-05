@@ -181,6 +181,41 @@ func TestDeployWorker_noBindingsInMetadata(t *testing.T) {
 	}
 }
 
+func TestDeleteWorker_success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "want DELETE", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(cfResponse{Success: true, Result: json.RawMessage(`{}`)})
+	}))
+	defer srv.Close()
+	replaceHTTPClient(t, &http.Client{Transport: &rewriteTransport{base: srv.URL}})
+
+	if err := DeleteWorker("acct123", "tok", "prismconductor-ws1"); err != nil {
+		t.Fatalf("DeleteWorker: %v", err)
+	}
+}
+
+func TestDeleteWorker_notFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(cfResponse{
+			Success: false,
+			Errors:  []cfError{{Code: 10007, Message: "script not found"}},
+		})
+	}))
+	defer srv.Close()
+	replaceHTTPClient(t, &http.Client{Transport: &rewriteTransport{base: srv.URL}})
+
+	// 404 must be treated as success (worker already gone).
+	if err := DeleteWorker("acct123", "tok", "prismconductor-ws1"); err != nil {
+		t.Fatalf("DeleteWorker 404 should be a no-op, got: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Test helpers: transports that rewrite the scheme+host to a test server
 // ---------------------------------------------------------------------------

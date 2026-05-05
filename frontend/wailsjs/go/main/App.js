@@ -46,6 +46,10 @@ export function CreateLabel(arg1, arg2) {
   return window['go']['main']['App']['CreateLabel'](arg1, arg2);
 }
 
+export function CreateRemoteWorkspace(arg1) {
+  return window['go']['main']['App']['CreateRemoteWorkspace'](arg1);
+}
+
 export function DeleteGoal(arg1) {
   return window['go']['main']['App']['DeleteGoal'](arg1);
 }
@@ -240,6 +244,10 @@ export function OnboardCheck(arg1) {
 
 export function OpenBundledSkill(arg1) {
   return window['go']['main']['App']['OpenBundledSkill'](arg1);
+}
+
+export function OpenOrphanPR(arg1, arg2) {
+  return window['go']['main']['App']['OpenOrphanPR'](arg1, arg2);
 }
 
 export function PickRepoPath() {
@@ -448,8 +456,4 @@ export function WriteAgentInput(arg1, arg2) {
 
 export function WriteAnswersOnly(arg1) {
   return window['go']['main']['App']['WriteAnswersOnly'](arg1);
-}
-
-export function OpenOrphanPR(arg1, arg2) {
-  return window['go']['main']['App']['OpenOrphanPR'](arg1, arg2);
 }

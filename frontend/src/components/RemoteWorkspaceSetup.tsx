@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { AddWorkspace, DeployRemoteWorker, GetRepoDefaultBranch, TestCloudflareToken, TestGitHubPAT } from "../../wailsjs/go/main/App";
-import { main, types } from "../../wailsjs/go/models";
+import { CreateRemoteWorkspace, GetRepoDefaultBranch, TestCloudflareToken, TestGitHubPAT } from "../../wailsjs/go/main/App";
+import { main } from "../../wailsjs/go/models";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { noAutoCorrect } from "../lib/inputs";
 import { deriveWorkspaceID, parseRepoURL } from "../lib/parseRepoURL";
@@ -150,24 +150,19 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      // First create a skeleton local workspace so DeployRemoteWorker can look it up.
-      const skeleton = new types.Workspace({
-        id: wsID,
+      // Single atomic call: CF deploy + secret upload + API key + registry row.
+      // The registry row is only written after all remote steps succeed, so a
+      // failure at any point leaves no zombie workspace row (issue #192).
+      const dr = await CreateRemoteWorkspace(new main.RemoteWorkspaceForm({
+        cf_token: cfToken.trim(),
+        github_pat: githubPAT.trim(),
+        workspace_id: wsID,
         display_name: displayName || wsID,
-        repo_path: "",
         github_owner: owner,
         github_repo: repo,
         default_branch: defaultBranch || "main",
         color,
-        agent_env: { env_vars: {}, pre_commands: [], shell: "/bin/bash" },
-        skill_profile: { mode: "bundled" },
-        conventions: {},
-        enabled: true,
-        execution_target: "remote",
-      });
-      await AddWorkspace(skeleton);
-      // Then deploy the CF Worker and persist RemoteConfig.
-      const dr = await DeployRemoteWorker(wsID, cfToken.trim(), githubPAT.trim());
+      }));
       setDeployResult(dr);
       await refresh();
       setStep("done");

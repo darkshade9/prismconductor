@@ -33,6 +33,8 @@ export function ContinueWork(arg1:string,arg2:number,arg3:string):Promise<void>;
 
 export function CreateLabel(arg1:string,arg2:types.Label):Promise<types.Label>;
 
+export function CreateRemoteWorkspace(arg1:main.RemoteWorkspaceForm):Promise<main.RemoteDeployResult>;
+
 export function DeleteGoal(arg1:string):Promise<void>;
 
 export function DeleteLabel(arg1:string,arg2:string):Promise<void>;
@@ -130,6 +132,8 @@ export function MoveIssueColumn(arg1:string,arg2:number,arg3:string):Promise<voi
 export function OnboardCheck(arg1:string):Promise<Array<workspace.OnboardCheck>>;
 
 export function OpenBundledSkill(arg1:string):Promise<void>;
+
+export function OpenOrphanPR(arg1:string,arg2:number):Promise<void>;
 
 export function PickRepoPath():Promise<string>;
 
@@ -234,5 +238,3 @@ export function WorkspaceSpendToday(arg1:string):Promise<number>;
 export function WriteAgentInput(arg1:string,arg2:string):Promise<void>;
 
 export function WriteAnswersOnly(arg1:main.AnswerSubmission):Promise<void>;
-
-export function OpenOrphanPR(arg1:string,arg2:number):Promise<void>;
