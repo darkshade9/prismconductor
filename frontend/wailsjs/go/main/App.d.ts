@@ -69,6 +69,8 @@ export function GetPollInterval():Promise<number>;
 
 export function GetPoolUsage():Promise<Array<types.PoolUsage>>;
 
+export function GetRepoDefaultBranch(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function GitHubAuthStatus():Promise<githubauth.User>;
 
 export function GitHubListRepos():Promise<Array<github.Repository>>;
