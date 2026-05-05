@@ -324,12 +324,33 @@ func (m *Manager) SpawnPlan(ws types.Workspace, issue types.Issue, pool types.Po
 	if ws.ExecutionTarget == types.ExecutionTargetRemote {
 		return m.spawnRemotePlan(ws, issue, pool)
 	}
+	// Phase 2 (issue #197): pre-fetch the issue body to a known path so the
+	// plan worker can read it without an extra GitHub API call.
+	writeIssuePayload(ws.RepoPath, issue)
 	args, prompt, err := m.buildPlanCommand(ws, issue, pool)
 	if err != nil {
 		return nil, err
 	}
 	skillMarkdown := loadSkillMarkdown(ws, types.StagePlan)
 	return m.spawn(ws, issue, types.ModePlan, args, prompt, pool, skillMarkdown)
+}
+
+// writeIssuePayload writes the issue body to .prismconductor/issue-<N>.md so
+// the plan worker has a local copy to read. Best-effort: errors are logged but
+// never block the spawn since the worker can always fall back to gh issue view.
+func writeIssuePayload(repoPath string, issue types.Issue) {
+	if issue.Body == "" || repoPath == "" {
+		return
+	}
+	dest := IssuePayloadPath(repoPath, issue.Number)
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		log.Printf("issue payload: mkdir %s: %v", filepath.Dir(dest), err)
+		return
+	}
+	content := fmt.Sprintf("# Issue #%d: %s\n\n%s\n", issue.Number, issue.Title, issue.Body)
+	if err := os.WriteFile(dest, []byte(content), 0o644); err != nil {
+		log.Printf("issue payload: write %s: %v", dest, err)
+	}
 }
 
 // SpawnExecute launches an execute-mode worker per §10.2.

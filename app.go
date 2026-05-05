@@ -2335,6 +2335,34 @@ func (a *App) handlePlanReady(sess types.Session, relPath string) {
 		a.markSessionBlocked(sess, fmt.Sprintf("plan ingest failed: %v", err))
 		return
 	}
+
+	// Phase 1 (issue #197): reject the plan if the planner never read the issue.
+	// We check the live transcript (not the plan file) because the planner writes
+	// the plan *after* reading the issue; any evidence in the transcript is proof.
+	if sess.Transcript != "" {
+		read, scanErr := session.ScanForIssueRead(sess.Transcript, sess.IssueNumber)
+		if scanErr != nil {
+			log.Printf("transcript scan error (issue #%d): %v — accepting plan cautiously", sess.IssueNumber, scanErr)
+		} else if !read {
+			reason := fmt.Sprintf("planner did not read the issue: no gh issue view, pre-fetched payload read, or API fetch found in transcript (issue #197)")
+			log.Printf("plan rejected: %s", reason)
+			a.markSessionBlocked(sess, reason)
+			return
+		}
+	}
+
+	// Phase 2 (issue #197): advisory token-overlap check. A score below the
+	// threshold is a warning, not a hard block — the transcript scan above is
+	// the gate; this surfaces relevance problems that survive it.
+	if iss, loadErr := a.store.LoadIssue(sess.WorkspaceID, sess.IssueNumber); loadErr == nil {
+		issueText := iss.Title + " " + iss.Body
+		score := planio.TokenOverlapScore(issueText, plan.PlanMarkdown)
+		if score < planio.DefaultOverlapThreshold {
+			log.Printf("plan relevance warning (issue #%d rev %d): token overlap %.2f < %.2f — plan may be off-topic",
+				sess.IssueNumber, plan.Revision, score, planio.DefaultOverlapThreshold)
+		}
+	}
+
 	plan.WorkspaceID = sess.WorkspaceID
 	plan.IssueNumber = sess.IssueNumber
 	if err := a.store.SavePlan(*plan); err != nil {
