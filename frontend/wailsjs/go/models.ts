@@ -883,6 +883,18 @@ export namespace issueview {
 	        this.conflicting_files = source["conflicting_files"];
 	    }
 	}
+	export class OrphanPRInfo {
+	    branch: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new OrphanPRInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.branch = source["branch"];
+	    }
+	}
 	export class OrphanQuestionInfo {
 	    pending_question_id: string;
 	    since: number;
@@ -897,20 +909,6 @@ export namespace issueview {
 	        this.since = source["since"];
 	    }
 	}
-
-	export class OrphanPRInfo {
-	    branch: string;
-
-	    static createFrom(source: any = {}) {
-	        return new OrphanPRInfo(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.branch = source["branch"];
-	    }
-	}
-
 	export class TestsFailingInfo {
 	    failing_jobs: string[];
 	    failing_check_run_urls: string[];
@@ -1011,6 +1009,7 @@ export namespace issueview {
 		    return a;
 		}
 	}
+	
 	
 	
 
@@ -1575,6 +1574,7 @@ export namespace types {
 	    work_seconds_execute?: number;
 	    cost_usd?: number;
 	    needs_pr_info?: NeedsPRInfo;
+	    failure_reason?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Issue(source);
@@ -1611,6 +1611,7 @@ export namespace types {
 	        this.work_seconds_execute = source["work_seconds_execute"];
 	        this.cost_usd = source["cost_usd"];
 	        this.needs_pr_info = this.convertValues(source["needs_pr_info"], NeedsPRInfo);
+	        this.failure_reason = source["failure_reason"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1969,6 +1970,11 @@ export namespace types {
 	    input_tokens?: number;
 	    output_tokens?: number;
 	    estimated_cost_cents?: number;
+	    exit_code?: number;
+	    signal?: string;
+	    cmd_wait_time_ms?: number;
+	    last_stderr_chunk?: string;
+	    branch?: string;
 	    failure_cause?: FailureCause;
 	
 	    static createFrom(source: any = {}) {
@@ -1994,6 +2000,11 @@ export namespace types {
 	        this.input_tokens = source["input_tokens"];
 	        this.output_tokens = source["output_tokens"];
 	        this.estimated_cost_cents = source["estimated_cost_cents"];
+	        this.exit_code = source["exit_code"];
+	        this.signal = source["signal"];
+	        this.cmd_wait_time_ms = source["cmd_wait_time_ms"];
+	        this.last_stderr_chunk = source["last_stderr_chunk"];
+	        this.branch = source["branch"];
 	        this.failure_cause = this.convertValues(source["failure_cause"], FailureCause);
 	    }
 	

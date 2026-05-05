@@ -242,6 +242,10 @@ export function OpenBundledSkill(arg1) {
   return window['go']['main']['App']['OpenBundledSkill'](arg1);
 }
 
+export function OpenOrphanPR(arg1, arg2) {
+  return window['go']['main']['App']['OpenOrphanPR'](arg1, arg2);
+}
+
 export function PickRepoPath() {
   return window['go']['main']['App']['PickRepoPath']();
 }
@@ -448,8 +452,4 @@ export function WriteAgentInput(arg1, arg2) {
 
 export function WriteAnswersOnly(arg1) {
   return window['go']['main']['App']['WriteAnswersOnly'](arg1);
-}
-
-export function OpenOrphanPR(arg1, arg2) {
-  return window['go']['main']['App']['OpenOrphanPR'](arg1, arg2);
 }

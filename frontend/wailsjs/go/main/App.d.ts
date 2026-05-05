@@ -131,6 +131,8 @@ export function OnboardCheck(arg1:string):Promise<Array<workspace.OnboardCheck>>
 
 export function OpenBundledSkill(arg1:string):Promise<void>;
 
+export function OpenOrphanPR(arg1:string,arg2:number):Promise<void>;
+
 export function PickRepoPath():Promise<string>;
 
 export function PlanCostEstimate(arg1:string,arg2:number):Promise<main.CostEstimate>;
@@ -234,5 +236,3 @@ export function WorkspaceSpendToday(arg1:string):Promise<number>;
 export function WriteAgentInput(arg1:string,arg2:string):Promise<void>;
 
 export function WriteAnswersOnly(arg1:main.AnswerSubmission):Promise<void>;
-
-export function OpenOrphanPR(arg1:string,arg2:number):Promise<void>;
