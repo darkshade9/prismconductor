@@ -611,10 +611,11 @@ func selectSessions(iss types.Issue, sessions []types.Session) (active, paused, 
 //
 // Precedence (mirrors plan §98 DerivedColumn rules):
 //  1. PR open/merged → trust the persisted column (already "review" or "done")
-//  2. Active session running → "in_progress"
-//  3. Failed execute session (unacknowledged) → "blocked" (#194)
-//  4. Plan ready (not yet approved) → "plan"
-//  5. Fall back to Issue.Column or "todo"
+//  2. Active plan-mode session → "plan"
+//  3. Active execute-mode session → "in_progress"
+//  4. Failed execute session (unacknowledged) → "blocked" (#194)
+//  5. Plan ready (not yet approved) → "plan"
+//  6. Fall back to Issue.Column or "todo"
 func derivedColumn(iss types.Issue, plan *types.Plan, active *types.Session, lastFail *types.Session) types.BoardColumn {
 	if iss.PRNumber != nil {
 		if iss.Column == "" {
@@ -623,6 +624,12 @@ func derivedColumn(iss types.Issue, plan *types.Plan, active *types.Session, las
 		return iss.Column
 	}
 	if active != nil {
+		// Plan-mode sessions belong in the PLAN column. Bug fix: prior to
+		// this change all active sessions routed to IN_PROGRESS, which
+		// stranded planning cards in the wrong column with the right glow.
+		if active.Mode == types.ModePlan {
+			return types.ColPlan
+		}
 		return types.ColInProgress
 	}
 	// Move cards to the BLOCKED repair column when a failed execute session
