@@ -119,6 +119,21 @@ if [[ -e "$APP" ]]; then
   exit 3
 fi
 
+# ── 3a. force-sync frontend dependencies from lockfile ─────────────
+# `wails build`'s default `npm install` step will sometimes silently
+# no-op against a stale node_modules tree when a pulled commit added a
+# new dep — `package.json` + `package-lock.json` are updated, but the
+# files in node_modules remain from the prior install. tsc then fails
+# with "Cannot find module 'X' or its corresponding type declarations"
+# even though the lockfile knows about X. `npm ci` wipes node_modules
+# and reinstalls strictly from the lockfile so the tree matches what
+# the just-pulled commit expects.
+echo "→ npm ci (frontend deps from lockfile)"
+if ! ( cd "$REPO/frontend" && run npm ci ); then
+  echo "✗ npm ci failed in frontend/ — see $LOG" >&2
+  exit 3
+fi
+
 # ── 3b. regenerate Wails bindings BEFORE wiping artifacts ──────────
 # Critical ordering. `wails generate module` runs `go build` under the
 # hood to introspect the bound-method signatures. main.go has a
