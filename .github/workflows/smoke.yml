@@ -26,14 +26,17 @@ jobs:
         # `wails dev` panics with "failed to init GTK" the moment it tries
         # to create the window. xvfb provides a virtual X server so the
         # window-init succeeds and the dev URL stays up for the smoke test.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev \
-            libwebkit2gtk-4.0-dev \
-            build-essential \
-            pkg-config \
-            xvfb
+        #
+        # We use awalsh128/cache-apt-pkgs-action because the Azure apt mirror
+        # has been seen throttling to 62 kB/s on bad days, which alone can
+        # consume the entire 15-min job budget for the 53 MB install. The
+        # cache action restores the .deb cache from a previous warm run in
+        # seconds; cold runs still hit the mirror but only once per package
+        # set version.
+        uses: awalsh128/cache-apt-pkgs-action@v1.4.3
+        with:
+          packages: libgtk-3-dev libwebkit2gtk-4.0-dev build-essential pkg-config xvfb
+          version: 1.0
       - name: install wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
       - name: install frontend deps
