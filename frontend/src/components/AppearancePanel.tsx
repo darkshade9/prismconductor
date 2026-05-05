@@ -128,7 +128,7 @@ function GlowRow({
             <div className="bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-2xl">
               <HexColorPicker
                 color={entry.color}
-                onChange={(color) => onChange({ color })}
+                onChange={(color: string) => onChange({ color })}
               />
               <div className="mt-2 flex items-center gap-2">
                 <input
