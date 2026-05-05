@@ -7,7 +7,7 @@ import { describe, it, expect } from "vitest";
 
 // Mirrors the array defined in Settings.tsx.  If a developer re-adds "labels"
 // to either the component or here, the test below fails fast.
-const SETTINGS_TABS: string[] = ["workspaces", "pools", "skills", "notify", "logs"];
+const SETTINGS_TABS: string[] = ["workspaces", "pools", "skills", "notify", "appearance", "logs"];
 
 describe("Settings tabs", () => {
   it("does not include a global labels tab", () => {
@@ -15,6 +15,6 @@ describe("Settings tabs", () => {
   });
 
   it("includes the expected tabs", () => {
-    expect(SETTINGS_TABS).toEqual(["workspaces", "pools", "skills", "notify", "logs"]);
+    expect(SETTINGS_TABS).toEqual(["workspaces", "pools", "skills", "notify", "appearance", "logs"]);
   });
 });
