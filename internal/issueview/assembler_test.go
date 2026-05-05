@@ -648,3 +648,112 @@ func TestClearConflictsInfo_NoOpWhenAbsent(t *testing.T) {
 		t.Error("HasConflictsInfo on a never-set issue should be false")
 	}
 }
+
+// --- derivePlanFailed (#191) ---
+
+func TestDerivePlanFailed_SetsWhenNoBlockedReason(t *testing.T) {
+	sess := makeSession(types.StateFailed, t1, "", false)
+	sess.Mode = types.ModePlan
+	sess.ID = "plan-sess-1"
+	iss := types.Issue{Column: types.ColTodo}
+	result := derivePlanFailed(iss, []types.Session{sess}, nil)
+	if result == nil {
+		t.Fatal("expected PlanFailedInfo for failed plan session with no blocked_reason")
+	}
+	if result.SessionID != "plan-sess-1" {
+		t.Errorf("SessionID = %q, want plan-sess-1", result.SessionID)
+	}
+}
+
+func TestDerivePlanFailed_NilWhenBlockedReasonPresent(t *testing.T) {
+	// Sessions with BlockedReason are already surfaced via LastFailure; no double badge.
+	sess := makeSession(types.StateFailed, t1, "BLOCKED: quota exceeded", false)
+	sess.Mode = types.ModePlan
+	iss := types.Issue{Column: types.ColTodo}
+	result := derivePlanFailed(iss, []types.Session{sess}, nil)
+	if result != nil {
+		t.Errorf("expected nil for failed plan session with blocked_reason, got %+v", result)
+	}
+}
+
+func TestDerivePlanFailed_SuppressedInReview(t *testing.T) {
+	sess := makeSession(types.StateFailed, t1, "", false)
+	sess.Mode = types.ModePlan
+	iss := types.Issue{Column: types.ColReview}
+	result := derivePlanFailed(iss, []types.Session{sess}, nil)
+	if result != nil {
+		t.Errorf("expected nil for REVIEW card, got %+v", result)
+	}
+}
+
+func TestDerivePlanFailed_SuppressedInDone(t *testing.T) {
+	sess := makeSession(types.StateFailed, t1, "", false)
+	sess.Mode = types.ModePlan
+	iss := types.Issue{Column: types.ColDone}
+	result := derivePlanFailed(iss, []types.Session{sess}, nil)
+	if result != nil {
+		t.Errorf("expected nil for DONE card, got %+v", result)
+	}
+}
+
+func TestDerivePlanFailed_SuppressedByActivePlanSession(t *testing.T) {
+	failed := makeSession(types.StateFailed, t1, "", false)
+	failed.Mode = types.ModePlan
+	active := makeSession(types.StateRunning, t2, "", false)
+	active.Mode = types.ModePlan
+	iss := types.Issue{Column: types.ColPlan}
+	result := derivePlanFailed(iss, []types.Session{failed}, &active)
+	if result != nil {
+		t.Errorf("expected nil when active plan session exists, got %+v", result)
+	}
+}
+
+func TestDerivePlanFailed_SuppressedByLaterSuccessfulPlan(t *testing.T) {
+	failed := makeSession(types.StateFailed, t1, "", false)
+	failed.Mode = types.ModePlan
+	succeeded := makeSession(types.StateCompleted, t2, "", false)
+	succeeded.Mode = types.ModePlan
+	iss := types.Issue{Column: types.ColPlan}
+	result := derivePlanFailed(iss, []types.Session{succeeded, failed}, nil)
+	if result != nil {
+		t.Errorf("expected nil when successful plan followed the failure, got %+v", result)
+	}
+}
+
+func TestDerivePlanFailed_AcknowledgedSessionIgnored(t *testing.T) {
+	sess := makeSession(types.StateFailed, t1, "", true) // acknowledged
+	sess.Mode = types.ModePlan
+	iss := types.Issue{Column: types.ColTodo}
+	result := derivePlanFailed(iss, []types.Session{sess}, nil)
+	if result != nil {
+		t.Errorf("expected nil for acknowledged plan failure, got %+v", result)
+	}
+}
+
+func TestDerivePlanFailed_ExecuteSessionIgnored(t *testing.T) {
+	// derivePlanFailed must only look at plan-mode sessions.
+	sess := makeSession(types.StateFailed, t1, "", false)
+	sess.Mode = types.ModeExecute
+	iss := types.Issue{Column: types.ColTodo}
+	result := derivePlanFailed(iss, []types.Session{sess}, nil)
+	if result != nil {
+		t.Errorf("expected nil for execute-mode failure, got %+v", result)
+	}
+}
+
+func TestDerivePlanFailed_MostRecentFailureWins(t *testing.T) {
+	older := makeSession(types.StateFailed, t1, "", false)
+	older.Mode = types.ModePlan
+	older.ID = "old"
+	newer := makeSession(types.StateFailed, t2, "", false)
+	newer.Mode = types.ModePlan
+	newer.ID = "new"
+	iss := types.Issue{Column: types.ColTodo}
+	result := derivePlanFailed(iss, []types.Session{older, newer}, nil)
+	if result == nil {
+		t.Fatal("expected PlanFailedInfo")
+	}
+	if result.SessionID != "new" {
+		t.Errorf("want newest failure, got SessionID=%q", result.SessionID)
+	}
+}

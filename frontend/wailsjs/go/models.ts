@@ -840,6 +840,21 @@ export namespace issueview {
 	        this.since = source["since"];
 	    }
 	}
+
+	export class PlanFailedInfo {
+	    session_id: string;
+	    reason?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new PlanFailedInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.session_id = source['session_id'];
+	        this.reason = source['reason'];
+	    }
+	}
 	export class TestsFailingInfo {
 	    failing_jobs: string[];
 	    failing_check_run_urls: string[];
@@ -891,6 +906,7 @@ export namespace issueview {
 	    conflicts_info?: ConflictsInfo;
 	    orphan_question?: OrphanQuestionInfo;
 	    needs_pr_info?: types.NeedsPRInfo;
+	    plan_failed?: PlanFailedInfo;
 	    unread_comment_count: number;
 	
 	    static createFrom(source: any = {}) {
@@ -911,6 +927,7 @@ export namespace issueview {
 	        this.conflicts_info = this.convertValues(source["conflicts_info"], ConflictsInfo);
 	        this.orphan_question = this.convertValues(source["orphan_question"], OrphanQuestionInfo);
 	        this.needs_pr_info = this.convertValues(source["needs_pr_info"], types.NeedsPRInfo);
+	        this.plan_failed = this.convertValues(source["plan_failed"], PlanFailedInfo);
 	        this.unread_comment_count = source["unread_comment_count"];
 	    }
 	

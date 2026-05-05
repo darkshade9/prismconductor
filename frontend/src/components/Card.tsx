@@ -52,6 +52,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
   const conflictsInfo = view?.conflicts_info ?? null;
   const orphanQuestion = view?.orphan_question ?? null;
   const needsPRInfo = view?.needs_pr_info ?? null;
+  const planFailed = view?.plan_failed ?? null;
   // Activity is live-streaming data not captured in the view — still from sessionStore.
   const activity: SessionActivity | null = useSessionStore((s) =>
     activeSession ? (s.sessions[activeSession.id]?.activity ?? null) : null
@@ -241,6 +242,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
         pausedSession={pausedSession}
         orphanQuestion={orphanQuestion}
         planReady={planReady}
+        planFailed={planFailed}
         blocked={blocked}
         isPrimitive={isPrimitive}
         dependencies={issue.dependencies ?? []}
@@ -454,6 +456,11 @@ type NeedsPRInfo = {
   commit_msg?: string;
 };
 
+type PlanFailedInfo = {
+  session_id: string;
+  reason?: string;
+};
+
 function StatusRow({
   activeSession,
   activity,
@@ -461,6 +468,7 @@ function StatusRow({
   pausedSession,
   orphanQuestion,
   planReady,
+  planFailed,
   blocked,
   isPrimitive,
   dependencies,
@@ -484,6 +492,7 @@ function StatusRow({
   pausedSession: types.Session | null;
   orphanQuestion: OrphanQuestionInfo | null;
   planReady: { revision: number } | null;
+  planFailed: PlanFailedInfo | null;
   blocked: boolean;
   isPrimitive: boolean;
   dependencies: number[];
@@ -868,6 +877,47 @@ function StatusRow({
             )}
           </div>
           <div className="text-slate-400 break-words" title={reason}>⚠ {reason}</div>
+        </div>
+        {menuEl}
+      </>
+    );
+  }
+  // Plan failure: plan session ended without producing a plan and without
+  // emitting BLOCKED: (those are shown via lastFailure above). Show a red
+  // badge with a tooltip linking to the session transcript (#191).
+  if (planFailed && !activeSession && !pausedSession && !lastFailure) {
+    const reason = planFailed.reason || "plan session ended without success";
+    const showClear = column === "todo" || column === "plan" || column === "in_progress";
+    return (
+      <>
+        <div
+          className="text-[11px] mt-1.5 space-y-0.5"
+          title={reason}
+          onContextMenu={(e) => openMenu(e, [
+            { label: "Copy reason", text: reason },
+            { label: "Copy as quoted block", text: toQuotedBlock(reason) },
+          ])}
+        >
+          <div className="flex items-center gap-1.5">
+            <Pulse className="bg-red-400" />
+            <span className="text-red-300">plan failed</span>
+            <span className="text-slate-500 font-mono text-[10px]">·&nbsp;{planFailed.session_id.slice(0, 8)}</span>
+            {showClear && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClearFailure();
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="ml-auto px-1.5 py-0.5 rounded text-[10px] border border-red-800 text-red-400 hover:border-red-600 hover:text-red-300"
+                title="Clear failure and retry planning"
+              >
+                ✕ Clear
+              </button>
+            )}
+          </div>
+          <div className="text-slate-400 break-words">⚠ {reason}</div>
         </div>
         {menuEl}
       </>
