@@ -199,11 +199,38 @@ func TestDerivedColumn_PRNumber_TrustsDone(t *testing.T) {
 	}
 }
 
-func TestDerivedColumn_ActiveSession_InProgress(t *testing.T) {
+func TestDerivedColumn_ActiveExecuteSession_InProgress(t *testing.T) {
 	iss := types.Issue{Column: types.ColTodo}
 	sess := makeSession(types.StateRunning, t1, "", false)
+	sess.Mode = types.ModeExecute
 	if col := derivedColumn(iss, nil, &sess, nil); col != types.ColInProgress {
 		t.Errorf("got %v want in_progress", col)
+	}
+}
+
+// Regression: an active plan-mode session must keep the card in the PLAN
+// column, not promote it to IN_PROGRESS. Prior to the fix `derivedColumn`
+// returned ColInProgress for any active session regardless of mode, which
+// stranded planning cards under the wrong column header while the inner
+// card_state correctly resolved to "planning".
+func TestDerivedColumn_ActivePlanSession_StaysInPlan(t *testing.T) {
+	iss := types.Issue{Column: types.ColPlan}
+	sess := makeSession(types.StateRunning, t1, "", false)
+	sess.Mode = types.ModePlan
+	if col := derivedColumn(iss, nil, &sess, nil); col != types.ColPlan {
+		t.Errorf("got %v want plan", col)
+	}
+}
+
+// And: a plan-mode session running on a card that was auto-pulled from TODO
+// (stored column still "todo") should also derive to PLAN, mirroring the
+// orchestrator's intent when it kicked the planner off.
+func TestDerivedColumn_ActivePlanSession_FromTodo_DerivesPlan(t *testing.T) {
+	iss := types.Issue{Column: types.ColTodo}
+	sess := makeSession(types.StateRunning, t1, "", false)
+	sess.Mode = types.ModePlan
+	if col := derivedColumn(iss, nil, &sess, nil); col != types.ColPlan {
+		t.Errorf("got %v want plan", col)
 	}
 }
 
