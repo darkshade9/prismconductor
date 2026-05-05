@@ -2,8 +2,11 @@ package remoteworker
 
 import (
 	"encoding/json"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -123,6 +126,58 @@ func TestVerifyGitHubPAT_withPush(t *testing.T) {
 
 	if err := VerifyGitHubPAT("ghp_fake", "octocat", "my-repo"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestDeployWorker_noBindingsInMetadata verifies that the multipart metadata
+// sent to the CF upload endpoint does NOT contain a "bindings" key.
+// Cloudflare rejects secret_text bindings that lack a "text" value (error 10021);
+// secrets are created separately via UpsertSecret.
+func TestDeployWorker_noBindingsInMetadata(t *testing.T) {
+	var capturedMeta map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Parse the multipart body and capture the metadata part.
+		ct := r.Header.Get("Content-Type")
+		mediaType, params, err := mime.ParseMediaType(ct)
+		if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
+			http.Error(w, "expected multipart", http.StatusBadRequest)
+			return
+		}
+		mr := multipart.NewReader(r.Body, params["boundary"])
+		for {
+			part, err := mr.NextPart()
+			if err != nil {
+				break
+			}
+			if part.FormName() == "metadata" {
+				if err := json.NewDecoder(part).Decode(&capturedMeta); err != nil {
+					http.Error(w, "bad metadata json", http.StatusBadRequest)
+					return
+				}
+			}
+		}
+
+		json.NewEncoder(w).Encode(cfResponse{
+			Success: true,
+			Result:  json.RawMessage(`{"etag":"v1"}`),
+		})
+	}))
+	defer srv.Close()
+
+	replaceHTTPClient(t, &http.Client{Transport: &rewriteTransport{base: srv.URL}})
+
+	_, err := DeployWorker("acct123", "tok", "ws1", []byte("export default {}"))
+	if err != nil {
+		t.Fatalf("DeployWorker: %v", err)
+	}
+	if capturedMeta == nil {
+		t.Fatal("metadata part not captured")
+	}
+	if _, ok := capturedMeta["bindings"]; ok {
+		t.Error("metadata must NOT contain a \"bindings\" key (causes CF API error 10021)")
 	}
 }
 
