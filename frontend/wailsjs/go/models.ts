@@ -1209,6 +1209,32 @@ export namespace main {
 	        this.keyring_unavailable = source["keyring_unavailable"];
 	    }
 	}
+	export class RemoteWorkspaceForm {
+	    cf_token: string;
+	    github_pat: string;
+	    workspace_id: string;
+	    display_name: string;
+	    github_owner: string;
+	    github_repo: string;
+	    default_branch: string;
+	    color: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemoteWorkspaceForm(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.cf_token = source["cf_token"];
+	        this.github_pat = source["github_pat"];
+	        this.workspace_id = source["workspace_id"];
+	        this.display_name = source["display_name"];
+	        this.github_owner = source["github_owner"];
+	        this.github_repo = source["github_repo"];
+	        this.default_branch = source["default_branch"];
+	        this.color = source["color"];
+	    }
+	}
 	export class SpawnEstimate {
 	    tokens: number;
 	    cost_cents: number;
@@ -2138,6 +2164,9 @@ export namespace types {
 	    pipeline?: WorkspacePipeline;
 	    execution_target?: string;
 	    remote_config?: RemoteConfig;
+	    provisioning?: boolean;
+	    // Go type: time
+	    provisioning_at?: any;
 	
 	    static createFrom(source: any = {}) {
 	        return new Workspace(source);
@@ -2161,6 +2190,8 @@ export namespace types {
 	        this.pipeline = this.convertValues(source["pipeline"], WorkspacePipeline);
 	        this.execution_target = source["execution_target"];
 	        this.remote_config = this.convertValues(source["remote_config"], RemoteConfig);
+	        this.provisioning = source["provisioning"];
+	        this.provisioning_at = this.convertValues(source["provisioning_at"], null);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

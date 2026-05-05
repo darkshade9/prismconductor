@@ -46,6 +46,10 @@ export function CreateLabel(arg1, arg2) {
   return window['go']['main']['App']['CreateLabel'](arg1, arg2);
 }
 
+export function CreateRemoteWorkspace(arg1) {
+  return window['go']['main']['App']['CreateRemoteWorkspace'](arg1);
+}
+
 export function DeleteGoal(arg1) {
   return window['go']['main']['App']['DeleteGoal'](arg1);
 }
