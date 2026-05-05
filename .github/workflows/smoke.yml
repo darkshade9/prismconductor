@@ -19,24 +19,42 @@ jobs:
         with: { go-version: "1.25" }
       - uses: actions/setup-node@v6
         with: { node-version: "20" }
-      - name: install wails system deps
-        # Wails on Linux links against GTK3 + WebKit2GTK at build time AND
-        # initializes GTK at runtime to open a desktop window — even in
-        # `wails dev` mode. The headless GitHub runner has no X display, so
-        # `wails dev` panics with "failed to init GTK" the moment it tries
-        # to create the window. xvfb provides a virtual X server so the
-        # window-init succeeds and the dev URL stays up for the smoke test.
-        #
-        # We use awalsh128/cache-apt-pkgs-action because the Azure apt mirror
-        # has been seen throttling to 62 kB/s on bad days, which alone can
-        # consume the entire 15-min job budget for the 53 MB install. The
-        # cache action restores the .deb cache from a previous warm run in
-        # seconds; cold runs still hit the mirror but only once per package
-        # set version.
+      # Wails on Linux links against GTK3 + WebKit2GTK at build time AND
+      # initializes GTK at runtime to open a desktop window — even in
+      # `wails dev` mode. The headless GitHub runner has no X display, so
+      # `wails dev` panics with "failed to init GTK" the moment it tries
+      # to create the window. xvfb provides a virtual X server so the
+      # window-init succeeds and the dev URL stays up for the smoke test.
+      #
+      # Two-tier install: (1) try the apt-cache action with a 3-min step
+      # timeout — happy path is a cache hit in seconds, cache miss with a
+      # healthy backend is ~2 min. (2) If the action fails OR times out
+      # (GitHub Actions cache service has been seen hanging silently for
+      # 15+ min on bad days, e.g. run 25392243837), the fallback step does
+      # a plain `apt-get install` directly. Worst-case total ≈ 12 min,
+      # which fits the 15-min job budget; happy-case is unchanged.
+      - name: install wails system deps (cached)
+        id: apt_cache
         uses: awalsh128/cache-apt-pkgs-action@v1.4.3
+        timeout-minutes: 3
+        continue-on-error: true
         with:
           packages: libgtk-3-dev libwebkit2gtk-4.0-dev build-essential pkg-config xvfb
           version: 1.0
+      - name: install wails system deps (fallback, no cache)
+        # Runs only if the cached step didn't finish cleanly — usually the
+        # GitHub Actions cache backend hanging mid-restore. The 3-min cap
+        # above means we wasted at most 3 min before falling through here.
+        if: steps.apt_cache.outcome != 'success'
+        run: |
+          echo "::warning::apt-cache step did not succeed (outcome=${{ steps.apt_cache.outcome }}); falling back to plain apt-get install"
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.0-dev \
+            build-essential \
+            pkg-config \
+            xvfb
       - name: install wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
       - name: install frontend deps
