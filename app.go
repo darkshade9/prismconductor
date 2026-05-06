@@ -36,6 +36,7 @@ import (
 	"prismconductor/internal/issueview"
 	"prismconductor/internal/logbuffer"
 	"prismconductor/internal/goalfilter"
+	"prismconductor/internal/complexity"
 	"prismconductor/internal/planio"
 	"prismconductor/internal/githubauth"
 	"prismconductor/internal/llm"
@@ -2736,6 +2737,21 @@ func (a *App) handlePlanReady(sess types.Session, relPath string) {
 		log.Printf("plan ingest failed: %v\n", err)
 		a.markSessionBlocked(sess, fmt.Sprintf("plan ingest failed: %v", err))
 		return
+	}
+
+	// Validate estimated_complexity against the workspace scale (issue #233).
+	// Soft enforcement: valid values pass silently; normalizable legacy values are
+	// logged; anything else is logged as a warning but not blocked (preserves
+	// backward compatibility with historical plans).
+	scale := string(ws.ComplexityScale)
+	if !complexity.IsValid(scale, plan.EstimatedComplexity) {
+		if norm, normErr := complexity.Normalize(scale, plan.EstimatedComplexity); normErr == nil {
+			log.Printf("plan #%d rev%d: normalized complexity %q → %q for scale %q",
+				sess.IssueNumber, plan.Revision, plan.EstimatedComplexity, norm, scale)
+		} else {
+			log.Printf("plan #%d rev%d: estimated_complexity %q is not valid for scale %q — accepting cautiously",
+				sess.IssueNumber, plan.Revision, plan.EstimatedComplexity, scale)
+		}
 	}
 
 	// Phase 1 (issue #197): reject the plan if the planner never read the issue.

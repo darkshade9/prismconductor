@@ -42,6 +42,8 @@ export function PlanModal({
   // cards while the chip still says prismconductor, exactly the
   // background-context-switch bug from the ApprovePlan path.
   const selectedWorkspace = useWorkspaceStore((s) => s.selectedID);
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const activeWorkspace = workspaces.find((w) => w.id === issue?.workspace_id);
   const refreshLabels = useLabelsStore((s) => s.refresh);
   const labelsCache = useLabelsStore((s) => (issue ? s.byWorkspace[issue.workspace_id] ?? EMPTY_LABELS : EMPTY_LABELS));
   const [plan, setPlan] = useState<types.Plan | null>(null);
@@ -200,7 +202,18 @@ export function PlanModal({
           {plan && (
             <>
               <span>Revision {plan.revision}</span>
-              <span>Complexity: {plan.estimated_complexity || "—"}</span>
+              <span>
+                Complexity: {plan.estimated_complexity || "—"}
+                {plan.estimated_complexity && (
+                  <span className="text-slate-600 ml-1">
+                    ({activeWorkspace?.complexity_scale === "fibonacci"
+                      ? "Fibonacci"
+                      : activeWorkspace?.complexity_scale === "linear10"
+                      ? "Linear 1–10"
+                      : "T-shirt"})
+                  </span>
+                )}
+              </span>
               <span>{ageMin !== null ? `Generated ${ageMin}m ago` : ""}</span>
             </>
           )}
