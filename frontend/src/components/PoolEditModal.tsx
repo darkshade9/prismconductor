@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  CreatePool,
   ListWorkspaces,
   ProbeProviderModels,
   SavePool,
@@ -200,7 +201,11 @@ export function PoolEditModal({
         scope,
         workspace_id: scope === "workspace" ? scopeWorkspaceID : "",
       });
-      await SavePool(pool);
+      if (initial) {
+        await SavePool(pool);
+      } else {
+        await CreatePool(pool);
+      }
       onSaved();
     } catch (err: any) {
       setSaveErr(String(err?.message ?? err ?? "save failed"));
