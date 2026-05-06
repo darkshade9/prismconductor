@@ -34,6 +34,10 @@ export function AttachManualPR(arg1, arg2, arg3) {
   return window['go']['main']['App']['AttachManualPR'](arg1, arg2, arg3);
 }
 
+export function CancelRetries(arg1, arg2) {
+  return window['go']['main']['App']['CancelRetries'](arg1, arg2);
+}
+
 export function CancelSession(arg1) {
   return window['go']['main']['App']['CancelSession'](arg1);
 }
@@ -136,6 +140,10 @@ export function GetPoolUsage() {
 
 export function GetRepoDefaultBranch(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetRepoDefaultBranch'](arg1, arg2, arg3);
+}
+
+export function GetRetryQueue(arg1) {
+  return window['go']['main']['App']['GetRetryQueue'](arg1);
 }
 
 export function GitHubAuthStatus() {
@@ -364,6 +372,10 @@ export function ResolveConflicts(arg1, arg2) {
 
 export function RetryExecuteForApprovedPlan(arg1, arg2) {
   return window['go']['main']['App']['RetryExecuteForApprovedPlan'](arg1, arg2);
+}
+
+export function RetryNow(arg1, arg2) {
+  return window['go']['main']['App']['RetryNow'](arg1, arg2);
 }
 
 export function RotateRemoteWorkerKey(arg1, arg2) {

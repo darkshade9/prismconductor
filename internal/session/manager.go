@@ -1086,6 +1086,15 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 		if waitErr != nil {
 			cause.Reason = waitErr.Error()
 		}
+		// Populate exit diagnostics on FailureCause so the retry classifier can
+		// inspect the exit code without needing access to the full Session (#221).
+		if rs.sess.ExitCode != nil {
+			cause.ExitCode = *rs.sess.ExitCode
+		}
+		if rs.sess.Signal != "" {
+			cause.Signal = rs.sess.Signal
+			cause.Kind = "signal"
+		}
 		rs.sess.FailureCause = cause
 	}
 	end := time.Now()

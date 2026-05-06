@@ -27,6 +27,7 @@ import (
 	"prismconductor/internal/archiver"
 	"prismconductor/internal/diagnose"
 	"prismconductor/internal/eventbus"
+	"prismconductor/internal/retry"
 	pcgit "prismconductor/internal/git"
 	pcgithub "prismconductor/internal/github"
 	"prismconductor/internal/handlers"
@@ -86,6 +87,9 @@ type App struct {
 
 	// Issue #178: OS-native secret store for CF API tokens.
 	secretStore secretstore.Store
+
+	// Issue #221: auto-retry scheduler for transient execute failures.
+	retryScheduler *retry.Scheduler
 }
 
 type issueDetailEntry struct {
@@ -212,6 +216,9 @@ func (a *App) startup(ctx context.Context) {
 
 	// Issue #161: ephemeral PTY-backed agent terminal panel.
 	a.agentTerm = agentterm.New(a.emitAgentData, a.emitAgentExit)
+
+	// Issue #221: auto-retry scheduler for transient execute failures.
+	a.retryScheduler = retry.NewScheduler(a.bus, a.doAutoRetry)
 
 	a.mgr = session.NewManager(a.bus, a.emitLine)
 	a.mgr.Configure(filepath.Join(cfgDir, "transcripts"), a.store, a.handleSessionStateChange)
@@ -472,6 +479,14 @@ func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionSta
 			reason = "execute session ended without success"
 		}
 		_ = a.store.SetIssueFailureReason(sess.WorkspaceID, sess.IssueNumber, reason)
+
+		// Attempt to schedule an automatic retry for transient failures (#221).
+		// The scheduler decides whether the cause is retryable and enforces caps.
+		if a.retryScheduler != nil && a.wsReg != nil {
+			if ws, ok := a.wsReg.Get(sess.WorkspaceID); ok {
+				a.retryScheduler.Schedule(ws, sess, sess.FailureCause)
+			}
+		}
 	}
 
 	// When an execute session COMPLETES on a card that had merge conflicts
@@ -3453,6 +3468,48 @@ func (a *App) RetryExecuteForApprovedPlan(workspaceID string, issueNumber int) e
 		"revision":     plan.Revision,
 	})
 	return nil
+}
+
+// doAutoRetry is the FireFunc passed to the retry.Scheduler. It re-uses the
+// RetryExecuteForApprovedPlan path; the Scheduler has already enforced caps and
+// policy before calling here. Runs in its own goroutine (scheduler dispatches async).
+func (a *App) doAutoRetry(workspaceID string, issueNumber int, attempt int, _ string) {
+	log.Printf("retry: auto-retry attempt %d for #%d", attempt, issueNumber)
+	if err := a.RetryExecuteForApprovedPlan(workspaceID, issueNumber); err != nil {
+		log.Printf("retry: auto-retry #%d attempt %d failed: %v", issueNumber, attempt, err)
+		// Surface to user as a toast so transient re-spawns that fail are visible.
+		if a.ctx != nil {
+			a.emitToast("error", toastWorkspaceName(a.wsReg, workspaceID),
+				fmt.Sprintf("#%d auto-retry attempt %d failed: %v", issueNumber, attempt, err),
+				map[string]any{"workspace_id": workspaceID, "issue_number": issueNumber, "action": "focus_card"})
+		}
+	}
+}
+
+// CancelRetries cancels the pending auto-retry for an issue. Returns true if
+// a retry was present and cancelled. Safe to call with no pending retry.
+func (a *App) CancelRetries(workspaceID string, issueNumber int) bool {
+	if a.retryScheduler == nil {
+		return false
+	}
+	return a.retryScheduler.Cancel(workspaceID, issueNumber)
+}
+
+// RetryNow fires the pending auto-retry immediately, bypassing the backoff
+// countdown. Returns true if a retry was present and dispatched.
+func (a *App) RetryNow(workspaceID string, issueNumber int) bool {
+	if a.retryScheduler == nil {
+		return false
+	}
+	return a.retryScheduler.FireNow(workspaceID, issueNumber)
+}
+
+// GetRetryQueue returns the list of pending auto-retries for a workspace.
+func (a *App) GetRetryQueue(workspaceID string) []retry.PendingRetry {
+	if a.retryScheduler == nil {
+		return nil
+	}
+	return a.retryScheduler.List(workspaceID)
 }
 
 // formatTokenCount formats a token count as a human-readable string.

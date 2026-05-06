@@ -91,6 +91,10 @@ type Workspace struct {
 	// than ~10 minutes are cleaned up by the startup reconciler (issue #192).
 	Provisioning   bool       `json:"provisioning,omitempty"`
 	ProvisioningAt *time.Time `json:"provisioning_at,omitempty"`
+
+	// RetryPolicy configures auto-retry behaviour for execute sessions in this
+	// workspace. Nil means use DefaultRetryPolicy (#221).
+	RetryPolicy *RetryPolicy `json:"retry_policy,omitempty"`
 }
 
 // WorkspacePipeline is the per-workspace pipeline configuration (issue #146).
@@ -483,6 +487,29 @@ type FailureCause struct {
 	Signal   string `json:"signal,omitempty"`
 }
 
+// RetryPolicy configures the automatic-retry behaviour for execute sessions
+// (issue #221). A nil workspace RetryPolicy falls back to DefaultRetryPolicy.
+type RetryPolicy struct {
+	MaxAttempts int           `json:"max_attempts"`
+	BaseBackoff time.Duration `json:"base_backoff"`
+	MaxBackoff  time.Duration `json:"max_backoff"`
+	JitterPct   int           `json:"jitter_pct"`
+}
+
+// DefaultRetryPolicy is the conservative retry policy used when a workspace
+// has no explicit policy configured.
+var DefaultRetryPolicy = RetryPolicy{
+	MaxAttempts: 3,
+	BaseBackoff: 10 * time.Second,
+	MaxBackoff:  5 * time.Minute,
+	JitterPct:   25,
+}
+
+// GlobalRetryMaxAttempts and GlobalRetryMaxWindow are hard caps that override
+// any workspace-level policy (issue #221).
+const GlobalRetryMaxAttempts = 10
+const GlobalRetryMaxWindow = time.Hour
+
 // --- Session (§6.5) ---
 
 type Session struct {
@@ -541,6 +568,13 @@ type Session struct {
 	// FailureCause is set when the session reaches a terminal failed/blocked
 	// state. Nil for completed, paused, and needs_pr sessions (#30).
 	FailureCause *FailureCause `json:"failure_cause,omitempty"`
+
+	// RetryAttempt is the 1-based retry index when this session was spawned
+	// automatically by the retry scheduler. 0 for first-attempt sessions (#221).
+	RetryAttempt int `json:"retry_attempt,omitempty"`
+	// RetryOfSessionID is the ID of the session whose transient failure triggered
+	// this session. Empty for first-attempt sessions (#221).
+	RetryOfSessionID string `json:"retry_of_session_id,omitempty"`
 }
 
 // MidRunAnswer is the §6.4-shaped answer payload for a mid-run question

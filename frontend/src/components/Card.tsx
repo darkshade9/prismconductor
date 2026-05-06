@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
-import { Replan, ReplanForce, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue, ResolveConflicts, AttachManualPR, PrepareManualPushCommand, OpenOrphanPR, RetryExecuteForApprovedPlan } from "../../wailsjs/go/main/App";
+import { Replan, ReplanForce, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue, ResolveConflicts, AttachManualPR, PrepareManualPushCommand, OpenOrphanPR, RetryExecuteForApprovedPlan, CancelRetries, RetryNow } from "../../wailsjs/go/main/App";
 import { ClipboardSetText } from "../../wailsjs/runtime/runtime";
 import { RecoverButton } from "./RecoverButton";
 import { types, issueview } from "../../wailsjs/go/models";
@@ -39,7 +39,14 @@ type CardStateValue =
   | "tests_failing"
   | "plan_failed"
   | "review"
-  | "done";
+  | "done"
+  | "retry_scheduled";
+
+type PendingRetryInfo = {
+  attempt: number;
+  max_attempts: number;
+  not_before: number; // unix seconds
+};
 
 // Extended view type that includes the new card_state fields not yet in
 // the auto-generated models.ts (wails generate module adds them on next build).
@@ -50,6 +57,7 @@ type IssueViewWithCardState = issueview.IssueView & {
     session_id?: string;
     session_mode?: string;
     blocked_reason?: string;
+    retry_info?: PendingRetryInfo;
   };
 };
 
@@ -86,6 +94,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, o
   const needsPRInfo = view?.needs_pr_info ?? null;
   const planFailed = view?.plan_failed ?? null;
   const orphanPRInfo = view?.orphan_pr_info ?? null;
+  const pendingRetryInfo: PendingRetryInfo | null = view?.card_state_details?.retry_info ?? null;
   // Activity is live-streaming data not captured in the view — still from sessionStore.
   const activity: SessionActivity | null = useSessionStore((s) =>
     activeSession ? (s.sessions[activeSession.id]?.activity ?? null) : null
@@ -325,6 +334,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, o
         onCancelSession={activeSession ? () => CancelSession(activeSession.id).catch((err: any) => alert(String(err?.message ?? err))) : null}
         onPlanNow={() => SpawnPlanForIssue(issue.workspace_id, issue.number).catch((err: any) => alert(String(err?.message ?? err)))}
         spawnFailureReason={issue.failure_reason ?? null}
+        pendingRetryInfo={pendingRetryInfo}
       />
       {activeSession && activeSession.state === "running" && (
         <AgentActivityStrip
@@ -557,6 +567,7 @@ function StatusRow({
   onCancelSession,
   onPlanNow,
   spawnFailureReason,
+  pendingRetryInfo,
 }: {
   activeSession: types.Session | null;
   activity: SessionActivity | null;
@@ -583,6 +594,7 @@ function StatusRow({
   onCancelSession: (() => void) | null;
   onPlanNow: () => void;
   spawnFailureReason: string | null;
+  pendingRetryInfo: PendingRetryInfo | null;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number; actions: CopyAction[] } | null>(null);
   // Hooks for the conditional render branches below MUST be declared at the
@@ -598,6 +610,20 @@ function StatusRow({
   const [msgExpanded, setMsgExpanded] = useState(false);
   const [orphanPROpening, setOrphanPROpening] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [cancellingRetry, setCancellingRetry] = useState(false);
+  const [secsLeft, setSecsLeft] = useState(() =>
+    pendingRetryInfo
+      ? Math.max(0, Math.ceil((pendingRetryInfo.not_before * 1000 - Date.now()) / 1000))
+      : 0
+  );
+  useEffect(() => {
+    if (!pendingRetryInfo) return;
+    const tick = () =>
+      setSecsLeft(Math.max(0, Math.ceil((pendingRetryInfo.not_before * 1000 - Date.now()) / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [pendingRetryInfo?.not_before]);
 
   function openMenu(e: React.MouseEvent, actions: CopyAction[]) {
     e.preventDefault();
@@ -971,6 +997,62 @@ function StatusRow({
               attempt {testsFailingInfo.self_heal_attempts}/{testsFailingInfo.attempt_cap ?? 3}
             </div>
           )}
+        </div>
+        {menuEl}
+      </>
+    );
+  }
+  // Pending auto-retry: transient failure, scheduler queued a re-spawn (#221).
+  if (pendingRetryInfo && lastFailure) {
+    const reason = lastFailure.blocked_reason || "session ended without success";
+    const countdownLabel = secsLeft > 0 ? `in ${secsLeft}s` : "now";
+    return (
+      <>
+        <div
+          className="text-[11px] mt-1.5 space-y-0.5"
+          onContextMenu={(e) => openMenu(e, [
+            { label: "Copy reason", text: reason },
+            { label: "Copy as quoted block", text: toQuotedBlock(reason) },
+          ])}
+        >
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Pulse className="bg-amber-400" />
+            <span className="text-amber-300">retry {countdownLabel}</span>
+            <span className="text-slate-500">· {pendingRetryInfo.attempt}/{pendingRetryInfo.max_attempts}</span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setRetrying(true);
+                RetryNow(workspaceID, issueNumber)
+                  .catch((err: any) => alert(String(err?.message ?? err)))
+                  .finally(() => setRetrying(false));
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              disabled={retrying}
+              className="px-1.5 py-0.5 rounded text-[10px] border border-emerald-700 text-emerald-300 hover:border-emerald-500 hover:text-emerald-200 disabled:opacity-50"
+              title="Fire the retry immediately"
+            >
+              {retrying ? "…" : "↺ Now"}
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setCancellingRetry(true);
+                CancelRetries(workspaceID, issueNumber)
+                  .catch((err: any) => alert(String(err?.message ?? err)))
+                  .finally(() => setCancellingRetry(false));
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              disabled={cancellingRetry}
+              className="px-1.5 py-0.5 rounded text-[10px] border border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200 disabled:opacity-50"
+              title="Cancel the pending retry and leave the card in blocked state"
+            >
+              {cancellingRetry ? "…" : "✕ Cancel"}
+            </button>
+          </div>
+          <div className="text-slate-400 break-words" title={reason}>⚠ {reason}</div>
         </div>
         {menuEl}
       </>

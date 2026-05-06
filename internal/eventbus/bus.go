@@ -61,6 +61,12 @@ const (
 
 	// Issue #209: workspace collections (Phase A of #208).
 	EvtCollectionsUpdated EventType = "collections_updated"
+
+	// Issue #221: auto-retry with exponential backoff for transient execute failures.
+	EvtRetryScheduled EventType = "retry_scheduled"
+	EvtRetryFired     EventType = "retry_fired"
+	EvtRetryCancelled EventType = "retry_cancelled"
+	EvtRetryExhausted EventType = "retry_exhausted"
 )
 
 type Event struct {
@@ -180,6 +186,40 @@ type OrphanPRDetected struct {
 type OrphanPRCleared struct {
 	WorkspaceID string `json:"workspace_id"`
 	IssueNumber int    `json:"issue_number"`
+}
+
+// RetryScheduled is the payload for EvtRetryScheduled (#221). Published when
+// the scheduler queues an automatic re-spawn for a transient execute failure.
+type RetryScheduled struct {
+	WorkspaceID string `json:"workspace_id"`
+	IssueNumber int    `json:"issue_number"`
+	Attempt     int    `json:"attempt"`
+	MaxAttempts int    `json:"max_attempts"`
+	NotBefore   int64  `json:"not_before"` // unix seconds
+}
+
+// RetryFired is the payload for EvtRetryFired (#221). Published immediately
+// before the scheduler calls the fire callback.
+type RetryFired struct {
+	WorkspaceID string `json:"workspace_id"`
+	IssueNumber int    `json:"issue_number"`
+	Attempt     int    `json:"attempt"`
+}
+
+// RetryCancelled is the payload for EvtRetryCancelled (#221). Published when
+// a pending retry is cancelled (user action or budget exceeded).
+type RetryCancelled struct {
+	WorkspaceID string `json:"workspace_id"`
+	IssueNumber int    `json:"issue_number"`
+	Reason      string `json:"reason,omitempty"` // "user" | "budget" | "policy"
+}
+
+// RetryExhausted is the payload for EvtRetryExhausted (#221). Published when
+// all attempts have been consumed and the card should show a permanent error.
+type RetryExhausted struct {
+	WorkspaceID string `json:"workspace_id"`
+	IssueNumber int    `json:"issue_number"`
+	Attempts    int    `json:"attempts"`
 }
 
 type Handler func(Event)

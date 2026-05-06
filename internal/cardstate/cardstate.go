@@ -43,7 +43,19 @@ const (
 	CardStateReview CardState = "review"
 	// CardStateDone — card is in the done column; work has shipped.
 	CardStateDone CardState = "done"
+	// CardStateRetryScheduled — execute failed with a retryable cause; the
+	// scheduler has queued an automatic re-spawn with exponential backoff (#221).
+	CardStateRetryScheduled CardState = "retry_scheduled"
 )
+
+// PendingRetryInfo carries the retry schedule for a card in retry_scheduled
+// state. Populated by the assembler from the in-memory scheduler (#221).
+type PendingRetryInfo struct {
+	Attempt     int                 `json:"attempt"`
+	MaxAttempts int                 `json:"max_attempts"`
+	NotBefore   int64               `json:"not_before"` // unix seconds
+	LastCause   *types.FailureCause `json:"last_cause,omitempty"`
+}
 
 // CardStateDetails carries diagnostic context alongside CardState. Fields are
 // populated only when relevant to the current state; absent fields are nil/zero.
@@ -58,6 +70,8 @@ type CardStateDetails struct {
 	BlockedReason string `json:"blocked_reason,omitempty"`
 	// FailureCause is the structured cause for terminal failed/blocked sessions.
 	FailureCause *types.FailureCause `json:"failure_cause,omitempty"`
+	// RetryInfo is set when the card is in retry_scheduled state (#221).
+	RetryInfo *PendingRetryInfo `json:"retry_info,omitempty"`
 }
 
 // PlanFailedInfo is the minimal representation of a silently-failed plan
@@ -86,6 +100,11 @@ type DeriveParams struct {
 	HasConflicts      bool
 	HasOrphanQuestion bool
 	PlanFailed        *PlanFailedInfo // nil = no silent plan failure
+
+	// PendingRetry is set when the scheduler has queued an auto-retry for this
+	// issue. Non-nil overrides the blocked state so the card shows a countdown
+	// instead of a permanent error badge (#221).
+	PendingRetry *PendingRetryInfo
 }
 
 // DeriveCardState maps DeriveParams to a single CardState + detail blob.
@@ -183,6 +202,16 @@ func DeriveCardState(p DeriveParams) (CardState, CardStateDetails) {
 		return CardStateTestsFailing, CardStateDetails{Reason: "PR check runs are failing"}
 	}
 	if p.LastFailure != nil {
+		// A pending auto-retry overrides the blocked state so the card shows a
+		// countdown instead of a permanent error badge (#221).
+		if p.PendingRetry != nil {
+			return CardStateRetryScheduled, CardStateDetails{
+				SessionID:    p.LastFailure.ID,
+				SessionMode:  string(p.LastFailure.Mode),
+				FailureCause: p.LastFailure.FailureCause,
+				RetryInfo:    p.PendingRetry,
+			}
+		}
 		d := CardStateDetails{
 			SessionID:     p.LastFailure.ID,
 			SessionMode:   string(p.LastFailure.Mode),
