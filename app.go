@@ -3350,6 +3350,18 @@ func (a *App) ApprovePlan(workspaceID string, issueNumber, revision int) error {
 	}
 	if _, err := a.mgr.SpawnExecute(ws, issue, plan, pool); err != nil {
 		a.poolReg.ReleaseByPool(pool.ID)
+		// Roll back the column move so the card doesn't sit silently in
+		// IN_PROGRESS with no execute session attached (issue #218). The
+		// approved_at stamp on the plan is intentionally retained — a retry
+		// click should re-spawn against the same approved plan, not force a
+		// re-plan. Surface the failure as a toast since the inline error in
+		// PlanModal is easy to miss when the user is watching the board.
+		if rerr := a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColPlan); rerr != nil {
+			log.Printf("ApprovePlan: rollback column to plan for #%d failed: %v", issueNumber, rerr)
+		}
+		a.emitToast("error", toastWorkspaceName(a.wsReg, workspaceID),
+			fmt.Sprintf("#%d execute could not start — %v", issueNumber, err),
+			map[string]any{"workspace_id": workspaceID, "issue_number": issueNumber, "action": "focus_card"})
 		return err
 	}
 	// Issue #101 Q3: pre-flight estimate toast so the user sees expected spend
