@@ -440,7 +440,7 @@ function App() {
       />
       <GoalPane />
       <LabelFilterStrip />
-      <main className="flex-1 overflow-hidden pt-3">
+      <main className="flex-1 overflow-hidden pt-3 pb-7">
         <Board
           onCardClick={(iss) =>
             setPlanTarget({ workspace_id: iss.workspace_id, number: iss.number })

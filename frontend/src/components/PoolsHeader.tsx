@@ -35,7 +35,7 @@ export function PoolsHeader({ onOpenPools }: Props) {
 
   return (
     <div
-      className="px-4 py-1 border-b border-slate-800 flex items-center gap-4 cursor-pointer hover:bg-slate-900/40"
+      className="fixed bottom-0 left-0 right-0 z-50 px-4 py-1 border-t border-slate-800 flex items-center gap-4 cursor-pointer hover:bg-slate-900/40"
       onClick={onOpenPools}
       role="button"
       aria-label="Open pool settings"
