@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"prismconductor/internal/eventbus"
 	"prismconductor/internal/store"
 	"prismconductor/internal/types"
+	"prismconductor/internal/workerpool"
 )
 
 func TestPullNumberFromURL(t *testing.T) {
@@ -271,5 +273,70 @@ func TestLabelSetEqual(t *testing.T) {
 		if got := labelSetEqual(c.a, c.b); got != c.want {
 			t.Errorf("labelSetEqual(%v, %v) = %v, want %v", c.a, c.b, got, c.want)
 		}
+	}
+}
+
+// handleSpawnExecuteFailure rolls back the column to PLAN, sets failure_reason,
+// and releases the pool slot (issue #218).
+func TestHandleSpawnExecuteFailure_RollsBackAndSetsReason(t *testing.T) {
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	const wsID = "ws1"
+	const issueNum = 42
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: wsID,
+		Number:      issueNum,
+		Title:       "test issue",
+		State:       "open",
+		Column:      types.ColInProgress,
+	}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+
+	const poolID = "p1"
+	reg := workerpool.NewRegistry(func(types.Provider) bool { return true })
+	reg.Sync([]types.Pool{{ID: poolID, Capacity: 1, Enabled: true, Role: types.RoleWork}})
+	// Simulate one slot already acquired (the one ApprovePlan took before failing).
+	if _, ok := reg.AcquireForWork(types.Workspace{ID: wsID}); !ok {
+		t.Fatal("AcquireForWork failed — pool not set up correctly")
+	}
+	if reg.FreeWorkSlots() != 0 {
+		t.Fatalf("expected 0 free slots after acquire, got %d", reg.FreeWorkSlots())
+	}
+
+	a := &App{store: s, poolReg: reg, bus: eventbus.New()}
+	// Pass a minimal pool stub — only pool.ID is used by handleSpawnExecuteFailure.
+	a.handleSpawnExecuteFailure(wsID, issueNum, types.Pool{ID: poolID}, errors.New("no such binary"))
+
+	// Pool slot must be released.
+	if reg.FreeWorkSlots() != 1 {
+		t.Errorf("expected 1 free slot after failure, got %d", reg.FreeWorkSlots())
+	}
+
+	// Column must be rolled back to PLAN.
+	iss, err := s.LoadIssue(wsID, issueNum)
+	if err != nil {
+		t.Fatalf("LoadIssue: %v", err)
+	}
+	if iss.Column != types.ColPlan {
+		t.Errorf("column = %q, want %q", iss.Column, types.ColPlan)
+	}
+
+	// failure_reason must be set.
+	if iss.FailureReason == "" {
+		t.Error("failure_reason not set after spawn failure")
+	}
+}
+
+// RetryExecuteForApprovedPlan returns an error when store/registry unavailable.
+func TestRetryExecuteForApprovedPlan_RequiresRegistry(t *testing.T) {
+	a := &App{bus: eventbus.New()}
+	err := a.RetryExecuteForApprovedPlan("ws1", 1)
+	if err == nil {
+		t.Fatal("expected error when wsReg and store are nil")
 	}
 }

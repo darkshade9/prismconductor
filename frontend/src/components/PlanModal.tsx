@@ -146,8 +146,14 @@ export function PlanModal({
       await ApprovePlan(issue.workspace_id, issue.number, plan.revision);
       await Promise.all([refreshIssues(selectedWorkspace ?? ""), loadIssueViews(issue.workspace_id)]);
       handleClose();
-    } catch (e: any) {
-      setError(String(e?.message ?? e));
+    } catch {
+      // The backend emits a toast and rolls the card back to PLAN on spawn
+      // failure, so close the modal and let the toast be the primary signal.
+      await Promise.all([
+        refreshIssues(selectedWorkspace ?? ""),
+        loadIssueViews(issue.workspace_id),
+      ]).catch(() => {});
+      handleClose();
     } finally {
       setBusy(false);
     }

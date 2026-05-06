@@ -3349,19 +3349,7 @@ func (a *App) ApprovePlan(workspaceID string, issueNumber, revision int) error {
 		return nil
 	}
 	if _, err := a.mgr.SpawnExecute(ws, issue, plan, pool); err != nil {
-		a.poolReg.ReleaseByPool(pool.ID)
-		// Roll back the column move so the card doesn't sit silently in
-		// IN_PROGRESS with no execute session attached (issue #218). The
-		// approved_at stamp on the plan is intentionally retained — a retry
-		// click should re-spawn against the same approved plan, not force a
-		// re-plan. Surface the failure as a toast since the inline error in
-		// PlanModal is easy to miss when the user is watching the board.
-		if rerr := a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColPlan); rerr != nil {
-			log.Printf("ApprovePlan: rollback column to plan for #%d failed: %v", issueNumber, rerr)
-		}
-		a.emitToast("error", toastWorkspaceName(a.wsReg, workspaceID),
-			fmt.Sprintf("#%d execute could not start — %v", issueNumber, err),
-			map[string]any{"workspace_id": workspaceID, "issue_number": issueNumber, "action": "focus_card"})
+		a.handleSpawnExecuteFailure(workspaceID, issueNumber, pool, err)
 		return err
 	}
 	// Issue #101 Q3: pre-flight estimate toast so the user sees expected spend
@@ -3382,6 +3370,87 @@ func (a *App) ApprovePlan(workspaceID string, issueNumber, revision int) error {
 		"workspace_id": workspaceID,
 		"issue_number": issueNumber,
 		"revision":     revision,
+	})
+	return nil
+}
+
+// handleSpawnExecuteFailure undoes the IN_PROGRESS column move, sets a
+// failure_reason on the issue so the card shows a retry affordance, releases
+// the pool slot, and emits a top-level toast. Shared by ApprovePlan and
+// RetryExecuteForApprovedPlan.
+func (a *App) handleSpawnExecuteFailure(workspaceID string, issueNumber int, pool types.Pool, spawnErr error) {
+	a.poolReg.ReleaseByPool(pool.ID)
+	if rerr := a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColPlan); rerr != nil {
+		log.Printf("handleSpawnExecuteFailure: rollback column for #%d: %v", issueNumber, rerr)
+	}
+	if rerr := a.store.SetIssueFailureReason(workspaceID, issueNumber,
+		fmt.Sprintf("execute spawn failed: %v", spawnErr)); rerr != nil {
+		log.Printf("handleSpawnExecuteFailure: set failure_reason for #%d: %v", issueNumber, rerr)
+	}
+	a.emitToast("error", toastWorkspaceName(a.wsReg, workspaceID),
+		fmt.Sprintf("#%d execute could not start — %v", issueNumber, spawnErr),
+		map[string]any{"workspace_id": workspaceID, "issue_number": issueNumber, "action": "focus_card"})
+}
+
+// RetryExecuteForApprovedPlan re-attempts SpawnExecute against the existing
+// approved plan for an issue that was rolled back to PLAN after a prior spawn
+// failure. Clears failure_reason on success.
+func (a *App) RetryExecuteForApprovedPlan(workspaceID string, issueNumber int) error {
+	if a.wsReg == nil || a.store == nil {
+		return fmt.Errorf("registry/store unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	plan, err := a.store.LatestPlan(workspaceID, issueNumber)
+	if err != nil {
+		return err
+	}
+	if plan == nil || plan.ApprovedAt == nil {
+		return fmt.Errorf("no approved plan found for issue #%d", issueNumber)
+	}
+	issue, err := a.store.LoadIssue(workspaceID, issueNumber)
+	if err != nil {
+		log.Printf("RetryExecuteForApprovedPlan: load issue #%d failed (%v); spawning with empty title", issueNumber, err)
+		issue = types.Issue{Number: issueNumber, WorkspaceID: workspaceID}
+	}
+	pool, ok := a.acquireWorkPool(ws)
+	if !ok {
+		_ = a.store.EnqueuePendingPool(workspaceID, issueNumber, types.RoleWork, "retry_execute")
+		_ = a.store.SetIssueWaitingForPool(workspaceID, issueNumber, true)
+		a.bus.Publish(eventbus.EvtPendingPoolEnqueued, eventbus.PendingPoolChange{
+			WorkspaceID: workspaceID,
+			IssueNumber: issueNumber,
+			Role:        string(types.RoleWork),
+		})
+		return nil
+	}
+	if err := a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColInProgress); err != nil {
+		a.poolReg.ReleaseByPool(pool.ID)
+		return err
+	}
+	if _, err := a.mgr.SpawnExecute(ws, issue, *plan, pool); err != nil {
+		a.handleSpawnExecuteFailure(workspaceID, issueNumber, pool, err)
+		return err
+	}
+	_ = a.store.SetIssueFailureReason(workspaceID, issueNumber, "")
+	est := a.EstimateSpawnCost(workspaceID, issueNumber, pool.ID)
+	if est.Tokens > 0 {
+		var costStr string
+		if est.CostCents > 0 {
+			costStr = fmt.Sprintf(", est. $%.2f", est.CostCents/100)
+		}
+		a.emitToast("info", toastWorkspaceName(a.wsReg, workspaceID),
+			fmt.Sprintf("#%d execute spawned on %s (~%s tok%s)",
+				issueNumber, pool.Model,
+				formatTokenCount(est.Tokens), costStr),
+			map[string]any{"workspace_id": workspaceID, "issue_number": issueNumber, "action": "focus_card"})
+	}
+	a.bus.Publish(eventbus.EvtPlanApproved, map[string]any{
+		"workspace_id": workspaceID,
+		"issue_number": issueNumber,
+		"revision":     plan.Revision,
 	})
 	return nil
 }

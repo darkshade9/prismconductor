@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
-import { Replan, ReplanForce, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue, ResolveConflicts, AttachManualPR, PrepareManualPushCommand, OpenOrphanPR } from "../../wailsjs/go/main/App";
+import { Replan, ReplanForce, ClearIssueFailure, SelfHeal, CancelSession, SpawnPlanForIssue, ResolveConflicts, AttachManualPR, PrepareManualPushCommand, OpenOrphanPR, RetryExecuteForApprovedPlan } from "../../wailsjs/go/main/App";
 import { ClipboardSetText } from "../../wailsjs/runtime/runtime";
 import { RecoverButton } from "./RecoverButton";
 import { types, issueview } from "../../wailsjs/go/models";
@@ -324,6 +324,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, o
         onClearFailure={() => ClearIssueFailure(issue.workspace_id, issue.number).catch((err: any) => alert(String(err?.message ?? err)))}
         onCancelSession={activeSession ? () => CancelSession(activeSession.id).catch((err: any) => alert(String(err?.message ?? err))) : null}
         onPlanNow={() => SpawnPlanForIssue(issue.workspace_id, issue.number).catch((err: any) => alert(String(err?.message ?? err)))}
+        spawnFailureReason={issue.failure_reason ?? null}
       />
       {activeSession && activeSession.state === "running" && (
         <AgentActivityStrip
@@ -555,6 +556,7 @@ function StatusRow({
   onClearFailure,
   onCancelSession,
   onPlanNow,
+  spawnFailureReason,
 }: {
   activeSession: types.Session | null;
   activity: SessionActivity | null;
@@ -580,6 +582,7 @@ function StatusRow({
   onClearFailure: () => void;
   onCancelSession: (() => void) | null;
   onPlanNow: () => void;
+  spawnFailureReason: string | null;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number; actions: CopyAction[] } | null>(null);
   // Hooks for the conditional render branches below MUST be declared at the
@@ -594,6 +597,7 @@ function StatusRow({
   const [prURLInput, setPRURLInput] = useState("");
   const [msgExpanded, setMsgExpanded] = useState(false);
   const [orphanPROpening, setOrphanPROpening] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
   function openMenu(e: React.MouseEvent, actions: CopyAction[]) {
     e.preventDefault();
@@ -1045,6 +1049,55 @@ function StatusRow({
             )}
           </div>
           <div className="text-slate-400 break-words">⚠ {reason}</div>
+        </div>
+        {menuEl}
+      </>
+    );
+  }
+  // Spawn failure: SpawnExecute failed after plan approval, card rolled back
+  // to PLAN. Show failure_reason with a retry button (issue #218).
+  if (spawnFailureReason && column === "plan" && !activeSession && !lastFailure && !pausedSession) {
+    return (
+      <>
+        <div
+          className="text-[11px] mt-1.5 space-y-0.5"
+          onContextMenu={(e) => openMenu(e, [
+            { label: "Copy reason", text: spawnFailureReason },
+            { label: "Copy as quoted block", text: toQuotedBlock(spawnFailureReason) },
+          ])}
+        >
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Pulse className="bg-red-400" />
+            <span className="text-red-300">execute failed to start</span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setRetrying(true);
+                RetryExecuteForApprovedPlan(workspaceID, issueNumber)
+                  .catch((err: any) => alert(String(err?.message ?? err)))
+                  .finally(() => setRetrying(false));
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              disabled={retrying}
+              className="ml-auto px-1.5 py-0.5 rounded text-[10px] border border-emerald-700 text-emerald-300 hover:border-emerald-500 hover:text-emerald-200 disabled:opacity-50"
+              title={spawnFailureReason}
+            >
+              {retrying ? "Retrying…" : "▶ Retry execute"}
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onClearFailure(); }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="px-1.5 py-0.5 rounded text-[10px] border border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+              title="Clear this error without retrying"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="text-slate-400 break-words pl-3.5" title={spawnFailureReason}>
+            ⚠ {spawnFailureReason}
+          </div>
         </div>
         {menuEl}
       </>
