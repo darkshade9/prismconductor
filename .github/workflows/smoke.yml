@@ -12,9 +12,13 @@ jobs:
     # 24.04 only 4.1 is available and Wails v2's default build expects 4.0.
     # Pin until upstream Wails fully supports 4.1 in the default profile.
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Fetch enough history to diff against the base branch for the
+          # frontend-change detection step.
+          fetch-depth: 0
       - name: enforce test isolation (no prod data dir in tests)
         run: |
           bad=$(grep -RnE 'os\.UserConfigDir|UserHomeDir|Library/Application Support/(prism|Prism)[Cc]onductor|\.config/prismconductor' \
@@ -83,10 +87,17 @@ jobs:
         # handle it — Playwright's cleanup doesn't reliably traverse the
         # xvfb-run process tree to kill the inner wails process, and the
         # job hangs until the 15-minute job timeout fires.
+        #
+        # We pre-populate the data dir with the committed fixture DB so
+        # that both the smoke spec (startup) and the visual spec (screenshots)
+        # run against known, deterministic state. The startup spec doesn't
+        # inspect DB content, so booting with the fixture is safe.
         run: |
           set -m
           export PRISMCONDUCTOR_DATA_DIR="$RUNNER_TEMP/prismconductor-smoke"
           mkdir -p "$PRISMCONDUCTOR_DATA_DIR"
+          cp tests/fixtures/seed.db "$PRISMCONDUCTOR_DATA_DIR/conductor.db"
+          echo "PRISMCONDUCTOR_DATA_DIR=$PRISMCONDUCTOR_DATA_DIR" >> "$GITHUB_ENV"
           xvfb-run --auto-servernum --server-args='-screen 0 1280x800x24' \
             wails dev -loglevel error > /tmp/wails-dev.log 2>&1 &
           echo "WAILS_PID=$!" >> "$GITHUB_ENV"
@@ -107,6 +118,77 @@ jobs:
         run: npx playwright test e2e/startup.spec.ts
         env:
           CI: "true"
+      # ── Visual captures (PR-only, gated on frontend/src/ changes) ──────────
+      - name: detect frontend changes
+        id: frontend_diff
+        if: github.event_name == 'pull_request'
+        run: |
+          changed=$(git diff --name-only \
+            "origin/${{ github.base_ref }}...HEAD" -- 'frontend/src/**' 2>/dev/null \
+            | head -1)
+          if [ -n "$changed" ]; then
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
+            echo "Frontend changes detected — visual captures will run."
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No frontend/src/ changes — skipping visual captures."
+          fi
+      - name: visual captures
+        id: visual
+        if: |
+          github.event_name == 'pull_request' &&
+          steps.frontend_diff.outputs.changed == 'true'
+        working-directory: tests
+        run: |
+          mkdir -p screenshots
+          npx playwright test e2e/visual.spec.ts
+        env:
+          CI: "true"
+      - name: upload screenshots
+        if: |
+          github.event_name == 'pull_request' &&
+          steps.frontend_diff.outputs.changed == 'true' &&
+          (success() || steps.visual.outcome == 'failure')
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-screenshots-${{ github.run_id }}
+          path: tests/screenshots/
+          retention-days: 30
+      - name: post PR comment with screenshot links
+        if: |
+          github.event_name == 'pull_request' &&
+          steps.frontend_diff.outputs.changed == 'true' &&
+          steps.visual.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runId = context.runId;
+            const repoUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}`;
+            const runUrl = `${repoUrl}/actions/runs/${runId}`;
+            const shots = [
+              'board-all-workspaces.png',
+              'board-empty.png',
+              'board-populated.png',
+              'plan-modal.png',
+              'settings-workspaces.png',
+              'session-drawer.png',
+            ];
+            const list = shots.map(s => `- \`${s}\``).join('\n');
+            const body = [
+              '## UI Screenshots',
+              '',
+              `Visual smoke captures from CI run [#${runId}](${runUrl}).`,
+              `Download the \`ui-screenshots-${runId}\` artifact to view them.`,
+              '',
+              list,
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+      # ── Cleanup ─────────────────────────────────────────────────────────────
       - name: stop wails dev
         if: always()
         run: |
