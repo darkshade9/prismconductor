@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { EventsOn } from "../wailsjs/runtime/runtime";
+import { EventsOnWrapped } from "./lib/eventBus";
 import {
   GetAutoPullPaused,
   ListArchivedIssues,
@@ -98,36 +98,36 @@ function App() {
         );
       })
       .catch(() => {});
-    const offLine = EventsOn("session.line", (data: { session_id: string; line: string }) => {
+    const offLine = EventsOnWrapped("session.line", (data: { session_id: string; line: string }) => {
       appendLine(data.session_id, data.line);
     });
-    const offState = EventsOn("session.state", (sess: types.Session) => {
+    const offState = EventsOnWrapped("session.state", (sess: types.Session) => {
       // eslint-disable-next-line no-console
       console.debug(
         `[bus] session.state id=${sess.id?.slice(0, 8)} ws=${sess.workspace_id} #${sess.issue_number} mode=${sess.mode} state=${sess.state}`,
       );
       setMeta(sess);
     });
-    const offActivity = EventsOn("session.activity", (act: SessionActivity) => {
+    const offActivity = EventsOnWrapped("session.activity", (act: SessionActivity) => {
       useSessionStore.getState().setActivity(act);
     });
-    const offGoal = EventsOn("bus.goal_activated", () => {
+    const offGoal = EventsOnWrapped("bus.goal_activated", () => {
       refreshGoals();
       refreshIssues(selectedWorkspace ?? "");
     });
-    const offGoalUpd = EventsOn("bus.goal_updated", () => refreshGoals());
-    const offIssue = EventsOn("bus.issue_added", () => refreshIssues(selectedWorkspace ?? ""));
+    const offGoalUpd = EventsOnWrapped("bus.goal_updated", () => refreshGoals());
+    const offIssue = EventsOnWrapped("bus.issue_added", () => refreshIssues(selectedWorkspace ?? ""));
     // pending_pool_* events flip Issue.WaitingForPool on the server side.
     // Without re-fetching here, the card stays in the pink "waiting for
     // available agent pool" state visually even after the orchestrator has
     // drained the queue, spawned the worker, and moved the card to
     // IN_PROGRESS — the pool counter will (correctly) show the slot taken
     // while the card display is stale.
-    const offPendingEnq = EventsOn(
+    const offPendingEnq = EventsOnWrapped(
       "bus.pending_pool_enqueued",
       () => refreshIssues(selectedWorkspace ?? ""),
     );
-    const offPendingDeq = EventsOn(
+    const offPendingDeq = EventsOnWrapped(
       "bus.pending_pool_dequeued",
       () => refreshIssues(selectedWorkspace ?? ""),
     );
@@ -135,7 +135,7 @@ function App() {
     // Card glow + toast carry the signal; queue the arrival and drain on close.
     // Any future auto-open path (bus.plan_revised, etc.) must use the same
     // functional-setPlanTarget guard, never an unconditional set.
-    const offPlanReady = EventsOn(
+    const offPlanReady = EventsOnWrapped(
       "bus.plan_ready",
       (data: { workspace_id: string; issue_number: number; revision: number }) => {
         refreshIssues(selectedWorkspace ?? "");
@@ -166,35 +166,35 @@ function App() {
         });
       },
     );
-    const offPROpened = EventsOn(
+    const offPROpened = EventsOnWrapped(
       "bus.pr_opened",
       (_data: { workspace_id: string; issue_number: number; pr_number: number; pr_url: string }) => {
         refreshIssues(selectedWorkspace ?? "");
       },
     );
-    const offPRMerged = EventsOn("bus.pr_merged", () => refreshIssues(selectedWorkspace ?? ""));
-    const offPRClosedUnmerged = EventsOn(
+    const offPRMerged = EventsOnWrapped("bus.pr_merged", () => refreshIssues(selectedWorkspace ?? ""));
+    const offPRClosedUnmerged = EventsOnWrapped(
       "bus.pr_closed_unmerged",
       () => refreshIssues(selectedWorkspace ?? ""),
     );
-    const offPlanApproved = EventsOn(
+    const offPlanApproved = EventsOnWrapped(
       "bus.plan_approved",
       (data: { workspace_id: string; issue_number: number }) => {
         refreshIssues(selectedWorkspace ?? "");
         if (data) clearPlanReady(data.workspace_id, data.issue_number);
       },
     );
-    const offPlanRejected = EventsOn(
+    const offPlanRejected = EventsOnWrapped(
       "bus.plan_rejected",
       (data: { workspace_id: string; issue_number: number }) => {
         if (data) clearPlanReady(data.workspace_id, data.issue_number);
       },
     );
-    const offGhPoll = EventsOn("bus.github_poll_done", () => refreshIssues(selectedWorkspace ?? ""));
-    const offGhIssue = EventsOn("bus.issue_added", () => refreshIssues(selectedWorkspace ?? ""));
-    const offGhClosed = EventsOn("bus.issue_closed", () => refreshIssues(selectedWorkspace ?? ""));
-    const offGhLabel = EventsOn("bus.issue_label_changed", () => refreshIssues(selectedWorkspace ?? ""));
-    const offLabelsUpdated = EventsOn(
+    const offGhPoll = EventsOnWrapped("bus.github_poll_done", () => refreshIssues(selectedWorkspace ?? ""));
+    const offGhIssue = EventsOnWrapped("bus.issue_added", () => refreshIssues(selectedWorkspace ?? ""));
+    const offGhClosed = EventsOnWrapped("bus.issue_closed", () => refreshIssues(selectedWorkspace ?? ""));
+    const offGhLabel = EventsOnWrapped("bus.issue_label_changed", () => refreshIssues(selectedWorkspace ?? ""));
+    const offLabelsUpdated = EventsOnWrapped(
       "bus.labels_updated",
       (data: { workspace_id: string }) => {
         if (data?.workspace_id) {
@@ -203,24 +203,24 @@ function App() {
       },
     );
     usePoolsStore.getState().refresh();
-    const offPoolChanged = EventsOn("bus.agent_count_changed", () => {
+    const offPoolChanged = EventsOnWrapped("bus.agent_count_changed", () => {
       usePoolsStore.getState().refresh();
     });
     GetAutoPullPaused().then(setAutoPaused).catch(() => {});
-    const offPause = EventsOn(
+    const offPause = EventsOnWrapped(
       "bus.auto_pull_paused_changed",
       (data: { paused: boolean }) => setAutoPaused(!!data?.paused),
     );
-    const offArchived = EventsOn("bus.issues_archived", () => {
+    const offArchived = EventsOnWrapped("bus.issues_archived", () => {
       refreshIssues(selectedWorkspace ?? "");
       refreshArchived(selectedWorkspace ?? "");
       refreshArchivedCount();
     });
     const pushToast = useToastStore.getState().push;
     const dismissToast = useToastStore.getState().dismiss;
-    const offToast = EventsOn("toast", (t: ToastT) => pushToast(t));
+    const offToast = EventsOnWrapped("toast", (t: ToastT) => pushToast(t));
 
-    const offWsAdded = EventsOn(
+    const offWsAdded = EventsOnWrapped(
       "bus.workspace_added",
       async (data: { workspace_id: string; workspace_name: string }) => {
         await refreshWorkspaces();
@@ -238,7 +238,7 @@ function App() {
       },
     );
 
-    const offWsFetchDone = EventsOn(
+    const offWsFetchDone = EventsOnWrapped(
       "bus.workspace_fetch_complete",
       (data: { workspace_id: string; workspace_name: string; success: boolean; issue_count: number; error?: string }) => {
         dismissToast(`ws-fetch-${data.workspace_id}`);

@@ -45,6 +45,7 @@ import (
 	"prismconductor/internal/skills/bundle"
 	"prismconductor/internal/store"
 	"prismconductor/internal/types"
+	"prismconductor/internal/wailsbus"
 	"prismconductor/internal/workerpool"
 	"prismconductor/internal/workspace"
 )
@@ -135,7 +136,7 @@ func (a *App) startup(ctx context.Context) {
 			}
 		}
 		if a.ctx != nil {
-			wruntime.EventsEmit(a.ctx, "pool.usage_updated", nil)
+			wailsbus.EmitEvent(a.ctx, "pool.usage_updated", nil)
 		}
 	}
 
@@ -220,7 +221,7 @@ func (a *App) startup(ctx context.Context) {
 	a.mgr.SetOnPROpened(a.handlePROpened)
 	a.mgr.SetOnNeedsPR(a.handleNeedsPR)
 	a.mgr.SetOnActivity(func(act types.SessionActivity) {
-		wruntime.EventsEmit(a.ctx, "session.activity", act)
+		wailsbus.EmitEvent(a.ctx, "session.activity", act)
 	})
 	a.mgr.SetOnRateLimit(rateLimitSink)
 
@@ -287,7 +288,7 @@ func (a *App) startup(ctx context.Context) {
 		// Persist every event for debugging + Phase 7 transcript pattern detector.
 		a.bus.Subscribe(func(e eventbus.Event) {
 			_ = a.store.LogEvent(string(e.Type), e.Payload)
-			wruntime.EventsEmit(a.ctx, "bus."+string(e.Type), e.Payload)
+			wailsbus.EmitEvent(a.ctx, "bus."+string(e.Type), e.Payload)
 			a.notifyOnPRStateChange(e)
 		})
 
@@ -450,7 +451,7 @@ func (a *App) startup(ctx context.Context) {
 // handleSessionStateChange runs on every session state transition. Fans the
 // new state to the UI as a Wails event and fires an in-app toast per §15.6.
 func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionState) {
-	wruntime.EventsEmit(a.ctx, "session.state", sess)
+	wailsbus.EmitEvent(a.ctx, "session.state", sess)
 	a.bus.Publish(eventbus.EvtSessionStateChanged, eventbus.SessionStateChanged{
 		WorkspaceID: sess.WorkspaceID,
 		IssueNumber: sess.IssueNumber,
@@ -645,7 +646,7 @@ func nowUnix() int64 {
 
 // emitLine fans PTY output out as a Wails event for the frontend SessionDrawer.
 func (a *App) emitLine(sessionID, line string) {
-	wruntime.EventsEmit(a.ctx, "session.line", map[string]string{
+	wailsbus.EmitEvent(a.ctx, "session.line", map[string]string{
 		"session_id": sessionID,
 		"line":       line,
 	})
@@ -668,7 +669,7 @@ func (a *App) emitToast(level, title, body string, payload map[string]any) {
 	for k, v := range payload {
 		msg[k] = v
 	}
-	wruntime.EventsEmit(a.ctx, "toast", msg)
+	wailsbus.EmitEvent(a.ctx, "toast", msg)
 }
 
 // gcWorktreesAll prunes orphan worktree records and removes any
@@ -859,7 +860,7 @@ func (a *App) CreateCollection(name string) (types.Collection, error) {
 		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
 	}
 	if a.ctx != nil {
-		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+		wailsbus.EmitEvent(a.ctx, "collections.updated", nil)
 	}
 	return col, nil
 }
@@ -876,7 +877,7 @@ func (a *App) RenameCollection(id, name string) error {
 		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
 	}
 	if a.ctx != nil {
-		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+		wailsbus.EmitEvent(a.ctx, "collections.updated", nil)
 	}
 	return nil
 }
@@ -893,7 +894,7 @@ func (a *App) DeleteCollection(id string) error {
 		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
 	}
 	if a.ctx != nil {
-		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+		wailsbus.EmitEvent(a.ctx, "collections.updated", nil)
 	}
 	return nil
 }
@@ -910,7 +911,7 @@ func (a *App) AddWorkspaceToCollection(collectionID, workspaceID string) error {
 		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
 	}
 	if a.ctx != nil {
-		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+		wailsbus.EmitEvent(a.ctx, "collections.updated", nil)
 	}
 	return nil
 }
@@ -927,7 +928,7 @@ func (a *App) RemoveWorkspaceFromCollection(collectionID, workspaceID string) er
 		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
 	}
 	if a.ctx != nil {
-		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+		wailsbus.EmitEvent(a.ctx, "collections.updated", nil)
 	}
 	return nil
 }
@@ -944,7 +945,7 @@ func (a *App) UpdateCollectionContext(collectionID, body string) error {
 		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
 	}
 	if a.ctx != nil {
-		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+		wailsbus.EmitEvent(a.ctx, "collections.updated", nil)
 	}
 	return nil
 }
@@ -1635,7 +1636,7 @@ func (a *App) MoveIssueColumn(workspaceID string, number int, column string) err
 		if sess, err := a.store.AcknowledgeLatestFailure(workspaceID, number); err != nil {
 			log.Printf("MoveIssueColumn: acknowledge failure for #%d: %v", number, err)
 		} else if sess != nil {
-			wruntime.EventsEmit(a.ctx, "session.state", *sess)
+			wailsbus.EmitEvent(a.ctx, "session.state", *sess)
 			log.Printf("MoveIssueColumn: acknowledged blocked session %s for #%d on move to %s", sess.ID[:8], number, column)
 		}
 	}
@@ -1734,7 +1735,7 @@ func (a *App) ClearIssueFailure(workspaceID string, issueNumber int) error {
 		})
 	}
 	if sess != nil {
-		wruntime.EventsEmit(a.ctx, "session.state", *sess)
+		wailsbus.EmitEvent(a.ctx, "session.state", *sess)
 		// Publish to the in-process bus too so the IssueView assembler
 		// reassembles and emits a fresh bus.issue_view_updated. Without
 		// this, the assembler keeps surfacing the now-acknowledged session
@@ -1801,7 +1802,7 @@ func (a *App) OpenOrphanPR(workspaceID string, issueNumber int) error {
 			"pr_url":       prURL,
 		})
 	}
-	wruntime.EventsEmit(a.ctx, "pr.opened", map[string]any{
+	wailsbus.EmitEvent(a.ctx, "pr.opened", map[string]any{
 		"workspace_id": workspaceID,
 		"issue_number": issueNumber,
 		"pr_number":    prNum,
@@ -3035,7 +3036,7 @@ func (a *App) handleMidRunAnswerArrived(ps store.PausedSession) {
 		// store refreshes the OLD row's state from `paused_for_question` to
 		// `completed`. Without this, the Card's pausedSession selector keeps
 		// the orange overlay until the next Wails reload.
-		wruntime.EventsEmit(a.ctx, "session.state", types.Session{
+		wailsbus.EmitEvent(a.ctx, "session.state", types.Session{
 			ID:          ps.SessionID,
 			WorkspaceID: ps.WorkspaceID,
 			IssueNumber: ps.IssueNumber,
@@ -3084,7 +3085,7 @@ func (a *App) handleOrphanQuestion(ps store.PausedSession) {
 		})
 	}
 	if a.ctx != nil {
-		wruntime.EventsEmit(a.ctx, "session.state", *sess)
+		wailsbus.EmitEvent(a.ctx, "session.state", *sess)
 	}
 	if a.bus != nil {
 		a.bus.Publish(eventbus.EvtSessionStateChanged, eventbus.SessionStateChanged{
@@ -3127,7 +3128,7 @@ func (a *App) RecoverOrphanQuestion(workspaceID string, issueNumber int) error {
 		})
 	}
 	if a.ctx != nil {
-		wruntime.EventsEmit(a.ctx, "session.state", *sess)
+		wailsbus.EmitEvent(a.ctx, "session.state", *sess)
 	}
 	if a.bus != nil {
 		a.bus.Publish(eventbus.EvtSessionStateChanged, eventbus.SessionStateChanged{
@@ -4538,14 +4539,14 @@ func thisWeekUTC() time.Time {
 // --- Agent terminal (issue #161) ---
 
 func (a *App) emitAgentData(workspaceID, dataB64 string) {
-	wruntime.EventsEmit(a.ctx, "agentterm.output", map[string]string{
+	wailsbus.EmitEvent(a.ctx, "agentterm.output", map[string]string{
 		"workspace_id": workspaceID,
 		"data":         dataB64,
 	})
 }
 
 func (a *App) emitAgentExit(workspaceID string, exitCode int) {
-	wruntime.EventsEmit(a.ctx, "agentterm.exit", map[string]any{
+	wailsbus.EmitEvent(a.ctx, "agentterm.exit", map[string]any{
 		"workspace_id": workspaceID,
 		"exit_code":    exitCode,
 	})
@@ -4615,4 +4616,19 @@ func (a *App) KillAgentSession(workspaceID string) error {
 		return fmt.Errorf("agent terminal manager unavailable")
 	}
 	return a.agentTerm.Kill(workspaceID)
+}
+
+// GetEventBusDebugEmits returns a snapshot of the wailsbus ring buffer (most
+// recent first) so the developer diagnostics panel can display send-side history.
+func (a *App) GetEventBusDebugEmits() []wailsbus.EmitRecord {
+	return wailsbus.GetDebugEmits()
+}
+
+// ReplayEventBusEmit re-emits the most recent buffered event whose name matches.
+// Returns an error if no matching event is found in the ring buffer.
+func (a *App) ReplayEventBusEmit(name string) error {
+	if !wailsbus.ReplayLatest(a.ctx, name) {
+		return fmt.Errorf("no buffered event with name %q", name)
+	}
+	return nil
 }

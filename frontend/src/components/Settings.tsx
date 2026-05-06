@@ -6,8 +6,9 @@ import { NotifyPanel } from "./NotifyPanel";
 import { LogsPanel } from "./LogsPanel";
 import { AppearancePanel } from "./AppearancePanel";
 import { CollectionsPanel } from "./CollectionsPanel";
+import { EventDiagnostics } from "./EventDiagnostics";
 
-type Tab = "workspaces" | "collections" | "pools" | "skills" | "notify" | "appearance" | "logs";
+type Tab = "workspaces" | "collections" | "pools" | "skills" | "notify" | "appearance" | "logs" | "diagnostics";
 
 export function Settings({
   open,
@@ -38,6 +39,7 @@ export function Settings({
                 ["notify", "Notifications"],
                 ["appearance", "Appearance"],
                 ["logs", "Logs"],
+                ...(import.meta.env.DEV ? [["diagnostics", "Diagnostics"] as [Tab, string]] : []),
               ] as [Tab, string][]
             ).map(([k, label]) => (
               <button
@@ -60,6 +62,7 @@ export function Settings({
             {tab === "notify" && <NotifyPanel />}
             {tab === "appearance" && <AppearancePanel />}
             {tab === "logs" && <LogsPanel />}
+            {tab === "diagnostics" && import.meta.env.DEV && <EventDiagnostics />}
           </div>
         </div>
       </div>
