@@ -362,6 +362,10 @@ export function ResolveConflicts(arg1, arg2) {
   return window['go']['main']['App']['ResolveConflicts'](arg1, arg2);
 }
 
+export function RetryExecuteForApprovedPlan(arg1, arg2) {
+  return window['go']['main']['App']['RetryExecuteForApprovedPlan'](arg1, arg2);
+}
+
 export function RotateRemoteWorkerKey(arg1, arg2) {
   return window['go']['main']['App']['RotateRemoteWorkerKey'](arg1, arg2);
 }
