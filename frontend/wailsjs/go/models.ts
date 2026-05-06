@@ -1,23 +1,21 @@
 export namespace cardstate {
 	
-	export class CardStateDetails {
-	    reason?: string;
-	    session_id?: string;
-	    session_mode?: string;
-	    blocked_reason?: string;
-	    failure_cause?: types.FailureCause;
+	export class PendingRetryInfo {
+	    attempt: number;
+	    max_attempts: number;
+	    not_before: number;
+	    last_cause?: types.FailureCause;
 	
 	    static createFrom(source: any = {}) {
-	        return new CardStateDetails(source);
+	        return new PendingRetryInfo(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.reason = source["reason"];
-	        this.session_id = source["session_id"];
-	        this.session_mode = source["session_mode"];
-	        this.blocked_reason = source["blocked_reason"];
-	        this.failure_cause = this.convertValues(source["failure_cause"], types.FailureCause);
+	        this.attempt = source["attempt"];
+	        this.max_attempts = source["max_attempts"];
+	        this.not_before = source["not_before"];
+	        this.last_cause = this.convertValues(source["last_cause"], types.FailureCause);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -38,6 +36,47 @@ export namespace cardstate {
 		    return a;
 		}
 	}
+	export class CardStateDetails {
+	    reason?: string;
+	    session_id?: string;
+	    session_mode?: string;
+	    blocked_reason?: string;
+	    failure_cause?: types.FailureCause;
+	    retry_info?: PendingRetryInfo;
+	
+	    static createFrom(source: any = {}) {
+	        return new CardStateDetails(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.reason = source["reason"];
+	        this.session_id = source["session_id"];
+	        this.session_mode = source["session_mode"];
+	        this.blocked_reason = source["blocked_reason"];
+	        this.failure_cause = this.convertValues(source["failure_cause"], types.FailureCause);
+	        this.retry_info = this.convertValues(source["retry_info"], PendingRetryInfo);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class PlanFailedInfo {
 	    session_id: string;
 	    reason?: string;
@@ -1254,6 +1293,54 @@ export namespace main {
 
 }
 
+export namespace retry {
+	
+	export class PendingRetry {
+	    WorkspaceID: string;
+	    IssueNumber: number;
+	    Attempt: number;
+	    MaxAttempts: number;
+	    // Go type: time
+	    NotBefore: any;
+	    LastCause?: types.FailureCause;
+	    PriorSessionID: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PendingRetry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.WorkspaceID = source["WorkspaceID"];
+	        this.IssueNumber = source["IssueNumber"];
+	        this.Attempt = source["Attempt"];
+	        this.MaxAttempts = source["MaxAttempts"];
+	        this.NotBefore = this.convertValues(source["NotBefore"], null);
+	        this.LastCause = this.convertValues(source["LastCause"], types.FailureCause);
+	        this.PriorSessionID = source["PriorSessionID"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace store {
 	
 	export class PendingPlan {
@@ -2020,6 +2107,24 @@ export namespace types {
 		}
 	}
 	
+	export class RetryPolicy {
+	    max_attempts: number;
+	    base_backoff: number;
+	    max_backoff: number;
+	    jitter_pct: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RetryPolicy(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.max_attempts = source["max_attempts"];
+	        this.base_backoff = source["base_backoff"];
+	        this.max_backoff = source["max_backoff"];
+	        this.jitter_pct = source["jitter_pct"];
+	    }
+	}
 	export class Session {
 	    id: string;
 	    workspace_id: string;
@@ -2046,6 +2151,8 @@ export namespace types {
 	    last_stderr_chunk?: string;
 	    branch?: string;
 	    failure_cause?: FailureCause;
+	    retry_attempt?: number;
+	    retry_of_session_id?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
@@ -2076,6 +2183,8 @@ export namespace types {
 	        this.last_stderr_chunk = source["last_stderr_chunk"];
 	        this.branch = source["branch"];
 	        this.failure_cause = this.convertValues(source["failure_cause"], FailureCause);
+	        this.retry_attempt = source["retry_attempt"];
+	        this.retry_of_session_id = source["retry_of_session_id"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -2211,6 +2320,7 @@ export namespace types {
 	    provisioning?: boolean;
 	    // Go type: time
 	    provisioning_at?: any;
+	    retry_policy?: RetryPolicy;
 	
 	    static createFrom(source: any = {}) {
 	        return new Workspace(source);
@@ -2236,6 +2346,7 @@ export namespace types {
 	        this.remote_config = this.convertValues(source["remote_config"], RemoteConfig);
 	        this.provisioning = source["provisioning"];
 	        this.provisioning_at = this.convertValues(source["provisioning_at"], null);
+	        this.retry_policy = this.convertValues(source["retry_policy"], RetryPolicy);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

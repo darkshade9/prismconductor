@@ -123,6 +123,101 @@ function AutoArchiveEditor({ workspace, onSave }: { workspace: types.Workspace; 
   );
 }
 
+// Default retry policy values (mirrors types.DefaultRetryPolicy in Go).
+const DEFAULT_RETRY_MAX_ATTEMPTS = 3;
+const DEFAULT_RETRY_BASE_BACKOFF_S = 10;
+const DEFAULT_RETRY_MAX_BACKOFF_S = 300;
+const DEFAULT_RETRY_JITTER_PCT = 25;
+
+function RetryPolicyEditor({ workspace, onSave }: { workspace: types.Workspace; onSave: () => void }) {
+  const p = (workspace as any).retry_policy;
+  const [maxAttempts, setMaxAttempts] = useState<number>(p?.max_attempts ?? DEFAULT_RETRY_MAX_ATTEMPTS);
+  const [baseBackoffS, setBaseBackoffS] = useState<number>(
+    p?.base_backoff ? Math.round(p.base_backoff / 1_000_000_000) : DEFAULT_RETRY_BASE_BACKOFF_S
+  );
+  const [maxBackoffS, setMaxBackoffS] = useState<number>(
+    p?.max_backoff ? Math.round(p.max_backoff / 1_000_000_000) : DEFAULT_RETRY_MAX_BACKOFF_S
+  );
+  const [jitterPct, setJitterPct] = useState<number>(p?.jitter_pct ?? DEFAULT_RETRY_JITTER_PCT);
+  const [enabled, setEnabled] = useState<boolean>(maxAttempts > 0);
+
+  async function save(nextEnabled: boolean, ma: number, bb: number, mb: number, jp: number) {
+    const policy = nextEnabled
+      ? { max_attempts: ma, base_backoff: bb * 1_000_000_000, max_backoff: mb * 1_000_000_000, jitter_pct: jp }
+      : { max_attempts: 0, base_backoff: 0, max_backoff: 0, jitter_pct: 0 };
+    const updated = types.Workspace.createFrom({ ...workspace, retry_policy: policy });
+    await UpdateWorkspace(updated);
+    onSave();
+  }
+
+  return (
+    <div>
+      <div className="text-xs text-slate-400 mb-2">Auto-retry (transient failures)</div>
+      <div className="flex flex-col gap-2">
+        <label className="flex items-center gap-2 text-xs text-slate-300">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={async (e) => {
+              setEnabled(e.target.checked);
+              await save(e.target.checked, maxAttempts, baseBackoffS, maxBackoffS, jitterPct);
+            }}
+          />
+          Automatically retry rate-limited / crashed sessions
+        </label>
+        {enabled && (
+          <div className="flex flex-col gap-1.5 pl-5 text-xs text-slate-400">
+            <label className="flex items-center gap-2">
+              Max attempts
+              <input
+                {...noAutoCorrect}
+                type="number" min={1} max={10} value={maxAttempts}
+                onChange={(e) => setMaxAttempts(Number(e.target.value))}
+                onBlur={() => save(enabled, maxAttempts, baseBackoffS, maxBackoffS, jitterPct)}
+                className="w-14 bg-slate-800 border border-slate-600 rounded px-1 py-0.5 text-slate-200"
+              />
+              <span className="text-slate-600">(global cap: 10)</span>
+            </label>
+            <label className="flex items-center gap-2">
+              Base backoff
+              <input
+                {...noAutoCorrect}
+                type="number" min={1} max={300} value={baseBackoffS}
+                onChange={(e) => setBaseBackoffS(Number(e.target.value))}
+                onBlur={() => save(enabled, maxAttempts, baseBackoffS, maxBackoffS, jitterPct)}
+                className="w-14 bg-slate-800 border border-slate-600 rounded px-1 py-0.5 text-slate-200"
+              />
+              s
+            </label>
+            <label className="flex items-center gap-2">
+              Max backoff
+              <input
+                {...noAutoCorrect}
+                type="number" min={10} max={3600} value={maxBackoffS}
+                onChange={(e) => setMaxBackoffS(Number(e.target.value))}
+                onBlur={() => save(enabled, maxAttempts, baseBackoffS, maxBackoffS, jitterPct)}
+                className="w-14 bg-slate-800 border border-slate-600 rounded px-1 py-0.5 text-slate-200"
+              />
+              s
+            </label>
+            <label className="flex items-center gap-2">
+              Jitter
+              <input
+                {...noAutoCorrect}
+                type="number" min={0} max={50} value={jitterPct}
+                onChange={(e) => setJitterPct(Number(e.target.value))}
+                onBlur={() => save(enabled, maxAttempts, baseBackoffS, maxBackoffS, jitterPct)}
+                className="w-14 bg-slate-800 border border-slate-600 rounded px-1 py-0.5 text-slate-200"
+              />
+              %
+            </label>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PoolBindings({ workspaceID }: { workspaceID: string }) {
   const [pools, setPools] = useState<workerpool.PoolStatus[]>([]);
 
@@ -405,6 +500,7 @@ export function WorkspacesPanel() {
                       <PipelineEditor workspace={ws} />
                     </div>
                     <AutoArchiveEditor workspace={ws} onSave={refresh} />
+                    <RetryPolicyEditor workspace={ws} onSave={refresh} />
                     <SigningStrategyEditor workspace={ws} onSave={refresh} />
                     <div>
                       <div className="text-xs text-slate-400 mb-2">Labels</div>

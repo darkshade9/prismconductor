@@ -32,6 +32,15 @@ type conflictEntry struct {
 	info eventbus.PRConflictsDetected
 }
 
+// retryEntry is the in-memory pending-retry state the Assembler keeps per
+// issue. Set on EvtRetryScheduled, cleared on EvtRetryFired / EvtRetryCancelled
+// / EvtRetryExhausted / new execute session start (#221).
+type retryEntry struct {
+	attempt     int
+	maxAttempts int
+	notBefore   int64 // unix seconds
+}
+
 // issueStore is the subset of *store.Store that the Assembler needs.
 type issueStore interface {
 	LoadIssue(workspaceID string, number int) (types.Issue, error)
@@ -53,6 +62,7 @@ type Assembler struct {
 	checkFails    map[string]*checkFailEntry  // "wsID#num" → latest check failure
 	conflictFails map[string]*conflictEntry   // "wsID#num" → latest conflict state
 	orphanPRs     map[string]string           // "wsID#num" → branch name (#194)
+	pendingRetries map[string]*retryEntry     // "wsID#num" → pending retry (#221)
 
 	// repoPathFn resolves a workspace ID to its local repo path. When set,
 	// Assemble probes the questions directory to detect orphan question files
@@ -63,12 +73,13 @@ type Assembler struct {
 // New wires the Assembler to the bus. Call once at startup after the store is ready.
 func New(bus *eventbus.Bus, st issueStore) *Assembler {
 	a := &Assembler{
-		store:         st,
-		bus:           bus,
-		cache:         make(map[string]string),
-		checkFails:    make(map[string]*checkFailEntry),
-		conflictFails: make(map[string]*conflictEntry),
-		orphanPRs:     make(map[string]string),
+		store:          st,
+		bus:            bus,
+		cache:          make(map[string]string),
+		checkFails:     make(map[string]*checkFailEntry),
+		conflictFails:  make(map[string]*conflictEntry),
+		orphanPRs:      make(map[string]string),
+		pendingRetries: make(map[string]*retryEntry),
 	}
 	bus.Subscribe(a.handleEvent)
 	return a
@@ -98,6 +109,11 @@ var issueRelevantEvents = map[eventbus.EventType]bool{
 	eventbus.EvtPRCommentReceived: true,
 	eventbus.EvtOrphanPRDetected:  true,
 	eventbus.EvtOrphanPRCleared:   true,
+	// Issue #221: auto-retry schedule changes affect the card state.
+	eventbus.EvtRetryScheduled:  true,
+	eventbus.EvtRetryFired:      true,
+	eventbus.EvtRetryCancelled:  true,
+	eventbus.EvtRetryExhausted:  true,
 }
 
 func (a *Assembler) handleEvent(e eventbus.Event) {
@@ -160,6 +176,26 @@ func (a *Assembler) handleEvent(e eventbus.Event) {
 			delete(a.orphanPRs, key)
 			a.mu.Unlock()
 		}
+
+	// Issue #221: keep pending-retry state in sync with the scheduler.
+	case eventbus.EvtRetryScheduled:
+		if p, ok := e.Payload.(eventbus.RetryScheduled); ok {
+			key := p.WorkspaceID + "#" + strconv.Itoa(p.IssueNumber)
+			a.mu.Lock()
+			a.pendingRetries[key] = &retryEntry{
+				attempt:     p.Attempt,
+				maxAttempts: p.MaxAttempts,
+				notBefore:   p.NotBefore,
+			}
+			a.mu.Unlock()
+		}
+	case eventbus.EvtRetryFired, eventbus.EvtRetryCancelled, eventbus.EvtRetryExhausted:
+		if wsID != "" && issueNum != 0 {
+			key := wsID + "#" + strconv.Itoa(issueNum)
+			a.mu.Lock()
+			delete(a.pendingRetries, key)
+			a.mu.Unlock()
+		}
 	}
 	// Session-state changes are LOAD-BEARING for the frontend's glow ladder
 	// (running execute → purple, blocked → red, etc). The cache-diff gate
@@ -180,7 +216,13 @@ func (a *Assembler) handleEvent(e eventbus.Event) {
 		eventbus.EvtPRMerged,
 		eventbus.EvtPRClosedUnmerged,
 		eventbus.EvtOrphanPRDetected,
-		eventbus.EvtOrphanPRCleared:
+		eventbus.EvtOrphanPRCleared,
+		// Retry state changes must force-emit so the countdown appears/clears
+		// immediately without waiting for the cache-diff gate (#221).
+		eventbus.EvtRetryScheduled,
+		eventbus.EvtRetryFired,
+		eventbus.EvtRetryCancelled,
+		eventbus.EvtRetryExhausted:
 		a.reassembleAndForceEmit(wsID, issueNum)
 		return
 	}
@@ -316,6 +358,7 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 	a.mu.Lock()
 	cfEntry := a.checkFails[key]
 	conflEntry := a.conflictFails[key]
+	retryEnt := a.pendingRetries[key]
 	a.mu.Unlock()
 
 	var testsFailingInfo *TestsFailingInfo
@@ -388,6 +431,15 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 	// Derive the single authoritative CardState and its companion details (#30).
 	// Additive: emitted alongside the existing per-field view so the frontend
 	// can fall back to its own derivation until the Phase 2 cutover.
+	var pendingRetry *cardstate.PendingRetryInfo
+	if retryEnt != nil {
+		pendingRetry = &cardstate.PendingRetryInfo{
+			Attempt:     retryEnt.attempt,
+			MaxAttempts: retryEnt.maxAttempts,
+			NotBefore:   retryEnt.notBefore,
+		}
+	}
+
 	cs, csDetails := cardstate.DeriveCardState(cardstate.DeriveParams{
 		Column:            derivedColumn(iss, plan, active, lastFail),
 		PRNumber:          iss.PRNumber,
@@ -401,6 +453,7 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		HasConflicts:      conflictsInfo != nil,
 		HasOrphanQuestion: orphanQuestion != nil,
 		PlanFailed:        planFailed,
+		PendingRetry:      pendingRetry,
 	})
 	var csDetailsPtr *cardstate.CardStateDetails
 	if cs != cardstate.CardStateTodo && cs != cardstate.CardStateDone {
@@ -681,6 +734,14 @@ func extractIssueKey(e eventbus.Event) (wsID string, issueNum int) {
 	case eventbus.NeedsPREvent:
 		return p.WorkspaceID, p.IssueNumber
 	case eventbus.PRCommentReceived:
+		return p.WorkspaceID, p.IssueNumber
+	case eventbus.RetryScheduled:
+		return p.WorkspaceID, p.IssueNumber
+	case eventbus.RetryFired:
+		return p.WorkspaceID, p.IssueNumber
+	case eventbus.RetryCancelled:
+		return p.WorkspaceID, p.IssueNumber
+	case eventbus.RetryExhausted:
 		return p.WorkspaceID, p.IssueNumber
 	case map[string]any:
 		wsID, _ = p["workspace_id"].(string)

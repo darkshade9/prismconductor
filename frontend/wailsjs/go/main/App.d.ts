@@ -4,6 +4,7 @@ import {types} from '../models';
 import {main} from '../models';
 import {diagnose} from '../models';
 import {issueview} from '../models';
+import {retry} from '../models';
 import {githubauth} from '../models';
 import {github} from '../models';
 import {workspace} from '../models';
@@ -26,6 +27,8 @@ export function ApprovePlan(arg1:string,arg2:number,arg3:number):Promise<void>;
 export function ArchiveDone(arg1:string):Promise<number>;
 
 export function AttachManualPR(arg1:string,arg2:number,arg3:string):Promise<void>;
+
+export function CancelRetries(arg1:string,arg2:number):Promise<boolean>;
 
 export function CancelSession(arg1:string):Promise<void>;
 
@@ -78,6 +81,8 @@ export function GetPollInterval():Promise<number>;
 export function GetPoolUsage():Promise<Array<types.PoolUsage>>;
 
 export function GetRepoDefaultBranch(arg1:string,arg2:string,arg3:string):Promise<string>;
+
+export function GetRetryQueue(arg1:string):Promise<Array<retry.PendingRetry>>;
 
 export function GitHubAuthStatus():Promise<githubauth.User>;
 
@@ -192,6 +197,8 @@ export function ResizeAgentTerm(arg1:string,arg2:number,arg3:number):Promise<voi
 export function ResolveConflicts(arg1:string,arg2:number):Promise<void>;
 
 export function RetryExecuteForApprovedPlan(arg1:string,arg2:number):Promise<void>;
+
+export function RetryNow(arg1:string,arg2:number):Promise<boolean>;
 
 export function RotateRemoteWorkerKey(arg1:string,arg2:string):Promise<void>;
 
