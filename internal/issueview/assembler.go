@@ -550,8 +550,17 @@ func selectSessions(iss types.Issue, sessions []types.Session) (active, paused, 
 			continue
 		}
 
+		// A failed/blocked session is surfaced as lastFail when it has either:
+		//   - a BlockedReason (worker emitted a `BLOCKED:` sentinel), OR
+		//   - a FailureCause (worker died mid-flow without sentinel — #194)
+		// Pre-fix: the gate required BlockedReason != "" only, so a session
+		// killed by SIGKILL (OOM, watchdog, manual kill) had FailureCause
+		// populated but BlockedReason empty, was dropped here, and the card
+		// rendered as if nothing happened. Witnessed live on issue #221:
+		// 22-min execute SIGKILL'd, card sat glow-less in IN_PROGRESS.
+		hasFailureSignal := m.BlockedReason != "" || m.FailureCause != nil
 		if (m.State == types.StateFailed || m.State == types.StateBlocked) &&
-			m.BlockedReason != "" && notAck {
+			hasFailureSignal && notAck {
 			if lastFail == nil || m.StartedAt.After(lastFail.StartedAt) {
 				lastFail = m
 			}

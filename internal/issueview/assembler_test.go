@@ -175,11 +175,31 @@ func TestSelectSessions_MostRecentFailureWins(t *testing.T) {
 	}
 }
 
-func TestSelectSessions_NoReason_NotTrackedAsFailure(t *testing.T) {
+func TestSelectSessions_NoReasonNoCause_NotTrackedAsFailure(t *testing.T) {
+	// A failed session with neither BlockedReason nor FailureCause is genuinely
+	// uninformative — no signal to render. Skip it.
 	sessions := []types.Session{makeSession(types.StateFailed, t1, "", false)}
 	_, _, lastFail, _ := selectSessions(types.Issue{Column: types.ColTodo}, sessions)
 	if lastFail != nil {
-		t.Error("failed session with no reason should not surface as lastFail")
+		t.Error("failed session with no reason and no cause should not surface as lastFail")
+	}
+}
+
+// Regression: a session killed mid-flow (SIGKILL via OOM, watchdog, etc.)
+// captures FailureCause but no BlockedReason, since the worker never emitted
+// a BLOCKED: sentinel. The assembler must surface it as lastFail so the card
+// renders with a failure indicator instead of going glow-less in IN_PROGRESS.
+// Witnessed live on issue #221: 22-min execute SIGKILL'd, derived
+// card_state="todo" because lastFail=nil filtered it out.
+func TestSelectSessions_FailureCauseOnly_TrackedAsLastFail(t *testing.T) {
+	sess := makeSession(types.StateFailed, t1, "", false)
+	sess.FailureCause = &types.FailureCause{Kind: "exit_code", Reason: "signal: killed"}
+	_, _, lastFail, _ := selectSessions(types.Issue{Column: types.ColTodo}, []types.Session{sess})
+	if lastFail == nil {
+		t.Fatal("failed session with FailureCause must surface as lastFail")
+	}
+	if lastFail.FailureCause == nil || lastFail.FailureCause.Reason != "signal: killed" {
+		t.Errorf("lastFail.FailureCause not preserved: %+v", lastFail.FailureCause)
 	}
 }
 
