@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+import { EventsOnWrapped } from "../lib/eventBus";
 import { ListPools } from "../../wailsjs/go/main/App";
 import { workerpool } from "../../wailsjs/go/models";
 import { resolveProviderIcon } from "../lib/providerIcon";
@@ -16,11 +16,11 @@ export function PoolsHeader({ onOpenPools }: Props) {
         .then((rows) => setPools(rows ?? []))
         .catch(() => {});
     refresh();
-    const offFreed = EventsOn("bus.worker_slot_freed", refresh);
-    const offChanged = EventsOn("bus.agent_count_changed", refresh);
-    const offState = EventsOn("session.state", refresh);
-    const offPending = EventsOn("bus.pending_pool_enqueued", refresh);
-    const offDequeued = EventsOn("bus.pending_pool_dequeued", refresh);
+    const offFreed = EventsOnWrapped("bus.worker_slot_freed", refresh);
+    const offChanged = EventsOnWrapped("bus.agent_count_changed", refresh);
+    const offState = EventsOnWrapped("session.state", refresh);
+    const offPending = EventsOnWrapped("bus.pending_pool_enqueued", refresh);
+    const offDequeued = EventsOnWrapped("bus.pending_pool_dequeued", refresh);
     return () => {
       if (typeof offFreed === "function") offFreed();
       if (typeof offChanged === "function") offChanged();

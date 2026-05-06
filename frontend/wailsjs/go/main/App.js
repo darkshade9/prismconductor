@@ -114,6 +114,10 @@ export function GetAutoPullPaused() {
   return window['go']['main']['App']['GetAutoPullPaused']();
 }
 
+export function GetEventBusDebugEmits() {
+  return window['go']['main']['App']['GetEventBusDebugEmits']();
+}
+
 export function GetIssueView(arg1, arg2) {
   return window['go']['main']['App']['GetIssueView'](arg1, arg2);
 }
@@ -352,6 +356,10 @@ export function Replan(arg1, arg2) {
 
 export function ReplanForce(arg1, arg2) {
   return window['go']['main']['App']['ReplanForce'](arg1, arg2);
+}
+
+export function ReplayEventBusEmit(arg1) {
+  return window['go']['main']['App']['ReplayEventBusEmit'](arg1);
 }
 
 export function RequestFixForComments(arg1, arg2, arg3) {

@@ -3,6 +3,7 @@
 import {types} from '../models';
 import {main} from '../models';
 import {diagnose} from '../models';
+import {wailsbus} from '../models';
 import {issueview} from '../models';
 import {retry} from '../models';
 import {githubauth} from '../models';
@@ -67,6 +68,8 @@ export function FilterIssuesByActiveGoal(arg1:Array<types.Issue>):Promise<Array<
 export function GCWorktrees(arg1:string):Promise<number>;
 
 export function GetAutoPullPaused():Promise<boolean>;
+
+export function GetEventBusDebugEmits():Promise<Array<wailsbus.EmitRecord>>;
 
 export function GetIssueView(arg1:string,arg2:number):Promise<issueview.IssueView>;
 
@@ -187,6 +190,8 @@ export function ReplaceCFToken(arg1:string,arg2:string):Promise<void>;
 export function Replan(arg1:string,arg2:number):Promise<void>;
 
 export function ReplanForce(arg1:string,arg2:number):Promise<void>;
+
+export function ReplayEventBusEmit(arg1:string):Promise<void>;
 
 export function RequestFixForComments(arg1:string,arg2:number,arg3:Array<number>):Promise<void>;
 

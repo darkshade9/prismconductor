@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+import { EventsOnWrapped } from "../lib/eventBus";
 import { ListIssueViews } from "../../wailsjs/go/main/App";
 import { issueview } from "../../wailsjs/go/models";
 
@@ -32,7 +32,7 @@ export const useIssueViewStore = create<State>((set, get) => ({
 }));
 
 // Incremental updates: subscribe once at module load so every card stays fresh.
-EventsOn("bus.issue_view_updated", (raw: any) => {
+EventsOnWrapped("bus.issue_view_updated", (raw: any) => {
   const view = issueview.IssueView.createFrom(raw);
   if (!view?.issue?.workspace_id || !view?.issue?.number) return;
   useIssueViewStore.setState((s) => ({

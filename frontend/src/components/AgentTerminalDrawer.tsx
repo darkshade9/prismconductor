@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+import { EventsOnWrapped } from "../lib/eventBus";
 import { KillAgentSession, ResizeAgentTerm, WriteAgentInput } from "../../wailsjs/go/main/App";
 import { useAgentTerminalStore } from "../stores/useAgentTerminalStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
@@ -97,7 +97,7 @@ export function AgentTerminalDrawer() {
 
   // Stream PTY output into the terminal.
   useEffect(() => {
-    const off = EventsOn(
+    const off = EventsOnWrapped(
       "agentterm.output",
       (data: { workspace_id: string; data: string }) => {
         if (data.workspace_id !== workspaceID) return;
@@ -114,7 +114,7 @@ export function AgentTerminalDrawer() {
 
   // Handle session exit.
   useEffect(() => {
-    const off = EventsOn(
+    const off = EventsOnWrapped(
       "agentterm.exit",
       (data: { workspace_id: string; exit_code: number }) => {
         if (data.workspace_id !== workspaceID) return;
