@@ -85,6 +85,28 @@ tag = "v1"
 new_classes = ["SessionDO"]
 ```
 
+## Commit-and-push tier strategy
+
+The `conductor-execute` skill uses a four-tier fallback to commit and push work.
+Tiers are attempted in order; the first success stops the chain.
+
+| Tier | Name | Mechanism | Falls back when |
+|------|------|-----------|-----------------|
+| 1 | GitHub API | `createCommitOnBranch` GraphQL mutation (GitHub-signed) | payload > 8 MB, > 200 files, or API error |
+| 2a | Local signed | `git commit -S` + `git push` | GPG unavailable / key blocked / TTY timeout |
+| 2b | Local unsigned | `git commit` + `git push` after probing `required_signatures` | `required_signatures: true` on target branch |
+| 3 | NEEDS_PR | Staged worktree preserved; user pushes manually | all above fail or signing required |
+
+**Tier 1 pre-flight:** before calling `createCommitOnBranch`, the worker checks
+`git ls-remote --heads origin <branch>` and pushes the branch if it is not yet
+on origin. This avoids a "Reference does not exist" GraphQL rejection on fresh
+branches (issue #205).
+
+**Tier 2b probe:** before attempting an unsigned commit the worker calls
+`gh api repos/{owner}/{repo}/branches/{BASE}/protection --jq '.required_signatures.enabled'`.
+A 404 / error is treated as `false` (no enforcement). The result is cached for
+the duration of the worker run.
+
 ## Feature flag
 
 Remote workspaces are gated behind `execution_target: "remote"` on the

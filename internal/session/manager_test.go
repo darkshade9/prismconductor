@@ -145,6 +145,10 @@ func (p *fakePersister) UpdateSessionUsage(_ *types.Session, _ string) error  { 
 func (p *fakePersister) UpdateSessionDiagnostics(_ string, _ *int, _ string, _ int64, _ string) error {
 	return nil
 }
+func (p *fakePersister) CollectionForWorkspace(_ string) (types.Collection, bool, error) {
+	return types.Collection{}, false, nil
+}
+func (p *fakePersister) RelatedRepoPaths(_ string) ([]string, error) { return nil, nil }
 
 func TestMatchPatternsQuestionPending(t *testing.T) {
 	const qid = "11111111-2222-3333-4444-555555555555"

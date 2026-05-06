@@ -18,6 +18,10 @@ export function AddWorkspace(arg1) {
   return window['go']['main']['App']['AddWorkspace'](arg1);
 }
 
+export function AddWorkspaceToCollection(arg1, arg2) {
+  return window['go']['main']['App']['AddWorkspaceToCollection'](arg1, arg2);
+}
+
 export function ApprovePlan(arg1, arg2, arg3) {
   return window['go']['main']['App']['ApprovePlan'](arg1, arg2, arg3);
 }
@@ -42,8 +46,20 @@ export function ContinueWork(arg1, arg2, arg3) {
   return window['go']['main']['App']['ContinueWork'](arg1, arg2, arg3);
 }
 
+export function CreateCollection(arg1) {
+  return window['go']['main']['App']['CreateCollection'](arg1);
+}
+
 export function CreateLabel(arg1, arg2) {
   return window['go']['main']['App']['CreateLabel'](arg1, arg2);
+}
+
+export function CreateRemoteWorkspace(arg1) {
+  return window['go']['main']['App']['CreateRemoteWorkspace'](arg1);
+}
+
+export function DeleteCollection(arg1) {
+  return window['go']['main']['App']['DeleteCollection'](arg1);
 }
 
 export function DeleteGoal(arg1) {
@@ -186,6 +202,10 @@ export function ListBundledSkills() {
   return window['go']['main']['App']['ListBundledSkills']();
 }
 
+export function ListCollections() {
+  return window['go']['main']['App']['ListCollections']();
+}
+
 export function ListGoals() {
   return window['go']['main']['App']['ListGoals']();
 }
@@ -300,6 +320,14 @@ export function RemoveIssue(arg1, arg2) {
 
 export function RemoveWorkspace(arg1) {
   return window['go']['main']['App']['RemoveWorkspace'](arg1);
+}
+
+export function RemoveWorkspaceFromCollection(arg1, arg2) {
+  return window['go']['main']['App']['RemoveWorkspaceFromCollection'](arg1, arg2);
+}
+
+export function RenameCollection(arg1, arg2) {
+  return window['go']['main']['App']['RenameCollection'](arg1, arg2);
 }
 
 export function ReorderIssues(arg1, arg2, arg3) {
@@ -428,6 +456,10 @@ export function UnarchiveAll(arg1) {
 
 export function UnarchiveIssue(arg1, arg2) {
   return window['go']['main']['App']['UnarchiveIssue'](arg1, arg2);
+}
+
+export function UpdateCollectionContext(arg1, arg2) {
+  return window['go']['main']['App']['UpdateCollectionContext'](arg1, arg2);
 }
 
 export function UpdateLabel(arg1, arg2, arg3) {

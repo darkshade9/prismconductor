@@ -57,10 +57,11 @@ export type CardProps = {
   issue: types.Issue;
   workspaceColor?: string;
   workspaceLabel?: string;
+  relatedSiblings?: string[];
   onClick?: () => void;
 };
 
-export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardProps) {
+export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, onClick }: CardProps) {
   const id = `${issue.workspace_id}#${issue.number}`;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
@@ -220,6 +221,14 @@ export function Card({ issue, workspaceColor, workspaceLabel, onClick }: CardPro
           <span className="inline-block h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: workspaceColor ?? "#64748b" }} />
           #{issue.number}
           <span className="text-slate-400 dark:text-slate-500 truncate">{workspaceLabel ?? issue.workspace_id}</span>
+          {relatedSiblings && relatedSiblings.length > 0 && (
+            <span
+              className="text-[10px] text-slate-500 dark:text-slate-600 shrink-0"
+              title={relatedSiblings.join(", ")}
+            >
+              +{relatedSiblings.length} related
+            </span>
+          )}
         </span>
         <span className="flex items-center gap-1.5 shrink-0">
           {/* Diagnostic info button (issue #100). */}

@@ -229,6 +229,38 @@ func VerifyGitHubPAT(pat, owner, repo string) error {
 	return nil
 }
 
+// DeleteWorker deletes a deployed CF Worker script. Best-effort: a 404 (worker
+// not found) is treated as success so callers can safely call this even if the
+// deploy partially failed.
+func DeleteWorker(accountID, token, workerName string) error {
+	url := fmt.Sprintf("%s/accounts/%s/workers/scripts/%s", cfAPIBase, accountID, workerName)
+	req, err := http.NewRequest("DELETE", url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("CF delete worker: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil // already gone
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	var env cfResponse
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return fmt.Errorf("CF delete worker parse (%d): %w", resp.StatusCode, err)
+	}
+	if !env.Success {
+		if len(env.Errors) > 0 {
+			return env.Errors[0]
+		}
+		return fmt.Errorf("CF delete worker error (HTTP %d)", resp.StatusCode)
+	}
+	return nil
+}
+
 // sanitizeID converts a workspace ID to a CF-safe script name component
 // (lowercase alphanumeric + hyphens, max 30 chars).
 func sanitizeID(id string) string {

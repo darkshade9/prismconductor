@@ -183,6 +183,11 @@ func (a *App) startup(ctx context.Context) {
 		a.wsReg = r
 		// Issue #92: one-time migration of legacy Mode/UseConductor* → PerStage.
 		a.migrateWorkspaceSkillProfiles()
+		// Issue #192: remove workspace rows left in provisioning state by the
+		// pre-fix wizard or by a crash mid-provision.
+		if stale := a.wsReg.ReconcileProvisioning(); len(stale) > 0 {
+			a.emitToast("info", "Workspace Cleanup", fmt.Sprintf("Removed %d stale provisioning workspace(s): %v", len(stale), stale), nil)
+		}
 	}
 
 	// Issue #22: prune any orphan worktrees from prior conductor sessions, then
@@ -803,6 +808,7 @@ func (a *App) UpdateWorkspace(ws types.Workspace) error {
 // RemoveWorkspace removes a workspace by ID. Any pools bound to this workspace
 // are silently rebound to shared so capacity isn't orphaned (issue #109, q1).
 // For remote workspaces the CF API token is removed from the OS keyring (issue #178).
+// Collection membership is cleaned up before the workspace row is removed (#209).
 func (a *App) RemoveWorkspace(id string) error {
 	if a.wsReg == nil {
 		return fmt.Errorf("workspace registry unavailable")
@@ -816,6 +822,9 @@ func (a *App) RemoveWorkspace(id string) error {
 		}
 	}
 	if a.store != nil {
+		if err := a.store.RemoveWorkspaceFromAllCollections(id); err != nil {
+			log.Printf("RemoveWorkspace: unlink from collections for %s: %v", id, err)
+		}
 		if err := a.store.RebindWorkspacePools(id); err != nil {
 			log.Printf("RemoveWorkspace: rebind pools for %s: %v", id, err)
 		} else if a.poolReg != nil {
@@ -825,6 +834,119 @@ func (a *App) RemoveWorkspace(id string) error {
 		}
 	}
 	return a.wsReg.Remove(id)
+}
+
+// --- Collections (issue #209) ---
+
+// ListCollections returns all workspace collections.
+func (a *App) ListCollections() ([]types.Collection, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store unavailable")
+	}
+	return a.store.ListCollections()
+}
+
+// CreateCollection creates a new workspace collection.
+func (a *App) CreateCollection(name string) (types.Collection, error) {
+	if a.store == nil {
+		return types.Collection{}, fmt.Errorf("store unavailable")
+	}
+	col, err := a.store.CreateCollection(name)
+	if err != nil {
+		return types.Collection{}, err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
+	}
+	if a.ctx != nil {
+		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+	}
+	return col, nil
+}
+
+// RenameCollection updates a collection's display name.
+func (a *App) RenameCollection(id, name string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.RenameCollection(id, name); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
+	}
+	if a.ctx != nil {
+		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+	}
+	return nil
+}
+
+// DeleteCollection removes a collection and all its membership rows.
+func (a *App) DeleteCollection(id string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.DeleteCollection(id); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
+	}
+	if a.ctx != nil {
+		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+	}
+	return nil
+}
+
+// AddWorkspaceToCollection adds a workspace to a collection.
+func (a *App) AddWorkspaceToCollection(collectionID, workspaceID string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.AddWorkspaceToCollection(collectionID, workspaceID); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
+	}
+	if a.ctx != nil {
+		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+	}
+	return nil
+}
+
+// RemoveWorkspaceFromCollection removes a workspace from a collection.
+func (a *App) RemoveWorkspaceFromCollection(collectionID, workspaceID string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.RemoveWorkspaceFromCollection(collectionID, workspaceID); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
+	}
+	if a.ctx != nil {
+		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+	}
+	return nil
+}
+
+// UpdateCollectionContext replaces the shared context markdown for a collection.
+func (a *App) UpdateCollectionContext(collectionID, body string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.UpdateCollectionContext(collectionID, body); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
+	}
+	if a.ctx != nil {
+		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+	}
+	return nil
 }
 
 // --- Remote workspace helpers (issue #171) ---
@@ -856,6 +978,147 @@ func (a *App) TestGitHubPAT(pat, owner, repo string) error {
 // pastes a repository URL so the branch field can be pre-filled.
 func (a *App) GetRepoDefaultBranch(pat, owner, repo string) (string, error) {
 	return remoteworker.GetRepoDefaultBranch(pat, owner, repo)
+}
+
+// RemoteWorkspaceForm is the input to CreateRemoteWorkspace — all fields
+// required to provision a remote workspace end-to-end in a single call.
+type RemoteWorkspaceForm struct {
+	// Credentials (never stored locally)
+	CFToken   string `json:"cf_token"`
+	GitHubPAT string `json:"github_pat"`
+	// Workspace identity
+	WorkspaceID   string `json:"workspace_id"`
+	DisplayName   string `json:"display_name"`
+	GitHubOwner   string `json:"github_owner"`
+	GitHubRepo    string `json:"github_repo"`
+	DefaultBranch string `json:"default_branch"`
+	Color         string `json:"color"`
+}
+
+// CreateRemoteWorkspace provisions a Cloudflare Worker and registers the
+// workspace in a single atomic call. The registry row is written ONLY after
+// all remote steps succeed, so a failure at any point leaves no zombie row.
+// Best-effort cleanup of the CF worker is attempted if any post-deploy step fails.
+func (a *App) CreateRemoteWorkspace(form RemoteWorkspaceForm) (RemoteDeployResult, error) {
+	if a.wsReg == nil {
+		return RemoteDeployResult{}, fmt.Errorf("workspace registry unavailable")
+	}
+	if form.WorkspaceID == "" {
+		return RemoteDeployResult{}, fmt.Errorf("workspace ID required")
+	}
+
+	// Verify CF token and resolve account ID.
+	tkRes, err := remoteworker.VerifyToken(form.CFToken)
+	if err != nil {
+		return RemoteDeployResult{}, fmt.Errorf("CF token invalid: %w", err)
+	}
+	accountID := tkRes.AccountID
+
+	// Verify GitHub PAT has push access.
+	if err := remoteworker.VerifyGitHubPAT(form.GitHubPAT, form.GitHubOwner, form.GitHubRepo); err != nil {
+		return RemoteDeployResult{}, fmt.Errorf("GitHub PAT invalid: %w", err)
+	}
+
+	// Deploy the worker bundle. From here on, failures should attempt cleanup.
+	deploy, err := remoteworker.DeployWorker(accountID, form.CFToken, form.WorkspaceID, remoteworker.WorkerBundle)
+	if err != nil {
+		return RemoteDeployResult{}, fmt.Errorf("deploy worker: %w", err)
+	}
+
+	// bestEffortCleanup deletes the CF worker if a post-deploy step fails.
+	bestEffortCleanup := func(reason string) {
+		if cleanErr := remoteworker.DeleteWorker(accountID, form.CFToken, deploy.WorkerName); cleanErr != nil {
+			log.Printf("CreateRemoteWorkspace: best-effort cleanup of %s after %s: %v (non-fatal)", deploy.WorkerName, reason, cleanErr)
+		} else {
+			log.Printf("CreateRemoteWorkspace: cleaned up CF worker %s after %s", deploy.WorkerName, reason)
+		}
+	}
+
+	// Store GitHub PAT as a CF Secret.
+	if err := remoteworker.UpsertSecret(accountID, form.CFToken, deploy.WorkerName, "GITHUB_PAT", form.GitHubPAT); err != nil {
+		bestEffortCleanup("github_pat_secret_fail")
+		return RemoteDeployResult{}, fmt.Errorf("store GitHub PAT secret: %w", err)
+	}
+
+	// Persist the CF API token in the OS keyring.
+	tokenKey := secretstore.CFTokenKey(form.WorkspaceID)
+	var keyringUnavailable bool
+	if err := a.secretStore.Set(tokenKey, form.CFToken); err != nil {
+		if errors.Is(err, secretstore.ErrKeyringUnavailable) {
+			log.Printf("CreateRemoteWorkspace: OS keyring unavailable for %s; token not stored (user consent required for file fallback)", form.WorkspaceID)
+			keyringUnavailable = true
+			tokenKey = ""
+		} else {
+			log.Printf("CreateRemoteWorkspace: keyring set for %s: %v (non-fatal, token not persisted)", form.WorkspaceID, err)
+			tokenKey = ""
+		}
+	}
+
+	// Generate and persist the conductor API key.
+	apiKey, err := randomKey256()
+	if err != nil {
+		bestEffortCleanup("api_key_gen_fail")
+		return RemoteDeployResult{}, fmt.Errorf("generate conductor API key: %w", err)
+	}
+	if err := remoteworker.UpsertSecret(accountID, form.CFToken, deploy.WorkerName, "CONDUCTOR_API_KEY", apiKey); err != nil {
+		bestEffortCleanup("conductor_key_secret_fail")
+		return RemoteDeployResult{}, fmt.Errorf("store conductor API key secret: %w", err)
+	}
+	warn, err := remoteworker.SetKey(form.WorkspaceID, apiKey)
+	if err != nil {
+		bestEffortCleanup("conductor_key_local_fail")
+		return RemoteDeployResult{}, fmt.Errorf("store conductor API key locally: %w", err)
+	}
+	if warn != "" {
+		a.emitToast("warning", "Remote Workspace", warn, nil)
+	}
+
+	// All remote steps succeeded — now write the registry row.
+	ws := types.Workspace{
+		ID:            form.WorkspaceID,
+		DisplayName:   form.DisplayName,
+		GitHubOwner:   form.GitHubOwner,
+		GitHubRepo:    form.GitHubRepo,
+		DefaultBranch: form.DefaultBranch,
+		Color:         form.Color,
+		AgentEnv:      types.EnvSpec{EnvVars: map[string]string{}, Shell: "/bin/bash"},
+		SkillProfile:  types.SkillProfile{Mode: types.SkillModeBundled},
+		Enabled:       true,
+		ExecutionTarget: types.ExecutionTargetRemote,
+		RemoteConfig: &types.RemoteConfig{
+			CFAccountID:         accountID,
+			CFWorkerName:        deploy.WorkerName,
+			CFWorkerEndpointURL: deploy.CFWorkerEndpointURL,
+			CFDeploymentVersion: deploy.DeploymentVersion,
+			SecretRefs: types.RemoteSecretRefs{
+				GitHubPATRef:       "GITHUB_PAT",
+				CFAPITokenRef:      tokenKey,
+				ConductorAPIKeyRef: "CONDUCTOR_API_KEY",
+			},
+		},
+	}
+	if err := a.wsReg.Add(ws); err != nil {
+		bestEffortCleanup("registry_add_fail")
+		_ = remoteworker.DeleteKey(form.WorkspaceID)
+		return RemoteDeployResult{}, fmt.Errorf("register workspace: %w", err)
+	}
+
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtWorkspaceAdded, map[string]any{
+			"workspace_id":   ws.ID,
+			"workspace_name": ws.DisplayName,
+		})
+	}
+	if a.poller != nil {
+		go a.poller.FetchNow(a.ctx, ws)
+	}
+
+	return RemoteDeployResult{
+		WorkerName:          deploy.WorkerName,
+		CFWorkerEndpointURL: deploy.CFWorkerEndpointURL,
+		DeploymentVersion:   deploy.DeploymentVersion,
+		KeyringUnavailable:  keyringUnavailable,
+	}, nil
 }
 
 // RemoteDeployResult is the frontend-visible result of DeployRemoteWorker.

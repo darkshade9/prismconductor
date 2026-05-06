@@ -1209,6 +1209,32 @@ export namespace main {
 	        this.keyring_unavailable = source["keyring_unavailable"];
 	    }
 	}
+	export class RemoteWorkspaceForm {
+	    cf_token: string;
+	    github_pat: string;
+	    workspace_id: string;
+	    display_name: string;
+	    github_owner: string;
+	    github_repo: string;
+	    default_branch: string;
+	    color: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemoteWorkspaceForm(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.cf_token = source["cf_token"];
+	        this.github_pat = source["github_pat"];
+	        this.workspace_id = source["workspace_id"];
+	        this.display_name = source["display_name"];
+	        this.github_owner = source["github_owner"];
+	        this.github_repo = source["github_repo"];
+	        this.default_branch = source["default_branch"];
+	        this.color = source["color"];
+	    }
+	}
 	export class SpawnEstimate {
 	    tokens: number;
 	    cost_cents: number;
@@ -1296,6 +1322,48 @@ export namespace types {
 	        this.enabled = source["enabled"];
 	        this.days_closed = source["days_closed"];
 	    }
+	}
+	export class Collection {
+	    id: string;
+	    name: string;
+	    workspace_ids: string[];
+	    context_md: string;
+	    // Go type: time
+	    created_at: any;
+	    // Go type: time
+	    updated_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Collection(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.workspace_ids = source["workspace_ids"];
+	        this.context_md = source["context_md"];
+	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.updated_at = this.convertValues(source["updated_at"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class ConventionHints {
 	    test_command: string;
@@ -2138,6 +2206,9 @@ export namespace types {
 	    pipeline?: WorkspacePipeline;
 	    execution_target?: string;
 	    remote_config?: RemoteConfig;
+	    provisioning?: boolean;
+	    // Go type: time
+	    provisioning_at?: any;
 	
 	    static createFrom(source: any = {}) {
 	        return new Workspace(source);
@@ -2161,6 +2232,8 @@ export namespace types {
 	        this.pipeline = this.convertValues(source["pipeline"], WorkspacePipeline);
 	        this.execution_target = source["execution_target"];
 	        this.remote_config = this.convertValues(source["remote_config"], RemoteConfig);
+	        this.provisioning = source["provisioning"];
+	        this.provisioning_at = this.convertValues(source["provisioning_at"], null);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

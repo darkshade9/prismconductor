@@ -14,7 +14,7 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
-import { ArchiveDone, FilterIssuesByActiveGoal } from "../../wailsjs/go/main/App";
+import { ArchiveDone, FilterIssuesByActiveGoal, ListCollections } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 import { useIssueStore, Column as ColumnID } from "../stores/issueStore";
 import { useIssueViewStore } from "../stores/useIssueViewStore";
@@ -63,6 +63,7 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
   const loadIssueViews = useIssueViewStore((s) => s.loadForWorkspace);
   const getView = useIssueViewStore((s) => s.get);
   const { workspaces, selectedID } = useWorkspaceStore();
+  const [collections, setCollections] = useState<types.Collection[]>([]);
   const { selected: labelSelected, mode: labelMode } = useLabelFilterStore();
   const [filteredTodoNums, setFilteredTodoNums] = useState<Set<string> | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -101,11 +102,36 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
     };
   }, [issues]);
 
+  // Load collections for the +N related chip on cards.
+  useEffect(() => {
+    ListCollections().then((cols) => setCollections(cols ?? [])).catch(() => {});
+    const off = EventsOn("bus.collections_updated", () => {
+      ListCollections().then((cols) => setCollections(cols ?? [])).catch(() => {});
+    });
+    return () => off();
+  }, []);
+
   const wsMeta = useMemo(() => {
     const m = new Map<string, { color: string; label: string }>();
     workspaces.forEach((w) => m.set(w.id, { color: w.color, label: w.display_name || w.id }));
     return m;
   }, [workspaces]);
+
+  // Map workspaceID → sibling display names (for +N related chip).
+  const relatedMeta = useMemo(() => {
+    const m = new Map<string, string[]>();
+    collections.forEach((col) => {
+      const memberIDs = col.workspace_ids ?? [];
+      if (memberIDs.length < 2) return;
+      memberIDs.forEach((wsID) => {
+        const siblings = memberIDs
+          .filter((id) => id !== wsID)
+          .map((id) => wsMeta.get(id)?.label ?? id);
+        m.set(wsID, siblings);
+      });
+    });
+    return m;
+  }, [collections, wsMeta]);
 
   // Group issues by column. For TODO, drop anything excluded by the active goal,
   // and order by orchestrator priority desc when no manual reorder has happened.
@@ -319,6 +345,7 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
                       issue={iss}
                       workspaceColor={meta?.color}
                       workspaceLabel={meta?.label}
+                      relatedSiblings={relatedMeta.get(iss.workspace_id)}
                       onClick={() => onCardClick?.(iss)}
                     />
                   </ErrorBoundary>
@@ -337,6 +364,7 @@ export function Board({ onCardClick }: { onCardClick?: (issue: types.Issue) => v
             issue={activeIssue}
             workspaceColor={wsMeta.get(activeIssue.workspace_id)?.color}
             workspaceLabel={wsMeta.get(activeIssue.workspace_id)?.label}
+            relatedSiblings={relatedMeta.get(activeIssue.workspace_id)}
           />
         ) : null}
       </DragOverlay>

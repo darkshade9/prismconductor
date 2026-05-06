@@ -58,6 +58,9 @@ const (
 	// Issue #194: orphan-branch detection and recovery.
 	EvtOrphanPRDetected EventType = "orphan_pr_detected"
 	EvtOrphanPRCleared  EventType = "orphan_pr_cleared"
+
+	// Issue #209: workspace collections (Phase A of #208).
+	EvtCollectionsUpdated EventType = "collections_updated"
 )
 
 type Event struct {
