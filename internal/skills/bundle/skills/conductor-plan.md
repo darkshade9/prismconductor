@@ -21,6 +21,17 @@ If `--related-repos` is set: the listed paths are SIBLING repositories you may g
 ## Behavior
 
 1. Fetch the issue body via `gh issue view <number> --json title,body,labels`.
+
+   **BLOCKED on fetch failure (NON-NEGOTIABLE):** If `gh issue view` exits non-zero
+   for any reason (auth error, network failure, missing issue, `gh` not installed), you MUST:
+   - Print `BLOCKED: cannot fetch issue #<number>: <first line of error output>` on its own line.
+   - Exit immediately. Do **not** write any plan file.
+
+   Writing a plan without reading the issue body is not acceptable. The body contains
+   the requirements and context that make accurate planning possible. Do NOT set
+   `ready_to_execute: true` based on the issue title alone under any circumstances.
+   The harness validator enforces this: any plan with `ready_to_execute: true` that
+   contains phrases like "I couldn't fetch the issue" will be rejected at write time.
 2. Read `CLAUDE.md` and `.claude/rules/*.md` if present (silently skip if absent — see §15.8).
 3. Grep the repo for terms in the issue title and body that name files/symbols.
 4. Run `gh label list -R <owner>/<repo> --json name,color,description --limit 200` to see the

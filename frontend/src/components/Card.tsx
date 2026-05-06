@@ -128,6 +128,21 @@ export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, o
     return { revision: p.revision };
   })();
 
+  // Issue #232: detect plans where the planner admitted it could not fetch
+  // the GitHub issue body. Show a yellow warning banner on the card so the
+  // user knows the plan may be off-topic or incomplete.
+  const planHasFetchWarning = (() => {
+    const p = view?.latest_plan;
+    if (!p) return false;
+    const combined = [p.plan_markdown ?? "", (p as any).goal_summary ?? "", (p as any).executive_summary ?? ""].join(" ").toLowerCase();
+    return [
+      "i couldn't fetch", "i could not fetch", "failed to retrieve the issue",
+      "could not access the issue", "unable to fetch the issue", "i was unable to read",
+      "i could not read the issue", "i couldn't read the issue", "failed to fetch the issue",
+      "cannot fetch the issue", "unable to retrieve the issue", "couldn't access the issue",
+    ].some(phrase => combined.includes(phrase));
+  })();
+
   const blocked = (issue.dependencies ?? []).length > 0;
   const isPrimitive = !blocked && (issue.priority ?? 0) >= 0.7;
 
@@ -307,6 +322,12 @@ export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, o
         className="text-sm text-slate-900 dark:text-slate-100 mt-1 line-clamp-2"
         onContextMenu={(e) => openCardMenu(e, [{ label: "Copy title", text: issue.title }])}
       >{issue.title}</div>
+
+      {planHasFetchWarning && (
+        <div className="mt-1 px-2 py-1 text-xs rounded bg-yellow-500/20 text-yellow-700 dark:text-yellow-300 border border-yellow-500/40">
+          ⚠ Planner could not fetch the GitHub issue — plan may be incomplete
+        </div>
+      )}
 
       <StatusRow
         activeSession={activeSession}
