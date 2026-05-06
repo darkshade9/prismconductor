@@ -74,16 +74,47 @@ These run before commit. Failures here are **stop-the-world** events: print `BLO
 
 ### 5. Commit + push + PR (NON-NEGOTIABLE)
 
-The commit+push step uses a **three-tier fallback** (issue #175). Attempt each
-tier in order; on success proceed to the PR step. On failure fall through to
-the next tier. The workspace `signing_strategy` field may restrict which tiers
-to attempt: `github_api` = Tier 1 only, `local` = Tier 2 only, `manual` = Tier 3
-straight away, `auto` (default/empty) = Tier 1 → Tier 2 → Tier 3.
+The commit+push step uses a **layered fallback** (issue #175, refined by
+issue #205). Attempt each tier in order; on success proceed to the PR step.
+On failure fall through to the next tier. The workspace `signing_strategy`
+field may restrict which tiers to attempt: `github_api` = Tier 1 only,
+`local` = Tier 2 only, `manual` = Tier 3 straight away, `auto` (default/empty)
+= Tier 1 → Tier 2a → Tier 2b → Tier 3.
+
+**Probe up front: does the base branch enforce signed commits?**
+
+Run once at the start of the commit+push phase:
+
+```
+gh api repos/<owner>/<repo>/branches/<base>/protection \
+   --jq '.required_signatures.enabled // false' 2>/dev/null
+```
+
+`true` → repo enforces signed commits; Tier 2b is forbidden, fall straight to
+Tier 3 if Tiers 1 and 2a both fail. `false` or 404 → repo does NOT enforce
+signing; Tier 2b (plain unsigned commit) is allowed and is the right fallback
+when Tier 2a fails because of a missing/locked GPG key. Cache the answer for
+this run so you only probe once.
 
 **Tier 1 — GitHub API commit (signed by GitHub)**
 
 12a. Draft the commit message (subject + body with `Closes #<num>` +
      `Co-Authored-By: PrismConductor worker <noreply@anthropic.com>`).
+
+12a-prep. **Ensure the remote branch exists.** `createCommitOnBranch` requires
+     the branch reference to already exist on origin; otherwise the mutation
+     returns the input verbatim in `extensions.value` with no clear error
+     (issue #205). Check and create as needed:
+
+     ```
+     if ! git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+       git push -u origin HEAD
+     fi
+     ```
+
+     Now `expectedHeadOid` (the current local tip SHA) matches the remote
+     ref's tip, and the GraphQL mutation can target it.
+
 12b. Call the GitHub GraphQL mutation `createCommitOnBranch` using the
      workspace PAT (`gh api graphql`). The mutation requires:
      - `repositoryNameWithOwner`: `<owner>/<repo>`
@@ -93,28 +124,35 @@ straight away, `auto` (default/empty) = Tier 1 → Tier 2 → Tier 3.
      - `fileChanges.additions` / `fileChanges.deletions`: list every modified
        or deleted path with base64-encoded content for additions.
 
-     Example invocation (write the JSON body to a temp file to avoid shell
-     quoting issues):
+     **Invocation (correct syntax):** build a single JSON file containing both
+     `query` and `variables`, then pass it via `--input`:
+
      ```
-     gh api graphql -f query='mutation($input: CreateCommitOnBranchInput!) {
-       createCommitOnBranch(input: $input) { commit { oid } }
-     }' -f input="$(cat /tmp/commit-payload.json)"
+     cat > /tmp/gql-payload.json <<'JSON'
+     {
+       "query": "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid url } } }",
+       "variables": { "input": { ... full input object ... } }
+     }
+     JSON
+     gh api graphql --input /tmp/gql-payload.json
      ```
+
+     Do **not** use `gh api graphql -f query='...' -f input="$(cat file)"` —
+     `-f` only handles string variables, so the input object gets JSON-stringified
+     and the server rejects it with the entire input echoed in `extensions.value`.
 
      **File-size / payload limits:** if the total additions payload exceeds
      ~8 MB or the number of files exceeds 200, skip Tier 1 and fall through
      to Tier 2 — do not attempt a partial commit.
 
      **Retry on transient errors:** if the API returns a 5xx status, wait 2 s
-     and retry once. On second failure fall through to Tier 2.
+     and retry once. On second failure fall through to Tier 2a.
 
-     On success: record the returned SHA. Proceed to `git push -u origin HEAD`
-     (the API already pushed the commit; local HEAD may be behind — a push is
-     still needed to update the remote tracking ref if you want local sync, or
-     you may skip the local push and go straight to PR creation since the commit
-     already exists on the remote).
+     On success: record the returned SHA. The remote already has the commit;
+     a local `git pull --ff-only` will fast-forward your worktree to match.
+     Proceed to PR creation.
 
-**Tier 2 — local signed commit + push**
+**Tier 2a — local signed commit + push**
 
 12c. `git add` only the files you modified (avoid `git add -A`). If nothing is
      staged and nothing is modified, skip commit and proceed to push.
@@ -122,8 +160,26 @@ straight away, `auto` (default/empty) = Tier 1 → Tier 2 → Tier 3.
      content; truncate only the GraphQL payload, never the file).
 12e. `git commit -S -F .prismconductor/commit-msg/<issue>.txt` with a 30 s
      timeout. Do NOT attempt to supply a passphrase. If the process blocks on
-     TTY or times out, fall through to Tier 3.
+     TTY, times out, OR fails with `cannot run gpg`, `gpg failed to sign`,
+     `secret key not available`, or any other signing error, fall through to
+     **Tier 2b** (or Tier 3 if the repo enforces signed commits — see probe).
 12f. `git push -u origin HEAD`.
+
+**Tier 2b — local unsigned commit + push (only when signing is NOT required)**
+
+12c-2b. Same staging step as 12c (only modified files).
+12d-2b. Same commit-msg file as 12d (write the message file even though
+        the commit itself is unsigned, so resume / continue paths can find it).
+12e-2b. `git commit -F .prismconductor/commit-msg/<issue>.txt` (no `-S`).
+        This produces an unsigned commit, which is acceptable when the repo's
+        base-branch protection does NOT require signed commits.
+12f-2b. `git push -u origin HEAD`. On any push failure (auth, branch protection,
+        network), fall through to Tier 3.
+
+If the up-front signed-commits probe returned `true`, **skip Tier 2b entirely**
+— a plain commit will be rejected by the remote anyway, and the user genuinely
+needs to push manually with their signing key. Go straight from a Tier 2a
+failure to Tier 3.
 
 **Tier 3 — preserved worktree + manual command (NEEDS_PR)**
 
@@ -142,7 +198,7 @@ straight away, `auto` (default/empty) = Tier 1 → Tier 2 → Tier 3.
      After printing the sentinel, exit cleanly (exit 0). The conductor moves
      the card to NEEDS_PR state.
 
-**After a successful Tier 1 or Tier 2 push:**
+**After a successful Tier 1, 2a, or 2b push:**
 
 13. **Single-PR enforcement (#17, Q6):** before `gh pr create`, run `gh pr list --head <branch> --json number,url`. If non-empty, an earlier resume already opened the PR — append a follow-up comment via `gh pr comment <num> --body-file -` summarizing this leg's work, capture the existing URL, and SKIP `gh pr create`. Otherwise: `gh pr create --draft --base <BASE> --title "<short subject> (#<num>)" --body-file -`. The body should contain:
     - A 1-2 sentence summary
