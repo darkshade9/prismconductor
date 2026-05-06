@@ -610,6 +610,7 @@ type AgentTermSession struct {
 	SessionID   string `json:"session_id"`
 	AgentBin    string `json:"agent_bin"` // display name of the agent binary
 	PID         int    `json:"pid"`
+	Cwd         string `json:"cwd"` // spawn working directory (workspace RepoPath)
 }
 
 // --- PR comments (issue #159) ---

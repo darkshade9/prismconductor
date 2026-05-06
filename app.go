@@ -4396,6 +4396,7 @@ func (a *App) StartAgentSession(workspaceID, agentBin string, args []string, col
 		SessionID:   uuid.NewString(),
 		AgentBin:    agentBin,
 		PID:         pid,
+		Cwd:         cwd,
 	}, nil
 }
 

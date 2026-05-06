@@ -2,6 +2,8 @@ package agentterm_test
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -129,7 +131,7 @@ func TestManagerKill(t *testing.T) {
 // TestAgentInfoShape is a compile-time shape check.
 func TestAgentInfoShape(_ *testing.T) {
 	_ = types.AgentInfo{Name: "claude", Binary: "/usr/local/bin/claude"}
-	_ = types.AgentTermSession{WorkspaceID: "ws1", SessionID: "s1", AgentBin: "claude", PID: 123}
+	_ = types.AgentTermSession{WorkspaceID: "ws1", SessionID: "s1", AgentBin: "claude", PID: 123, Cwd: "/tmp"}
 }
 
 // TestStartUsesCwd verifies the spawned subprocess inherits the requested
@@ -180,6 +182,25 @@ func TestStartUsesCwd(t *testing.T) {
 	wantSuffix := tmp[len("/private"):]
 	if !contains(got, tmp) && !contains(got, wantSuffix) {
 		t.Errorf("pwd output = %q, want it to contain %q", got, tmp)
+	}
+}
+
+// TestAgentTermSessionCwdJSON verifies that the Cwd field is included in the
+// JSON wire format under the "cwd" key.
+func TestAgentTermSessionCwdJSON(t *testing.T) {
+	sess := types.AgentTermSession{
+		WorkspaceID: "ws1",
+		SessionID:   "s1",
+		AgentBin:    "claude",
+		PID:         42,
+		Cwd:         "/home/user/repo",
+	}
+	data, err := json.Marshal(sess)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"cwd":"/home/user/repo"`) {
+		t.Errorf("JSON %s missing cwd field", string(data))
 	}
 }
 

@@ -1296,6 +1296,7 @@ export namespace types {
 	    session_id: string;
 	    agent_bin: string;
 	    pid: number;
+	    cwd: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AgentTermSession(source);
@@ -1307,6 +1308,7 @@ export namespace types {
 	        this.session_id = source["session_id"];
 	        this.agent_bin = source["agent_bin"];
 	        this.pid = source["pid"];
+	        this.cwd = source["cwd"];
 	    }
 	}
 	export class AutoArchive {
