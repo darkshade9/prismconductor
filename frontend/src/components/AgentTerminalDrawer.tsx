@@ -8,6 +8,9 @@ import { useAgentTerminalStore } from "../stores/useAgentTerminalStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { AgentSettingsPane } from "./AgentSettingsPane";
 
+const COLLAPSED_HEIGHT = 32;
+const MIN_HEIGHT = 120;
+
 function encodeInput(s: string): string {
   const bytes = new TextEncoder().encode(s);
   let binary = "";
@@ -20,6 +23,10 @@ export function AgentTerminalDrawer() {
   const setDrawerOpen = useAgentTerminalStore((s) => s.setDrawerOpen);
   const sessions = useAgentTerminalStore((s) => s.sessions);
   const clearSession = useAgentTerminalStore((s) => s.clearSession);
+  const height = useAgentTerminalStore((s) => s.height);
+  const collapsed = useAgentTerminalStore((s) => s.collapsed);
+  const setHeight = useAgentTerminalStore((s) => s.setHeight);
+  const setCollapsed = useAgentTerminalStore((s) => s.setCollapsed);
   const workspaceID = useWorkspaceStore((s) => s.selectedID) ?? "";
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -29,6 +36,7 @@ export function AgentTerminalDrawer() {
   const [busy, setBusy] = useState(false);
 
   const session = sessions[workspaceID] ?? null;
+  const cwd = session?.cwd ?? "";
 
   // (Re-)initialize the xterm instance whenever the drawer opens.
   useEffect(() => {
@@ -130,28 +138,99 @@ export function AgentTerminalDrawer() {
     }
   }
 
+  async function handleClose() {
+    if (workspaceID && session) {
+      setBusy(true);
+      try {
+        await KillAgentSession(workspaceID);
+        clearSession(workspaceID);
+      } finally {
+        setBusy(false);
+      }
+    }
+    setDrawerOpen(false);
+  }
+
+  function handleResizeStart(e: React.PointerEvent) {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = collapsed ? height : height;
+
+    function onMove(ev: PointerEvent) {
+      const delta = startY - ev.clientY;
+      const next = Math.min(
+        Math.max(startH + delta, MIN_HEIGHT),
+        window.innerHeight - 80,
+      );
+      // Update store without persisting on every frame — persist on pointer up.
+      useAgentTerminalStore.setState({ height: next, expandedHeight: next });
+    }
+
+    function onUp(ev: PointerEvent) {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      const delta = startY - ev.clientY;
+      const next = Math.min(
+        Math.max(startH + delta, MIN_HEIGHT),
+        window.innerHeight - 80,
+      );
+      setHeight(next);
+    }
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
   if (!drawerOpen) return null;
 
+  const drawerHeight = collapsed ? COLLAPSED_HEIGHT : height;
+
   return (
-    <div className="fixed bottom-0 left-0 right-0 h-72 bg-slate-950 border-t border-slate-700 flex flex-col z-40 shadow-2xl">
+    <div
+      className="fixed bottom-0 left-0 right-0 bg-slate-950 border-t border-slate-700 flex flex-col z-40 shadow-2xl"
+      style={{ height: drawerHeight }}
+    >
+      {/* Resize handle — only shown when not collapsed */}
+      {!collapsed && (
+        <div
+          className="absolute top-0 left-0 right-0 h-1.5 cursor-row-resize hover:bg-sky-600/40 active:bg-sky-600/60 transition-colors"
+          onPointerDown={handleResizeStart}
+          title="Drag to resize"
+        />
+      )}
+
       {/* Header bar */}
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-800 shrink-0">
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-semibold text-slate-300 tracking-wide">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <span className="text-xs font-semibold text-slate-300 tracking-wide shrink-0">
             Agent Terminal
           </span>
           {session ? (
-            <span className="flex items-center gap-1.5 text-xs text-emerald-400">
+            <span className="flex items-center gap-1.5 text-xs text-emerald-400 shrink-0">
               <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               {session.agent_bin}
               <span className="text-slate-500 font-mono text-[10px]">pid {session.pid}</span>
             </span>
           ) : (
-            <span className="text-xs text-slate-600">no session</span>
+            <span className="text-xs text-slate-600 shrink-0">no session</span>
+          )}
+          {cwd && (
+            <span
+              className="text-[10px] text-slate-500 font-mono min-w-0 flex-1 overflow-hidden"
+              style={{
+                direction: "rtl",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                unicodeBidi: "plaintext",
+              }}
+              title={cwd}
+            >
+              {cwd}
+            </span>
           )}
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
             onClick={() => setShowSettings((v) => !v)}
             title="Spawn or configure an agent"
@@ -176,8 +255,19 @@ export function AgentTerminalDrawer() {
           )}
 
           <button
-            onClick={() => setDrawerOpen(false)}
+            onClick={() => setCollapsed(!collapsed)}
+            aria-label="Minimize agent terminal"
+            title={collapsed ? "Expand agent terminal" : "Minimize agent terminal"}
             className="ml-1 text-slate-500 hover:text-slate-200 text-xs px-1.5 py-0.5 rounded hover:bg-slate-800"
+          >
+            {collapsed ? "▲" : "▼"}
+          </button>
+
+          <button
+            onClick={handleClose}
+            disabled={busy}
+            aria-label="Close agent terminal"
+            className="ml-1 text-slate-500 hover:text-slate-200 text-xs px-1.5 py-0.5 rounded hover:bg-slate-800 disabled:opacity-40"
           >
             ✕
           </button>
@@ -185,15 +275,19 @@ export function AgentTerminalDrawer() {
       </div>
 
       {/* Agent settings pane (collapsible) */}
-      {showSettings && (
+      {showSettings && !collapsed && (
         <AgentSettingsPane
           workspaceID={workspaceID}
           onClose={() => setShowSettings(false)}
         />
       )}
 
-      {/* xterm.js viewport */}
-      <div ref={containerRef} className="flex-1 overflow-hidden p-1 bg-[#020617]" />
+      {/* xterm.js viewport — kept mounted when collapsed to preserve PTY */}
+      <div
+        ref={containerRef}
+        className="flex-1 overflow-hidden p-1 bg-[#020617]"
+        style={{ display: collapsed ? "none" : undefined }}
+      />
     </div>
   );
 }

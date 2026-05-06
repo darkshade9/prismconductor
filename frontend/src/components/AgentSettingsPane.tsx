@@ -43,6 +43,7 @@ export function AgentSettingsPane({ workspaceID, onClose }: Props) {
           session_id: sess.session_id,
           agent_bin: sess.agent_bin,
           pid: sess.pid,
+          cwd: sess.cwd,
         });
       }
       onClose();
