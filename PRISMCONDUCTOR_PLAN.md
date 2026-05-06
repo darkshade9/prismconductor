@@ -1029,6 +1029,7 @@ The conductor ships four universal skills with the binary:
 | `conductor-execute` | Resumes from approved plan + answered questions. Reads repo conventions from `ConventionHints` for test/build commands. Implements per plan. Opens draft PR. |
 | `conductor-close` | Universal `/check-and-close` analogue. Posts completion summary, closes issue. No commit/push beyond what was already done. |
 | `conductor-question` | Helper invoked inline when a worker needs to emit a structured question mid-execution. Writes to `<repo>/.prismconductor/questions/<id>.json`. |
+| `bug-hunter-state` | Scans conductor persistent state (SQLite DB, `workspaces.json`, transcripts, live process table) for 12 known broken-state patterns; writes a timestamped `{rule,severity,evidence,suggested_fix}` JSON + Markdown report to `.prismconductor/bug-hunter/`. Read-only. Invoke on demand or via `/loop 24h /bug-hunter-state`. |
 
 **Distribution**: skills are `embed.FS`-bundled in the Go binary and extracted to `~/.prismconductor/skills/` on first run. Power users can edit them after extraction; the conductor uses the on-disk copy, not the embedded one, after first run.
 
