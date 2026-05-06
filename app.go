@@ -4133,6 +4133,9 @@ func (a *App) GitHubListRepos() ([]*gh.Repository, error) {
 }
 
 func configDir() (string, error) {
+	if d := os.Getenv("PRISMCONDUCTOR_DATA_DIR"); d != "" {
+		return d, nil
+	}
 	switch runtime.GOOS {
 	case "darwin":
 		home, err := os.UserHomeDir()
