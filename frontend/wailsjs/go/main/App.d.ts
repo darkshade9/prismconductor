@@ -19,6 +19,8 @@ export function AddManualIssue(arg1:string,arg2:number,arg3:string,arg4:string,a
 
 export function AddWorkspace(arg1:types.Workspace):Promise<void>;
 
+export function AddWorkspaceToCollection(arg1:string,arg2:string):Promise<void>;
+
 export function ApprovePlan(arg1:string,arg2:number,arg3:number):Promise<void>;
 
 export function ArchiveDone(arg1:string):Promise<number>;
@@ -31,9 +33,13 @@ export function ClearIssueFailure(arg1:string,arg2:number):Promise<void>;
 
 export function ContinueWork(arg1:string,arg2:number,arg3:string):Promise<void>;
 
+export function CreateCollection(arg1:string):Promise<types.Collection>;
+
 export function CreateLabel(arg1:string,arg2:types.Label):Promise<types.Label>;
 
 export function CreateRemoteWorkspace(arg1:main.RemoteWorkspaceForm):Promise<main.RemoteDeployResult>;
+
+export function DeleteCollection(arg1:string):Promise<void>;
 
 export function DeleteGoal(arg1:string):Promise<void>;
 
@@ -105,6 +111,8 @@ export function ListAvailableSkills(arg1:string):Promise<Array<types.SkillRef>>;
 
 export function ListBundledSkills():Promise<Array<main.BundledSkill>>;
 
+export function ListCollections():Promise<Array<types.Collection>>;
+
 export function ListGoals():Promise<Array<types.Goal>>;
 
 export function ListIssueViews(arg1:string):Promise<Array<issueview.IssueView>>;
@@ -162,6 +170,10 @@ export function RejectPlan(arg1:string,arg2:number):Promise<void>;
 export function RemoveIssue(arg1:string,arg2:number):Promise<void>;
 
 export function RemoveWorkspace(arg1:string):Promise<void>;
+
+export function RemoveWorkspaceFromCollection(arg1:string,arg2:string):Promise<void>;
+
+export function RenameCollection(arg1:string,arg2:string):Promise<void>;
 
 export function ReorderIssues(arg1:string,arg2:string,arg3:Array<number>):Promise<void>;
 
@@ -226,6 +238,8 @@ export function TestGitHubPAT(arg1:string,arg2:string,arg3:string):Promise<void>
 export function UnarchiveAll(arg1:string):Promise<void>;
 
 export function UnarchiveIssue(arg1:string,arg2:number):Promise<void>;
+
+export function UpdateCollectionContext(arg1:string,arg2:string):Promise<void>;
 
 export function UpdateLabel(arg1:string,arg2:string,arg3:types.Label):Promise<types.Label>;
 

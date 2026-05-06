@@ -69,6 +69,10 @@ type Persister interface {
 	// UpdateSessionDiagnostics persists exit diagnostics captured after the
 	// subprocess exits (#194).
 	UpdateSessionDiagnostics(id string, exitCode *int, signal string, waitMs int64, lastStderr string) error
+	// CollectionForWorkspace returns the collection the workspace belongs to, if any (#209).
+	CollectionForWorkspace(workspaceID string) (types.Collection, bool, error)
+	// RelatedRepoPaths returns RepoPath values of other enabled collection members (#209).
+	RelatedRepoPaths(workspaceID string) ([]string, error)
 }
 
 // StateChangeHandler is fired on every state transition. Used by the App layer
@@ -1575,18 +1579,45 @@ func (m *Manager) FindActiveExecuteSession(workspaceID string, issueNumber int) 
 // as the user-message in its first chat turn.
 
 func (m *Manager) buildPlanCommand(ws types.Workspace, issue types.Issue, pool types.Pool) ([]string, string, error) {
-	return m.providerArgs(pool, planPrompt(ws, issue))
+	related, contextMD := m.collectionContext(ws.ID)
+	return m.providerArgs(pool, planPrompt(ws, issue, related, contextMD))
 }
 
 func (m *Manager) buildExecuteCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool) ([]string, string, error) {
-	return m.providerArgs(pool, executePrompt(ws, issue, plan))
+	related, contextMD := m.collectionContext(ws.ID)
+	return m.providerArgs(pool, executePrompt(ws, issue, plan, related, contextMD))
 }
 
 // buildExecuteResumeCommand mirrors buildExecuteCommand but appends the
 // `--resume-question <id>` flag so the conductor-execute skill knows to skip
 // branch creation and read the mid-run question's context sidecar (#17).
 func (m *Manager) buildExecuteResumeCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool, questionID string) ([]string, string, error) {
-	return m.providerArgs(pool, executeResumePrompt(ws, issue, plan, questionID))
+	related, contextMD := m.collectionContext(ws.ID)
+	return m.providerArgs(pool, executeResumePrompt(ws, issue, plan, questionID, related, contextMD))
+}
+
+// collectionContext resolves the collection siblings and shared context markdown
+// for a workspace. Errors are logged and swallowed — a missing or broken
+// collection must never block a spawn.
+func (m *Manager) collectionContext(wsID string) (siblings []string, contextMD string) {
+	if m.store == nil {
+		return nil, ""
+	}
+	col, found, err := m.store.CollectionForWorkspace(wsID)
+	if err != nil {
+		log.Printf("collectionContext: CollectionForWorkspace(%s): %v", wsID, err)
+		return nil, ""
+	}
+	if !found {
+		return nil, ""
+	}
+	contextMD = col.ContextMD
+	siblings, err = m.store.RelatedRepoPaths(wsID)
+	if err != nil {
+		log.Printf("collectionContext: RelatedRepoPaths(%s): %v", wsID, err)
+		siblings = nil
+	}
+	return siblings, contextMD
 }
 
 // providerArgs returns the spawn strategy for a (pool, prompt) pair:
@@ -1614,41 +1645,55 @@ func (m *Manager) providerArgs(pool types.Pool, prompt string) ([]string, string
 	return nil, "", err
 }
 
-func planPrompt(ws types.Workspace, issue types.Issue) string {
+func planPrompt(ws types.Workspace, issue types.Issue, related []string, contextMD string) string {
+	var base string
+	bundled := false
 	if ref, ok := ws.SkillProfile.SkillForStage(types.StagePlan); ok {
 		if ref.Source == "bundled" {
-			return fmt.Sprintf("/%s --issue %d --repo %s", ref.Name, issue.Number, ws.RepoPath)
+			bundled = true
+			base = fmt.Sprintf("/%s --issue %d --repo %s", ref.Name, issue.Number, ws.RepoPath)
+		} else {
+			// Repo skill: metadata only; system prompt carries the skill markdown.
+			base = fmt.Sprintf("Plan issue #%d in repo %s", issue.Number, ws.RepoPath)
 		}
-		// Repo skill: metadata only; system prompt carries the skill markdown.
-		return fmt.Sprintf("Plan issue #%d in repo %s", issue.Number, ws.RepoPath)
+	} else {
+		// Legacy fallback.
+		switch ws.SkillProfile.Mode {
+		case types.SkillModeNative:
+			base = fmt.Sprintf("%s %d --emit-plan-json", ws.SkillProfile.NativePlanCommand, issue.Number)
+		case types.SkillModeHybrid:
+			base = fmt.Sprintf("/conductor-plan --native-cmd %s --issue %d", ws.SkillProfile.NativePlanCommand, issue.Number)
+		default:
+			bundled = true
+			base = fmt.Sprintf("/conductor-plan --issue %d --repo %s", issue.Number, ws.RepoPath)
+		}
 	}
-	// Legacy fallback.
-	switch ws.SkillProfile.Mode {
-	case types.SkillModeNative:
-		return fmt.Sprintf("%s %d --emit-plan-json", ws.SkillProfile.NativePlanCommand, issue.Number)
-	case types.SkillModeHybrid:
-		return fmt.Sprintf("/conductor-plan --native-cmd %s --issue %d", ws.SkillProfile.NativePlanCommand, issue.Number)
-	default:
-		return fmt.Sprintf("/conductor-plan --issue %d --repo %s", issue.Number, ws.RepoPath)
-	}
+	return applyCollectionContext(base, bundled, related, contextMD)
 }
 
-func executePrompt(ws types.Workspace, issue types.Issue, plan types.Plan) string {
+func executePrompt(ws types.Workspace, issue types.Issue, plan types.Plan, related []string, contextMD string) string {
+	var base string
+	bundled := false
 	if ref, ok := ws.SkillProfile.SkillForStage(types.StageExecute); ok {
 		if ref.Source == "bundled" {
-			return fmt.Sprintf("/%s --issue %d --repo %s --revision %d", ref.Name, issue.Number, ws.RepoPath, plan.Revision)
+			bundled = true
+			base = fmt.Sprintf("/%s --issue %d --repo %s --revision %d", ref.Name, issue.Number, ws.RepoPath, plan.Revision)
+		} else {
+			base = fmt.Sprintf("Execute plan for issue #%d (revision %d) in repo %s", issue.Number, plan.Revision, ws.RepoPath)
 		}
-		return fmt.Sprintf("Execute plan for issue #%d (revision %d) in repo %s", issue.Number, plan.Revision, ws.RepoPath)
+	} else {
+		// Legacy fallback.
+		switch ws.SkillProfile.Mode {
+		case types.SkillModeNative:
+			base = fmt.Sprintf("%s %d --resume-from-approved-plan %d", ws.SkillProfile.NativeExecuteCommand, issue.Number, plan.Revision)
+		case types.SkillModeHybrid:
+			base = fmt.Sprintf("/conductor-execute --native-cmd %s --issue %d --revision %d", ws.SkillProfile.NativeExecuteCommand, issue.Number, plan.Revision)
+		default:
+			bundled = true
+			base = fmt.Sprintf("/conductor-execute --issue %d --repo %s --revision %d", issue.Number, ws.RepoPath, plan.Revision)
+		}
 	}
-	// Legacy fallback.
-	switch ws.SkillProfile.Mode {
-	case types.SkillModeNative:
-		return fmt.Sprintf("%s %d --resume-from-approved-plan %d", ws.SkillProfile.NativeExecuteCommand, issue.Number, plan.Revision)
-	case types.SkillModeHybrid:
-		return fmt.Sprintf("/conductor-execute --native-cmd %s --issue %d --revision %d", ws.SkillProfile.NativeExecuteCommand, issue.Number, plan.Revision)
-	default:
-		return fmt.Sprintf("/conductor-execute --issue %d --repo %s --revision %d", issue.Number, ws.RepoPath, plan.Revision)
-	}
+	return applyCollectionContext(base, bundled, related, contextMD)
 }
 
 // executeResumePrompt appends the `--resume-question <id>` flag so the
@@ -1656,8 +1701,52 @@ func executePrompt(ws types.Workspace, issue types.Issue, plan types.Plan) strin
 // question's context sidecar (#17). Hybrid + Native variants get the same
 // suffix; the native command is expected to forward the flag through to its
 // underlying execute skill.
-func executeResumePrompt(ws types.Workspace, issue types.Issue, plan types.Plan, questionID string) string {
-	return executePrompt(ws, issue, plan) + " --resume-question " + questionID
+func executeResumePrompt(ws types.Workspace, issue types.Issue, plan types.Plan, questionID string, related []string, contextMD string) string {
+	// Strip the contextMD prefix from executePrompt before appending --resume-question,
+	// then re-apply context so the prefix is outermost and the flag is last.
+	var base string
+	bundled := false
+	if ref, ok := ws.SkillProfile.SkillForStage(types.StageExecute); ok {
+		if ref.Source == "bundled" {
+			bundled = true
+			base = fmt.Sprintf("/%s --issue %d --repo %s --revision %d --resume-question %s", ref.Name, issue.Number, ws.RepoPath, plan.Revision, questionID)
+		} else {
+			base = fmt.Sprintf("Execute plan for issue #%d (revision %d) in repo %s --resume-question %s", issue.Number, plan.Revision, ws.RepoPath, questionID)
+		}
+	} else {
+		switch ws.SkillProfile.Mode {
+		case types.SkillModeNative:
+			base = fmt.Sprintf("%s %d --resume-from-approved-plan %d --resume-question %s", ws.SkillProfile.NativeExecuteCommand, issue.Number, plan.Revision, questionID)
+		case types.SkillModeHybrid:
+			base = fmt.Sprintf("/conductor-execute --native-cmd %s --issue %d --revision %d --resume-question %s", ws.SkillProfile.NativeExecuteCommand, issue.Number, plan.Revision, questionID)
+		default:
+			bundled = true
+			base = fmt.Sprintf("/conductor-execute --issue %d --repo %s --revision %d --resume-question %s", issue.Number, ws.RepoPath, plan.Revision, questionID)
+		}
+	}
+	return applyCollectionContext(base, bundled, related, contextMD)
+}
+
+// applyCollectionContext appends --related-repos flags (Bundled mode only) and
+// prepends the shared collection context markdown (all modes) to a prompt base string.
+func applyCollectionContext(base string, bundled bool, related []string, contextMD string) string {
+	if bundled {
+		for _, p := range related {
+			base += " --related-repos " + shellQuote(p)
+		}
+	}
+	if contextMD != "" {
+		base = "## Shared collection context\n\n" + contextMD + "\n\n---\n\n" + base
+	}
+	return base
+}
+
+// shellQuote wraps a path in single quotes if it contains shell-special chars.
+func shellQuote(s string) string {
+	if !strings.ContainsAny(s, " \t\n'\"\\") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 func envSpecToSlice(env types.EnvSpec) []string {

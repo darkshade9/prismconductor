@@ -12,6 +12,11 @@ Bundled by PrismConductor. Used in Bundled and Hybrid skill modes (PRISMCONDUCTO
 - `--issue <number>` (required)
 - `--repo <path>` (defaults to cwd)
 - `--native-cmd <command>` (Hybrid mode: wraps a repo's own planning skill)
+- `--related-repos <path>` (repeatable; absolute paths to sibling repositories you may grep / read for context)
+
+## Sibling repos (read-only)
+
+If `--related-repos` is set: the listed paths are SIBLING repositories you may grep / read for context. **Do NOT modify any file under those paths.** Use them to understand cross-repo contracts, naming conventions, or how the sibling code calls into yours. Reference findings in `plan_markdown` when relevant.
 
 ## Behavior
 
