@@ -3828,14 +3828,6 @@ func (a *App) SetGoalStatus(id, status string) error {
 	return nil
 }
 
-// SpawnDemo runs `claude --version` in the cwd and streams output to the frontend.
-// Day-1 deliverable per §18.
-func (a *App) SpawnDemo() (*types.Session, error) {
-	cwd, _ := os.Getwd()
-	ws := types.Workspace{ID: "demo", RepoPath: cwd}
-	return a.mgr.SpawnRaw(ws, "claude", []string{"--version"})
-}
-
 // acquirePlanPool reserves a slot on a role=plan pool and returns the
 // resolved row. Callers MUST poolReg.ReleaseByPool(pool.ID) on spawn failure.
 // Strict role=plan — never falls back to role=work (issue #39 rev2).

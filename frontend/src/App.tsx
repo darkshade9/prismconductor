@@ -7,8 +7,6 @@ import {
   ListSessions,
   RefreshIssuesNow,
   SetAutoPullPaused,
-  SpawnDemo,
-  SpawnPlanForIssue,
 } from "../wailsjs/go/main/App";
 import { types } from "../wailsjs/go/models";
 import { useSessionStore, SessionActivity } from "./stores/sessionStore";
@@ -62,10 +60,8 @@ function App() {
       ) ?? null
     );
   }, [issues, planTarget]);
-  const [busy, setBusy] = useState(false);
   const toggleAgentDrawer = useAgentTerminalStore((s) => s.toggleDrawer);
   const agentDrawerOpen = useAgentTerminalStore((s) => s.drawerOpen);
-  const [issueInput, setIssueInput] = useState("");
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [archivedCount, setArchivedCount] = useState(0);
   const refreshArchived = useArchivedStore((s) => s.refresh);
@@ -300,83 +296,12 @@ function App() {
     };
   }, [appendLine, setMeta, refreshWorkspaces, refreshGoals, refreshIssues, markPlanReady, clearPlanReady, selectedWorkspace, refreshArchived, refreshArchivedCount]);
 
-  async function spawnDemo() {
-    setBusy(true);
-    try {
-      const sess = await SpawnDemo();
-      if (sess?.id) {
-        setMeta(sess);
-        setActive(sess.id);
-      }
-      setDrawerOpen(true);
-    } catch (e) {
-      appendLine("error", String(e));
-      setActive("error");
-      setDrawerOpen(true);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function spawnIssue() {
-    const workspaces = useWorkspaceStore.getState().workspaces;
-    const target = selectedWorkspace ?? workspaces[0]?.id;
-    if (!target) {
-      alert("Add a workspace in Settings first.");
-      return;
-    }
-    const num = parseInt(issueInput, 10);
-    if (!num) return;
-    setBusy(true);
-    try {
-      const sess = await SpawnPlanForIssue(target, num);
-      if (sess?.id) {
-        setMeta(sess);
-        setActive(sess.id);
-      }
-      setDrawerOpen(true);
-      setIssueInput("");
-    } catch (e: any) {
-      alert(String(e?.message ?? e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <div className="h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-200">
       <header className="flex items-center justify-between px-4 py-2 border-b border-slate-200 dark:border-slate-800">
         <div className="font-semibold text-slate-900 dark:text-slate-200">PrismConductor</div>
         <TitleSearch />
         <div className="flex items-center gap-2">
-          {selectedWorkspace && (
-            <>
-              <input
-                type="number"
-                min={1}
-                value={issueInput}
-                onChange={(e) => setIssueInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && spawnIssue()}
-                placeholder="issue #"
-                className="w-20 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-2 py-1 text-xs"
-              />
-              <button
-                onClick={spawnIssue}
-                disabled={busy || !issueInput}
-                className="text-xs bg-sky-700 hover:bg-sky-600 disabled:opacity-40 px-2 py-1 rounded"
-                title={issueInput ? "" : "type an issue number first"}
-              >
-                Plan issue
-              </button>
-            </>
-          )}
-          <button
-            onClick={spawnDemo}
-            disabled={busy}
-            className="text-xs bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 px-2 py-1 rounded"
-          >
-            {busy ? "…" : "Spawn `claude --version`"}
-          </button>
           <button
             onClick={() => RefreshIssuesNow().catch((e) => alert(String(e?.message ?? e)))}
             className="text-xs border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 px-2 py-1 rounded"

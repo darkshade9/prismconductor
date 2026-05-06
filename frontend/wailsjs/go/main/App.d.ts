@@ -219,8 +219,6 @@ export function SetNotifyPrefs(arg1:main.NotifyPrefs):Promise<void>;
 
 export function SetPollInterval(arg1:number):Promise<void>;
 
-export function SpawnDemo():Promise<types.Session>;
-
 export function SpawnPlanForIssue(arg1:string,arg2:number):Promise<types.Session>;
 
 export function StartAgentSession(arg1:string,arg2:string,arg3:Array<string>,arg4:number,arg5:number):Promise<types.AgentTermSession>;
