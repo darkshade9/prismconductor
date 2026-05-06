@@ -201,13 +201,12 @@ export function PoolsPanel() {
                   items={rows.map((r) => r.pool.id)}
                   strategy={verticalListSortingStrategy}
                 >
-                  {rows.map((row, idx) => (
+                  {rows.map((row) => (
                     <SortablePoolRow
                       key={row.pool.id}
                       row={row}
                       role={role}
-                      isFirst={idx === 0}
-                      isLast={idx === rows.length - 1}
+                      rolePeers={rows}
                       providerByKind={providerByKind}
                       workspaceByID={workspaceByID}
                       deleteErr={deleteErr[row.pool.id]}
@@ -284,11 +283,31 @@ export function PoolsPanel() {
   );
 }
 
+function preferenceState(
+  row: workerpool.PoolStatus,
+  rolePeers: workerpool.PoolStatus[],
+  providerByKind: Map<string, main.ProviderInfo>,
+): "preferred" | "shared" | "fallback" | null {
+  const capable = rolePeers.filter(
+    (r) => r.pool.enabled && r.pool.capacity > 0 && (providerByKind.get(r.pool.provider)?.can_spawn ?? false),
+  );
+  if (capable.length === 0) return null;
+  if (!capable.some((r) => r.pool.id === row.pool.id)) return null;
+  const sorted = [...capable].sort((a, b) => a.pool.priority - b.pool.priority);
+  const lowest = sorted[0].pool.priority;
+  const tiedAtLowest = sorted.filter((r) => r.pool.priority === lowest);
+  if (row.pool.priority !== lowest) {
+    if (row.pool.id === sorted[sorted.length - 1].pool.id) return "fallback";
+    return null;
+  }
+  if (tiedAtLowest.length === 1) return "preferred";
+  return "shared";
+}
+
 function SortablePoolRow({
   row,
   role,
-  isFirst,
-  isLast,
+  rolePeers,
   providerByKind,
   workspaceByID,
   deleteErr,
@@ -300,8 +319,7 @@ function SortablePoolRow({
 }: {
   row: workerpool.PoolStatus;
   role: Role;
-  isFirst: boolean;
-  isLast: boolean;
+  rolePeers: workerpool.PoolStatus[];
   providerByKind: Map<string, main.ProviderInfo>;
   workspaceByID: Map<string, types.Workspace>;
   deleteErr?: string;
@@ -329,7 +347,22 @@ function SortablePoolRow({
       ⠿
     </span>
   );
-  const hint = isFirst ? "← preferred" : isLast ? "← fallback" : null;
+  const state = preferenceState(row, rolePeers, providerByKind);
+  let hint: React.ReactNode;
+  if (state === "preferred") {
+    hint = <span className="text-slate-600 font-normal">← preferred</span>;
+  } else if (state === "shared") {
+    hint = (
+      <span
+        className="text-amber-500 font-normal"
+        title="Pools tied at the same priority share load via round-robin. Drag to assign distinct priorities."
+      >
+        ← shared (round-robin)
+      </span>
+    );
+  } else if (state === "fallback") {
+    hint = <span className="text-slate-600 font-normal">← fallback</span>;
+  }
   return (
     <div ref={setNodeRef} style={style}>
       <PoolRow
@@ -339,7 +372,7 @@ function SortablePoolRow({
         workspaceByID={workspaceByID}
         deleteErr={deleteErr}
         dragHandle={dragHandle}
-        preferenceHint={hint ?? undefined}
+        preferenceHint={hint}
         spendToday={spendToday}
         spendWeek={spendWeek}
         onToggleEnabled={onToggleEnabled}
@@ -383,7 +416,7 @@ function PoolRow({
   workspaceByID: Map<string, types.Workspace>;
   deleteErr?: string;
   dragHandle: React.ReactNode;
-  preferenceHint?: string;
+  preferenceHint?: React.ReactNode;
   spendToday: number;
   spendWeek: number;
   onToggleEnabled: (p: types.Pool, next: boolean) => void;
@@ -402,9 +435,7 @@ function PoolRow({
               ({info?.display_name ?? row.pool.provider})
             </span>
             {poolScopeBadge(row.pool, workspaceByID)}
-            {preferenceHint && (
-              <span className="text-slate-600 font-normal">{preferenceHint}</span>
-            )}
+            {preferenceHint}
           </div>
           <div className="text-slate-500 text-xs">
             {row.pool.model || "—"}

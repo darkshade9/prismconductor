@@ -58,6 +58,10 @@ export function CreateLabel(arg1, arg2) {
   return window['go']['main']['App']['CreateLabel'](arg1, arg2);
 }
 
+export function CreatePool(arg1) {
+  return window['go']['main']['App']['CreatePool'](arg1);
+}
+
 export function CreateRemoteWorkspace(arg1) {
   return window['go']['main']['App']['CreateRemoteWorkspace'](arg1);
 }

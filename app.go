@@ -177,6 +177,11 @@ func (a *App) startup(ctx context.Context) {
 		if err := a.migrateOrchestratorPool(); err != nil {
 			log.Printf("migrate orchestrator pool: %v", err)
 		}
+		if n, err := a.store.ReconcilePoolPriorities(); err != nil {
+			log.Printf("reconcile pool priorities: %v", err)
+		} else if n > 0 {
+			log.Printf("reconciled %d pool priority rows (issue #231)", n)
+		}
 		if rows, err := a.store.ListPools(); err == nil {
 			a.poolReg.Sync(rows)
 		} else {
@@ -2377,6 +2382,36 @@ func (a *App) SavePool(p types.Pool) error {
 		p.CreatedAt = time.Now()
 	}
 	if err := a.store.SavePool(p); err != nil {
+		return err
+	}
+	rows, err := a.store.ListPools()
+	if err != nil {
+		return err
+	}
+	a.poolReg.Sync(rows)
+	a.bus.Publish(eventbus.EvtAgentCountChanged, map[string]any{"pool_id": p.ID})
+	return nil
+}
+
+// CreatePool inserts a new pool, auto-assigning its priority to the end of
+// the preference order for its role, and re-syncs the registry.
+func (a *App) CreatePool(p types.Pool) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if p.ID == "" {
+		p.ID = uuid.NewString()
+	}
+	if p.Capacity < 0 {
+		p.Capacity = 0
+	}
+	if p.Capacity > 10 {
+		p.Capacity = 10
+	}
+	if p.CreatedAt.IsZero() {
+		p.CreatedAt = time.Now()
+	}
+	if err := a.store.CreatePool(p); err != nil {
 		return err
 	}
 	rows, err := a.store.ListPools()

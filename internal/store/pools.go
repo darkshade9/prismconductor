@@ -17,6 +17,27 @@ var ErrInvalidRole = errors.New("invalid pool role")
 // enabled orchestrator pool. At-most-one is enforced in Go (issue #39 q4).
 var ErrOrchestratorPoolExists = errors.New("an enabled orchestrator pool already exists; disable it first")
 
+// ErrPoolExists is returned by CreatePool when a row with the same ID already exists.
+var ErrPoolExists = errors.New("pool with that ID already exists")
+
+// validatePool sets Role/CreatedAt defaults and validates required fields
+// shared by CreatePool and SavePool.
+func validatePool(p types.Pool) (types.Pool, error) {
+	if p.ID == "" {
+		return p, errors.New("pool ID required")
+	}
+	if p.Role == "" {
+		p.Role = types.RoleWork
+	}
+	if !types.ValidRole(p.Role) {
+		return p, fmt.Errorf("%w: %q", ErrInvalidRole, string(p.Role))
+	}
+	if p.CreatedAt.IsZero() {
+		p.CreatedAt = time.Now()
+	}
+	return p, nil
+}
+
 // ListPools returns every pool row, oldest first.
 func (s *Store) ListPools() ([]types.Pool, error) {
 	if s == nil || s.DB == nil {
@@ -77,24 +98,15 @@ FROM pools WHERE id = ?`, id)
 	return scanPool(row)
 }
 
-// SavePool upserts a pool by ID. Defaults Role to 'work' for backwards
-// compatibility, validates membership, and refuses a second enabled
-// orchestrator pool.
+// SavePool upserts a pool by ID. Use CreatePool for new rows — it auto-assigns
+// priority so new pools land at the end of the preference order.
 func (s *Store) SavePool(p types.Pool) error {
 	if s == nil || s.DB == nil {
 		return errors.New("store unavailable")
 	}
-	if p.ID == "" {
-		return errors.New("pool ID required")
-	}
-	if p.Role == "" {
-		p.Role = types.RoleWork
-	}
-	if !types.ValidRole(p.Role) {
-		return fmt.Errorf("%w: %q", ErrInvalidRole, string(p.Role))
-	}
-	if p.CreatedAt.IsZero() {
-		p.CreatedAt = time.Now()
+	var err error
+	if p, err = validatePool(p); err != nil {
+		return err
 	}
 	if p.Role == types.RoleOrchestrator && p.Enabled {
 		// Refuse a second enabled orchestrator pool. Allowed when this row
@@ -125,7 +137,7 @@ func (s *Store) SavePool(p types.Pool) error {
 	if scope == "" {
 		scope = string(types.PoolScopeShared)
 	}
-	_, err := s.DB.Exec(`
+	_, err = s.DB.Exec(`
 INSERT INTO pools (id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
@@ -149,6 +161,140 @@ ON CONFLICT(id) DO UPDATE SET
 		p.Capacity, enabled, p.APIKey, string(p.Role), p.CreatedAt.Unix(), p.Priority, p.Temperature,
 		p.MaxTurns, p.MaxInputTokens, bashTimeoutMs, p.OutputCap, scope, p.WorkspaceID)
 	return err
+}
+
+// CreatePool inserts a brand-new pool, auto-assigning priority to the end of
+// the preference order for its role. Only enabled same-role rows contribute to
+// the MAX; a new pool with no enabled peers lands at priority=0. Returns
+// ErrPoolExists if a row with this ID already exists.
+func (s *Store) CreatePool(p types.Pool) error {
+	if s == nil || s.DB == nil {
+		return errors.New("store unavailable")
+	}
+	var err error
+	if p, err = validatePool(p); err != nil {
+		return err
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var count int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM pools WHERE id = ?`, p.ID).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrPoolExists
+	}
+
+	if p.Role == types.RoleOrchestrator && p.Enabled {
+		var orchCount int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM pools WHERE role = 'orchestrator' AND enabled = 1`).Scan(&orchCount); err != nil {
+			return err
+		}
+		if orchCount > 0 {
+			return ErrOrchestratorPoolExists
+		}
+	}
+
+	// Priority = MAX(priority)+1 over enabled same-role rows; COALESCE(-1)+1=0 when no peers.
+	var maxPri int
+	if err := tx.QueryRow(`SELECT COALESCE(MAX(priority), -1) FROM pools WHERE role = ? AND enabled = 1`, string(p.Role)).Scan(&maxPri); err != nil {
+		return err
+	}
+	p.Priority = maxPri + 1
+
+	enabled := 0
+	if p.Enabled {
+		enabled = 1
+	}
+	var bashTimeoutMs *int64
+	if p.BashTimeout != nil {
+		ms := p.BashTimeout.Milliseconds()
+		bashTimeoutMs = &ms
+	}
+	scope := string(p.Scope)
+	if scope == "" {
+		scope = string(types.PoolScopeShared)
+	}
+	_, err = tx.Exec(`
+INSERT INTO pools (id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.Name, string(p.Provider), p.Endpoint, p.Model,
+		p.Capacity, enabled, p.APIKey, string(p.Role), p.CreatedAt.Unix(), p.Priority, p.Temperature,
+		p.MaxTurns, p.MaxInputTokens, bashTimeoutMs, p.OutputCap, scope, p.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ReconcilePoolPriorities walks each role and reassigns sequential priorities
+// to any rows tied at the same priority value. Display order (priority ASC,
+// created_at ASC, id ASC — matching ListPools) is preserved. Idempotent:
+// no-op when every role already has strictly increasing priorities.
+// Returns the number of rows mutated.
+func (s *Store) ReconcilePoolPriorities() (int, error) {
+	if s == nil || s.DB == nil {
+		return 0, errors.New("store unavailable")
+	}
+	roles := []types.Role{types.RolePlan, types.RoleWork, types.RoleOrchestrator}
+	total := 0
+	for _, role := range roles {
+		rows, err := s.DB.Query(`
+SELECT id, priority FROM pools
+WHERE role = ?
+ORDER BY priority ASC, created_at ASC, id ASC`, string(role))
+		if err != nil {
+			return total, err
+		}
+		type poolRow struct {
+			id       string
+			priority int
+		}
+		var poolRows []poolRow
+		for rows.Next() {
+			var r poolRow
+			if err := rows.Scan(&r.id, &r.priority); err != nil {
+				rows.Close()
+				return total, err
+			}
+			poolRows = append(poolRows, r)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return total, err
+		}
+
+		hasTies := false
+		for i := 1; i < len(poolRows); i++ {
+			if poolRows[i].priority == poolRows[i-1].priority {
+				hasTies = true
+				break
+			}
+		}
+		if !hasTies {
+			continue
+		}
+
+		tx, err := s.DB.Begin()
+		if err != nil {
+			return total, err
+		}
+		for i, r := range poolRows {
+			if _, err := tx.Exec(`UPDATE pools SET priority = ? WHERE id = ?`, i, r.id); err != nil {
+				_ = tx.Rollback()
+				return total, err
+			}
+			total++
+		}
+		if err := tx.Commit(); err != nil {
+			return total, err
+		}
+	}
+	return total, nil
 }
 
 // RebindWorkspacePools sets scope='shared' and workspace_id='' for every pool

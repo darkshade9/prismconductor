@@ -41,6 +41,8 @@ export function CreateCollection(arg1:string):Promise<types.Collection>;
 
 export function CreateLabel(arg1:string,arg2:types.Label):Promise<types.Label>;
 
+export function CreatePool(arg1:types.Pool):Promise<void>;
+
 export function CreateRemoteWorkspace(arg1:main.RemoteWorkspaceForm):Promise<main.RemoteDeployResult>;
 
 export function DeleteCollection(arg1:string):Promise<void>;
