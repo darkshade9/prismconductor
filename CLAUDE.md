@@ -22,3 +22,4 @@ The product spec lives in `PRISMCONDUCTOR_PLAN.md`. Treat it as the source of tr
 - `go build ./...` — Go compile check.
 - `cd frontend && npx tsc --noEmit` — frontend typecheck.
 - `wails build` — full app bundle (~40s).
+- `PRISMCONDUCTOR_DATA_DIR=<path>` — overrides the conductor's data directory. Tests, smoke harnesses, and worker verification gates MUST set this to a temp dir; otherwise they can corrupt the user's real `~/Library/Application Support/PrismConductor/conductor.db`. CI enforces that no test code touches the prod path (see `.github/workflows/smoke.yml` and `.github/workflows/build.yml`).

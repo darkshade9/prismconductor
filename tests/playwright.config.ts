@@ -1,4 +1,9 @@
 import { defineConfig } from "@playwright/test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const smokeDataDir = mkdtempSync(join(tmpdir(), "prismconductor-smoke-"));
 
 export default defineConfig({
   // testDir is relative to this config (tests/playwright.config.ts), so the
@@ -23,5 +28,6 @@ export default defineConfig({
         cwd: "..",
         stdout: "pipe",
         stderr: "pipe",
+        env: { ...process.env, PRISMCONDUCTOR_DATA_DIR: smokeDataDir },
       },
 });

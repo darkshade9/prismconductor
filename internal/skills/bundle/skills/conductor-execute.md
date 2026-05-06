@@ -61,6 +61,19 @@ If you hit a question the plan didn't cover, invoke `/conductor-question` (write
 
 These run before commit. Failures here are **stop-the-world** events: print `BLOCKED:` and exit, leaving the branch in place for the user to inspect. Do **not** commit broken work. Do **not** swallow failures into the PR body.
 
+9-prep. **Test isolation (NON-NEGOTIABLE).** Set up a sandboxed data dir before any verification command runs. Workers run in a worktree but share the user's process-level data directory; a worker that tests a DB migration can corrupt the user's prod DB (issue #225).
+
+```bash
+export PRISMCONDUCTOR_DATA_DIR="$(mktemp -d -t prismconductor-verify-XXXXXX)"
+if [ -z "$PRISMCONDUCTOR_DATA_DIR" ]; then
+  echo "BLOCKED: cannot create temp data dir for verification — mktemp failed on this system"
+  exit 1
+fi
+trap 'rm -rf "$PRISMCONDUCTOR_DATA_DIR"' EXIT
+```
+
+If `wails dev` or the built binary is launched as part of verification (smoke spec), `PRISMCONDUCTOR_DATA_DIR` MUST be present in its environment. Do NOT run `wails dev` against the user's real data dir during verification — if the var is unset for any reason, abort with `BLOCKED: refusing to run wails dev against unsandboxed data dir`.
+
 9. **Lint / typecheck** every changed surface:
    - Go files touched → `go vet ./...` (or the project's `PRISMCONDUCTOR_LINT_CMD` if set).
    - TypeScript files touched → `npx tsc --noEmit` from the relevant frontend dir.

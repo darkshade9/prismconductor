@@ -15,6 +15,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+      - name: enforce test isolation (no prod data dir in tests)
+        run: |
+          bad=$(grep -RnE 'os\.UserConfigDir|UserHomeDir|Library/Application Support/(prism|Prism)[Cc]onductor|\.config/prismconductor' \
+                    --include='*_test.go' tests/ . 2>/dev/null || true)
+          if [ -n "$bad" ]; then
+            echo "::error::test code references the user's real data dir; use t.TempDir() / PRISMCONDUCTOR_DATA_DIR instead"
+            echo "$bad"
+            exit 1
+          fi
       - uses: actions/setup-go@v6
         with: { go-version: "1.25" }
       - uses: actions/setup-node@v6
@@ -76,6 +85,8 @@ jobs:
         # job hangs until the 15-minute job timeout fires.
         run: |
           set -m
+          export PRISMCONDUCTOR_DATA_DIR="$RUNNER_TEMP/prismconductor-smoke"
+          mkdir -p "$PRISMCONDUCTOR_DATA_DIR"
           xvfb-run --auto-servernum --server-args='-screen 0 1280x800x24' \
             wails dev -loglevel error > /tmp/wails-dev.log 2>&1 &
           echo "WAILS_PID=$!" >> "$GITHUB_ENV"

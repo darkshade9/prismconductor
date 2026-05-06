@@ -8,14 +8,31 @@ import (
 
 const keychainServiceName = "PrismConductor"
 
+// testKeychainDir, when non-empty, redirects all key-file operations to the
+// given directory instead of os.UserConfigDir(). Set via OverrideKeychainDir.
+var testKeychainDir string
+
+// OverrideKeychainDir redirects key-file I/O to dir for the duration of a
+// test. Call it only from test code; the returned function restores the
+// previous value and must be deferred or passed to t.Cleanup.
+func OverrideKeychainDir(dir string) func() {
+	prev := testKeychainDir
+	testKeychainDir = dir
+	return func() { testKeychainDir = prev }
+}
+
 // keyFilePath returns the path to the per-workspace key file in the user
 // config directory, e.g. ~/Library/Application Support/PrismConductor/secrets/<wsID>.key
 func keyFilePath(workspaceID string) (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("user config dir: %w", err)
+	base := testKeychainDir
+	if base == "" {
+		dir, err := os.UserConfigDir()
+		if err != nil {
+			return "", fmt.Errorf("user config dir: %w", err)
+		}
+		base = filepath.Join(dir, keychainServiceName)
 	}
-	return filepath.Join(dir, keychainServiceName, "secrets", workspaceID+".key"), nil
+	return filepath.Join(base, "secrets", workspaceID+".key"), nil
 }
 
 // GetKey retrieves the conductor API key for workspaceID from the local key

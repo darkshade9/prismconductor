@@ -3,10 +3,10 @@ package session
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -130,15 +130,12 @@ func TestSpawnPlan_RemoteWorkspace_RoutesToRemote(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Write a dummy API key file so remoteworker.GetKey succeeds.
-	keyDir, err := os.UserConfigDir()
-	if err != nil {
-		t.Skipf("cannot locate config dir: %v", err)
-	}
-	keyPath := fmt.Sprintf("%s/PrismConductor/secrets/ws-remote-plan.key", keyDir)
-	_ = os.MkdirAll(keyPath[:len(keyPath)-len("/ws-remote-plan.key")], 0o700)
+	// Redirect key-file I/O to a temp dir; write a dummy key so Spawn accepts it.
+	keychainDir := t.TempDir()
+	t.Cleanup(remoteworker.OverrideKeychainDir(keychainDir))
+	keyPath := filepath.Join(keychainDir, "secrets", "ws-remote-plan.key")
+	_ = os.MkdirAll(filepath.Dir(keyPath), 0o700)
 	_ = os.WriteFile(keyPath, []byte("test-api-key"), 0o600)
-	t.Cleanup(func() { _ = os.Remove(keyPath) })
 
 	ws := types.Workspace{
 		ID:              "ws-remote-plan",
@@ -207,11 +204,12 @@ func TestSpawnPlan_RemoteWorkspace_DuplicateGuard(t *testing.T) {
 	}))
 	t.Cleanup(func() { close(block); srv.Close() })
 
-	keyDir, _ := os.UserConfigDir()
-	keyPath := fmt.Sprintf("%s/PrismConductor/secrets/ws-dup-guard.key", keyDir)
-	_ = os.MkdirAll(keyPath[:len(keyPath)-len("/ws-dup-guard.key")], 0o700)
+	// Redirect key-file I/O to a temp dir; write a dummy key so Spawn accepts it.
+	keychainDir := t.TempDir()
+	t.Cleanup(remoteworker.OverrideKeychainDir(keychainDir))
+	keyPath := filepath.Join(keychainDir, "secrets", "ws-dup-guard.key")
+	_ = os.MkdirAll(filepath.Dir(keyPath), 0o700)
 	_ = os.WriteFile(keyPath, []byte("test-key"), 0o600)
-	t.Cleanup(func() { _ = os.Remove(keyPath) })
 
 	ws := types.Workspace{
 		ID:              "ws-dup-guard",
