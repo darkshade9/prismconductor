@@ -1,7 +1,10 @@
 // Package types holds the cross-package data model defined in PRISMCONDUCTOR_PLAN.md §6.
 package types
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // --- Workspace (§6.1) ---
 
@@ -639,6 +642,24 @@ type PRComment struct {
 	ReadAt      *time.Time    `json:"read_at,omitempty"`
 	PendingPost bool          `json:"pending_post,omitempty"`
 }
+
+// --- Collection (issue #209, Phase A of #208) ---
+
+// Collection groups several Workspace records under a shared name and shared
+// context document. Workers spawned for member workspaces receive sibling repo
+// paths (Bundled mode) and the collection's ContextMD prepended to their prompt.
+type Collection struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	WorkspaceIDs []string  `json:"workspace_ids"`
+	ContextMD    string    `json:"context_md"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// ErrAlreadyInCollection is returned by AddWorkspaceToCollection when the
+// workspace is already a member of any collection (v1 single-membership rule).
+var ErrAlreadyInCollection = errors.New("workspace already belongs to a collection")
 
 // --- Pool usage / rate limits (issue #52) ---
 

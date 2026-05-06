@@ -19,6 +19,11 @@ Bundled by PrismConductor (PRISMCONDUCTOR_PLAN.md §15.7).
 - `--repo <path>` (defaults to cwd)
 - `--native-cmd <command>` (Hybrid: hands off to a repo's own execute skill, with the conductor still owning JSON I/O)
 - `--resume-question <id>` (#17 — resume mode: continue an earlier execute on the same branch after a mid-run question was answered. When set, the steps below diverge as noted under **Resume mode**.)
+- `--related-repos <path>` (repeatable; absolute paths to sibling repositories you may grep / read for context)
+
+## Sibling repos (read-only)
+
+If `--related-repos` is set: the listed paths are SIBLING repositories you may grep / read for context. **Do NOT modify any file under those paths.** Use them to understand cross-repo contracts, naming conventions, or how the sibling code calls into yours. Reference findings in commits and the PR body when relevant.
 
 ## Behavior
 

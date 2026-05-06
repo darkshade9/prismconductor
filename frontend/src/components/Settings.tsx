@@ -5,8 +5,9 @@ import { PoolsPanel } from "./PoolsPanel";
 import { NotifyPanel } from "./NotifyPanel";
 import { LogsPanel } from "./LogsPanel";
 import { AppearancePanel } from "./AppearancePanel";
+import { CollectionsPanel } from "./CollectionsPanel";
 
-type Tab = "workspaces" | "pools" | "skills" | "notify" | "appearance" | "logs";
+type Tab = "workspaces" | "collections" | "pools" | "skills" | "notify" | "appearance" | "logs";
 
 export function Settings({
   open,
@@ -31,6 +32,7 @@ export function Settings({
             {(
               [
                 ["workspaces", "Workspaces"],
+                ["collections", "Collections"],
                 ["pools", "Pools"],
                 ["skills", "Bundled skills"],
                 ["notify", "Notifications"],
@@ -52,6 +54,7 @@ export function Settings({
           </nav>
           <div className="flex-1 p-4 overflow-y-auto">
             {tab === "workspaces" && <WorkspacesPanel />}
+            {tab === "collections" && <CollectionsPanel />}
             {tab === "pools" && <PoolsPanel />}
             {tab === "skills" && <BundledSkillsViewer />}
             {tab === "notify" && <NotifyPanel />}

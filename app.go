@@ -808,6 +808,7 @@ func (a *App) UpdateWorkspace(ws types.Workspace) error {
 // RemoveWorkspace removes a workspace by ID. Any pools bound to this workspace
 // are silently rebound to shared so capacity isn't orphaned (issue #109, q1).
 // For remote workspaces the CF API token is removed from the OS keyring (issue #178).
+// Collection membership is cleaned up before the workspace row is removed (#209).
 func (a *App) RemoveWorkspace(id string) error {
 	if a.wsReg == nil {
 		return fmt.Errorf("workspace registry unavailable")
@@ -821,6 +822,9 @@ func (a *App) RemoveWorkspace(id string) error {
 		}
 	}
 	if a.store != nil {
+		if err := a.store.RemoveWorkspaceFromAllCollections(id); err != nil {
+			log.Printf("RemoveWorkspace: unlink from collections for %s: %v", id, err)
+		}
 		if err := a.store.RebindWorkspacePools(id); err != nil {
 			log.Printf("RemoveWorkspace: rebind pools for %s: %v", id, err)
 		} else if a.poolReg != nil {
@@ -830,6 +834,119 @@ func (a *App) RemoveWorkspace(id string) error {
 		}
 	}
 	return a.wsReg.Remove(id)
+}
+
+// --- Collections (issue #209) ---
+
+// ListCollections returns all workspace collections.
+func (a *App) ListCollections() ([]types.Collection, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store unavailable")
+	}
+	return a.store.ListCollections()
+}
+
+// CreateCollection creates a new workspace collection.
+func (a *App) CreateCollection(name string) (types.Collection, error) {
+	if a.store == nil {
+		return types.Collection{}, fmt.Errorf("store unavailable")
+	}
+	col, err := a.store.CreateCollection(name)
+	if err != nil {
+		return types.Collection{}, err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
+	}
+	if a.ctx != nil {
+		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+	}
+	return col, nil
+}
+
+// RenameCollection updates a collection's display name.
+func (a *App) RenameCollection(id, name string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.RenameCollection(id, name); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
+	}
+	if a.ctx != nil {
+		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+	}
+	return nil
+}
+
+// DeleteCollection removes a collection and all its membership rows.
+func (a *App) DeleteCollection(id string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.DeleteCollection(id); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
+	}
+	if a.ctx != nil {
+		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+	}
+	return nil
+}
+
+// AddWorkspaceToCollection adds a workspace to a collection.
+func (a *App) AddWorkspaceToCollection(collectionID, workspaceID string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.AddWorkspaceToCollection(collectionID, workspaceID); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
+	}
+	if a.ctx != nil {
+		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+	}
+	return nil
+}
+
+// RemoveWorkspaceFromCollection removes a workspace from a collection.
+func (a *App) RemoveWorkspaceFromCollection(collectionID, workspaceID string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.RemoveWorkspaceFromCollection(collectionID, workspaceID); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
+	}
+	if a.ctx != nil {
+		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+	}
+	return nil
+}
+
+// UpdateCollectionContext replaces the shared context markdown for a collection.
+func (a *App) UpdateCollectionContext(collectionID, body string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if err := a.store.UpdateCollectionContext(collectionID, body); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtCollectionsUpdated, nil)
+	}
+	if a.ctx != nil {
+		wruntime.EventsEmit(a.ctx, "collections.updated", nil)
+	}
+	return nil
 }
 
 // --- Remote workspace helpers (issue #171) ---
