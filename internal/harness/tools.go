@@ -12,11 +12,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"prismconductor/internal/llm"
 	"prismconductor/internal/planio"
+	"prismconductor/internal/skills/validator"
 )
 
 // planFilePathRE matches a path under `.prismconductor/plans/` whose basename
@@ -238,6 +240,12 @@ func toolWrite(_ context.Context, e *env, raw json.RawMessage) (string, error) {
 	if planFilePathRE.MatchString(filepath.ToSlash(args.FilePath)) {
 		if err := planio.ValidatePlanJSON([]byte(args.Content)); err != nil {
 			return "", fmt.Errorf("plan rejected by validator (#71): %w. Fix the field(s) above and call Write again — do NOT proceed past this without a passing plan", err)
+		}
+		// Issue #232: content-relevance gate. Banned-phrase check is always
+		// enforced; token-overlap check runs only when gh issue view succeeds.
+		issueBody := fetchIssueBodyForValidation(e.Cwd, args.Content)
+		if err := validator.ValidatePlanContent([]byte(args.Content), 3, issueBody); err != nil {
+			return "", fmt.Errorf("plan rejected by content validator (#232): %w. Set ready_to_execute: false or ensure the issue body was fetched before calling Write", err)
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
@@ -530,4 +538,33 @@ func toolTodoWrite(_ context.Context, e *env, raw json.RawMessage) (string, erro
 		lines[i] = fmt.Sprintf("[%s] %s", t.Status, t.Content)
 	}
 	return fmt.Sprintf("todo list updated (%d items)\n%s", len(args.Todos), strings.Join(lines, "\n")), nil
+}
+
+// fetchIssueBodyForValidation attempts to fetch the GitHub issue title+body
+// corresponding to the issue_number in planJSON using `gh issue view`. Returns
+// the concatenated title and body on success, or an empty string on any error
+// so the caller can skip the overlap check rather than hard-failing.
+func fetchIssueBodyForValidation(cwd, planJSON string) string {
+	var p struct {
+		IssueNumber int `json:"issue_number"`
+	}
+	if err := json.Unmarshal([]byte(planJSON), &p); err != nil || p.IssueNumber <= 0 {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "issue", "view", strconv.Itoa(p.IssueNumber), "--json", "title,body")
+	cmd.Dir = cwd
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	var issue struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	if err := json.Unmarshal(out, &issue); err != nil {
+		return ""
+	}
+	return issue.Title + " " + issue.Body
 }
