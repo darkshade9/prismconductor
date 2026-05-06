@@ -418,10 +418,6 @@ export function SetPollInterval(arg1) {
   return window['go']['main']['App']['SetPollInterval'](arg1);
 }
 
-export function SpawnDemo() {
-  return window['go']['main']['App']['SpawnDemo']();
-}
-
 export function SpawnPlanForIssue(arg1, arg2) {
   return window['go']['main']['App']['SpawnPlanForIssue'](arg1, arg2);
 }
