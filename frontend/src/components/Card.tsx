@@ -582,6 +582,18 @@ function StatusRow({
   onPlanNow: () => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number; actions: CopyAction[] } | null>(null);
+  // Hooks for the conditional render branches below MUST be declared at the
+  // component top (rules-of-hooks). Previously these lived inside
+  // `if (showNeedsPR ...)` and `if (orphanPRInfo ...)` blocks, which produced
+  // a different hook count on each render whenever the card transitioned
+  // across those state boundaries — and React minified error #310 fired
+  // ("rendered more/fewer hooks than during the previous render"). Card #204,
+  // which has needs_pr_info populated from a NEEDS_PR sentinel, lived right
+  // at one of those boundaries and reproducibly threw the error.
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [prURLInput, setPRURLInput] = useState("");
+  const [msgExpanded, setMsgExpanded] = useState(false);
+  const [orphanPROpening, setOrphanPROpening] = useState(false);
 
   function openMenu(e: React.MouseEvent, actions: CopyAction[]) {
     e.preventDefault();
@@ -705,9 +717,6 @@ function StatusRow({
   if (showNeedsPR && needsPRInfo) {
     const info = needsPRInfo; // capture for closures — TypeScript can't narrow through async boundaries
     const isCommitSigning = info.kind === "commit_signing";
-    const [attachOpen, setAttachOpen] = useState(false);
-    const [prURLInput, setPRURLInput] = useState("");
-    const [msgExpanded, setMsgExpanded] = useState(false);
 
     function copyPushCmd(e: React.MouseEvent) {
       e.stopPropagation();
@@ -812,7 +821,8 @@ function StatusRow({
 
   // Orphan PR recovery: execute session pushed a branch but died before opening a PR (#194).
   if (orphanPRInfo && !activeSession && !pausedSession && !needsPRInfo) {
-    const [opening, setOpening] = useState(false);
+    const opening = orphanPROpening;
+    const setOpening = setOrphanPROpening;
     return (
       <>
         <div className="text-[11px] mt-1.5 space-y-0.5">
