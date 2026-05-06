@@ -1,7 +1,11 @@
 import { defineConfig } from "@playwright/test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// ESM equivalent of __dirname (not available in ES module scope)
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const smokeDataDir = mkdtempSync(join(tmpdir(), "prismconductor-smoke-"));
 
