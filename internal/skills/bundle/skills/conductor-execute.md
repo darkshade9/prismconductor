@@ -84,6 +84,15 @@ straight away, `auto` (default/empty) = Tier 1 → Tier 2 → Tier 3.
 
 12a. Draft the commit message (subject + body with `Closes #<num>` +
      `Co-Authored-By: PrismConductor worker <noreply@anthropic.com>`).
+12a-pre. **Ensure the remote branch exists before calling `createCommitOnBranch`.**
+     Run `git ls-remote --heads origin <current-branch>`. If the output is
+     empty (branch not yet on origin), push it first:
+     ```
+     git push -u origin HEAD
+     ```
+     This is idempotent — if the branch already exists the ls-remote check is a
+     no-op and no push is needed. Skipping this step causes the GraphQL mutation
+     to fail with a "Reference does not exist" error.
 12b. Call the GitHub GraphQL mutation `createCommitOnBranch` using the
      workspace PAT (`gh api graphql`). The mutation requires:
      - `repositoryNameWithOwner`: `<owner>/<repo>`
@@ -122,8 +131,39 @@ straight away, `auto` (default/empty) = Tier 1 → Tier 2 → Tier 3.
      content; truncate only the GraphQL payload, never the file).
 12e. `git commit -S -F .prismconductor/commit-msg/<issue>.txt` with a 30 s
      timeout. Do NOT attempt to supply a passphrase. If the process blocks on
-     TTY or times out, fall through to Tier 3.
+     TTY, times out, exits non-zero, or stderr contains `cannot run gpg` / key
+     unavailable messages, fall through to **Tier 2b** (do NOT skip to Tier 3
+     directly — an unsigned commit may still be possible).
 12f. `git push -u origin HEAD`.
+
+**Tier 2b — unsigned commit fallback (GPG unavailable)**
+
+When Tier 2a (signed commit) fails due to a missing or unusable GPG key:
+
+12e-i. **Probe branch protection** to determine whether signed commits are
+     required for `<BASE>`:
+     ```
+     gh api repos/{owner}/{repo}/branches/{BASE}/protection \
+       --jq '.required_signatures.enabled' 2>/dev/null || echo "false"
+     ```
+     Cache this boolean for the duration of this worker run. A 404 or any
+     error from this probe means no branch-protection rule is configured —
+     treat as `false` (unsigned commits are permitted).
+
+12e-ii. **Decision:**
+     - If the probe returns `true`: signed commits are **required**. Fall
+       through to Tier 3 (NEEDS_PR). Do NOT attempt an unsigned commit.
+     - If the probe returns `false`, empty, or errors: proceed with an
+       unsigned commit.
+
+12e-iii. **Unsigned commit + push:**
+     ```
+     git commit -F .prismconductor/commit-msg/<issue>.txt
+     git push -u origin HEAD
+     ```
+     On success: proceed to PR creation exactly as after a Tier 1 / Tier 2a
+     success. Note in the PR body that Tier 2b (unsigned) was used.
+     On failure: fall through to Tier 3.
 
 **Tier 3 — preserved worktree + manual command (NEEDS_PR)**
 
