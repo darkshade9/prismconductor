@@ -160,6 +160,7 @@ func (a *App) startup(ctx context.Context) {
 		log.Printf("store open: %v\n", err)
 	} else {
 		a.store = s
+		// silenterr:ok — startup table creation is best-effort; store logs any failure
 		_ = a.store.EnsureDepCacheTable()
 		if v, _ := a.store.GetSetting("auto_pull_paused"); v == "true" {
 			a.orch.SetPaused(true)
@@ -281,7 +282,9 @@ func (a *App) startup(ctx context.Context) {
 				}
 				_, err = a.mgr.SpawnExecute(ws, issue, *plan, pool)
 				if err != nil {
-					_ = a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColPlan)
+					if mvErr := a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColPlan); mvErr != nil {
+						log.Printf("startup: MoveIssueColumn rollback #%d: %v", issueNumber, mvErr)
+					}
 					a.poolReg.ReleaseByPool(poolID)
 				}
 				return err
@@ -294,6 +297,7 @@ func (a *App) startup(ctx context.Context) {
 
 		// Persist every event for debugging + Phase 7 transcript pattern detector.
 		a.bus.Subscribe(func(e eventbus.Event) {
+			// silenterr:ok — event logging is fire-and-forget telemetry; dropping one event is acceptable
 			_ = a.store.LogEvent(string(e.Type), e.Payload)
 			wailsbus.EmitEvent(a.ctx, "bus."+string(e.Type), e.Payload)
 			a.notifyOnPRStateChange(e)
@@ -479,7 +483,9 @@ func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionSta
 		if reason == "" {
 			reason = "execute session ended without success"
 		}
-		_ = a.store.SetIssueFailureReason(sess.WorkspaceID, sess.IssueNumber, reason)
+		if err := a.store.SetIssueFailureReason(sess.WorkspaceID, sess.IssueNumber, reason); err != nil {
+			log.Printf("SetIssueFailureReason #%d: %v", sess.IssueNumber, err)
+		}
 
 		// Attempt to schedule an automatic retry for transient failures (#221).
 		// The scheduler decides whether the cause is retryable and enforces caps.
@@ -602,7 +608,9 @@ func (a *App) GetNotifyPrefs() NotifyPrefs {
 	if v, _ := a.store.GetSetting("notify_muted"); v == "true" {
 		out.Muted = true
 	}
+	// silenterr:ok — read failure falls back to empty string (suppress quiet window)
 	out.QuietStart, _ = a.store.GetSetting("notify_quiet_start")
+	// silenterr:ok — read failure falls back to empty string (suppress quiet window)
 	out.QuietEnd, _ = a.store.GetSetting("notify_quiet_end")
 	return out
 }
@@ -615,8 +623,11 @@ func (a *App) SetNotifyPrefs(p NotifyPrefs) error {
 	if p.Muted {
 		muted = "true"
 	}
+	// silenterr:ok — notification settings are best-effort; UI still reads live from store
 	_ = a.store.SetSetting("notify_muted", muted)
+	// silenterr:ok — notification settings are best-effort; UI still reads live from store
 	_ = a.store.SetSetting("notify_quiet_start", p.QuietStart)
+	// silenterr:ok — notification settings are best-effort; UI still reads live from store
 	_ = a.store.SetSetting("notify_quiet_end", p.QuietEnd)
 	return nil
 }
@@ -1385,6 +1396,7 @@ func (a *App) IsKeyringAvailable() bool {
 	if err := a.secretStore.Set(probe, "1"); err != nil {
 		return false
 	}
+	// silenterr:ok — probe-delete is best-effort; keyring may already have evicted the key
 	_ = a.secretStore.Delete(probe)
 	return true
 }
@@ -1700,8 +1712,12 @@ func (a *App) MoveIssueColumn(workspaceID string, number int, column string) err
 					// silently no-ops — looks like the system "forgot" the
 					// card.
 					log.Printf("auto-spawn plan #%d: no plan pool available — enqueuing", number)
-					_ = a.store.EnqueuePendingPool(workspaceID, number, types.RolePlan, "drag_to_plan")
-					_ = a.store.SetIssueWaitingForPool(workspaceID, number, true)
+					if err := a.store.EnqueuePendingPool(workspaceID, number, types.RolePlan, "drag_to_plan"); err != nil {
+						log.Printf("EnqueuePendingPool plan #%d: %v", number, err)
+					}
+					if err := a.store.SetIssueWaitingForPool(workspaceID, number, true); err != nil {
+						log.Printf("SetIssueWaitingForPool plan #%d: %v", number, err)
+					}
 					a.bus.Publish(eventbus.EvtPendingPoolEnqueued, eventbus.PendingPoolChange{
 						WorkspaceID: workspaceID,
 						IssueNumber: number,
@@ -1741,7 +1757,9 @@ func (a *App) ClearIssueFailure(workspaceID string, issueNumber int) error {
 	}
 	// Clear the persisted failure_reason so the card no longer shows the
 	// blocked tooltip after the user acknowledges the failure (#194).
-	_ = a.store.SetIssueFailureReason(workspaceID, issueNumber, "")
+	if err := a.store.SetIssueFailureReason(workspaceID, issueNumber, ""); err != nil {
+		log.Printf("ClearIssueFailure: SetIssueFailureReason #%d: %v", issueNumber, err)
+	}
 	// Emit orphan PR cleared so the assembler removes the recovery button.
 	if a.bus != nil {
 		a.bus.Publish(eventbus.EvtOrphanPRCleared, eventbus.OrphanPRCleared{
@@ -1808,7 +1826,9 @@ func (a *App) OpenOrphanPR(workspaceID string, issueNumber int) error {
 		return fmt.Errorf("mark PR opened: %w", err)
 	}
 	// Clear orphan state and emit PR-opened so the assembler moves the card.
-	_ = a.store.SetIssueFailureReason(workspaceID, issueNumber, "")
+	if err := a.store.SetIssueFailureReason(workspaceID, issueNumber, ""); err != nil {
+		log.Printf("OpenOrphanPR: SetIssueFailureReason #%d: %v", issueNumber, err)
+	}
 	if a.bus != nil {
 		a.bus.Publish(eventbus.EvtPROpened, map[string]any{
 			"workspace_id": workspaceID,
@@ -2660,7 +2680,9 @@ func (a *App) handlePlanReady(sess types.Session, relPath string) {
 		"revision":     plan.Revision,
 	})
 	// Move the card to the PLAN column if it isn't there already.
-	_ = a.store.MoveIssueColumn(sess.WorkspaceID, sess.IssueNumber, types.ColPlan)
+	if err := a.store.MoveIssueColumn(sess.WorkspaceID, sess.IssueNumber, types.ColPlan); err != nil {
+		log.Printf("plan ready: MoveIssueColumn #%d: %v", sess.IssueNumber, err)
+	}
 	if a.notificationsSuppressed() {
 		return
 	}
@@ -2934,6 +2956,7 @@ func (a *App) notifyOnPRStateChange(e eventbus.Event) {
 				autoBody = fmt.Sprintf("#%d: PR closed — stopping execute worker (was running %s)", issNum, elapsed)
 			}
 			log.Printf("auto-cancel: PR event %s; killing execute session %s for issue #%d (ran %s)", e.Type, sessID, issNum, elapsed)
+			// silenterr:ok — Kill on a possibly-already-dead session is best-effort; error is irrelevant
 			_ = a.mgr.Kill(sessID)
 			a.emitToast("info", title, autoBody, toastPayload)
 		}
@@ -3355,8 +3378,12 @@ func (a *App) ApprovePlan(workspaceID string, issueNumber, revision int) error {
 	if !ok {
 		// No work slot available — persist intent and show waiting decoration.
 		// The card stays in IN_PROGRESS; drain fires it when a slot frees.
-		_ = a.store.EnqueuePendingPool(workspaceID, issueNumber, types.RoleWork, "approve_execute")
-		_ = a.store.SetIssueWaitingForPool(workspaceID, issueNumber, true)
+		if err := a.store.EnqueuePendingPool(workspaceID, issueNumber, types.RoleWork, "approve_execute"); err != nil {
+			log.Printf("ApprovePlan: EnqueuePendingPool #%d: %v", issueNumber, err)
+		}
+		if err := a.store.SetIssueWaitingForPool(workspaceID, issueNumber, true); err != nil {
+			log.Printf("ApprovePlan: SetIssueWaitingForPool #%d: %v", issueNumber, err)
+		}
 		a.bus.Publish(eventbus.EvtPendingPoolEnqueued, eventbus.PendingPoolChange{
 			WorkspaceID: workspaceID,
 			IssueNumber: issueNumber,
@@ -3433,8 +3460,12 @@ func (a *App) RetryExecuteForApprovedPlan(workspaceID string, issueNumber int) e
 	}
 	pool, ok := a.acquireWorkPool(ws)
 	if !ok {
-		_ = a.store.EnqueuePendingPool(workspaceID, issueNumber, types.RoleWork, "retry_execute")
-		_ = a.store.SetIssueWaitingForPool(workspaceID, issueNumber, true)
+		if err := a.store.EnqueuePendingPool(workspaceID, issueNumber, types.RoleWork, "retry_execute"); err != nil {
+			log.Printf("RetryExecuteForApprovedPlan: EnqueuePendingPool #%d: %v", issueNumber, err)
+		}
+		if err := a.store.SetIssueWaitingForPool(workspaceID, issueNumber, true); err != nil {
+			log.Printf("RetryExecuteForApprovedPlan: SetIssueWaitingForPool #%d: %v", issueNumber, err)
+		}
 		a.bus.Publish(eventbus.EvtPendingPoolEnqueued, eventbus.PendingPoolChange{
 			WorkspaceID: workspaceID,
 			IssueNumber: issueNumber,
@@ -3450,7 +3481,9 @@ func (a *App) RetryExecuteForApprovedPlan(workspaceID string, issueNumber int) e
 		a.handleSpawnExecuteFailure(workspaceID, issueNumber, pool, err)
 		return err
 	}
-	_ = a.store.SetIssueFailureReason(workspaceID, issueNumber, "")
+	if err := a.store.SetIssueFailureReason(workspaceID, issueNumber, ""); err != nil {
+		log.Printf("RetryExecuteForApprovedPlan: SetIssueFailureReason #%d: %v", issueNumber, err)
+	}
 	est := a.EstimateSpawnCost(workspaceID, issueNumber, pool.ID)
 	if est.Tokens > 0 {
 		var costStr string
@@ -3569,8 +3602,12 @@ func (a *App) ContinueWork(workspaceID string, issueNumber int, note string) err
 	}
 	pool, ok := a.acquireWorkPool(ws)
 	if !ok {
-		_ = a.store.EnqueuePendingPool(workspaceID, issueNumber, types.RoleWork, "continue_execute")
-		_ = a.store.SetIssueWaitingForPool(workspaceID, issueNumber, true)
+		if err := a.store.EnqueuePendingPool(workspaceID, issueNumber, types.RoleWork, "continue_execute"); err != nil {
+			log.Printf("ContinueWork: EnqueuePendingPool #%d: %v", issueNumber, err)
+		}
+		if err := a.store.SetIssueWaitingForPool(workspaceID, issueNumber, true); err != nil {
+			log.Printf("ContinueWork: SetIssueWaitingForPool #%d: %v", issueNumber, err)
+		}
 		a.bus.Publish(eventbus.EvtPendingPoolEnqueued, eventbus.PendingPoolChange{
 			WorkspaceID: workspaceID,
 			IssueNumber: issueNumber,
@@ -3580,7 +3617,9 @@ func (a *App) ContinueWork(workspaceID string, issueNumber int, note string) err
 	}
 	if _, err := a.mgr.SpawnExecuteContinue(ws, issue, *plan, pool); err != nil {
 		a.poolReg.ReleaseByPool(pool.ID)
-		_ = a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColReview)
+		if mvErr := a.store.MoveIssueColumn(workspaceID, issueNumber, types.ColReview); mvErr != nil {
+			log.Printf("ContinueWork: MoveIssueColumn rollback #%d: %v", issueNumber, mvErr)
+		}
 		return err
 	}
 	a.bus.Publish(eventbus.EvtPlanApproved, map[string]any{
@@ -3890,7 +3929,9 @@ func (a *App) migrateOrchestratorPool() error {
 		return err
 	}
 	if len(rows) > 0 {
+		// silenterr:ok — migration cleanup: stale key deletion is fire-and-forget
 		_ = a.store.DeleteSetting("ollama_url")
+		// silenterr:ok — migration cleanup: stale key deletion is fire-and-forget
 		_ = a.store.DeleteSetting("ollama_model")
 		return nil
 	}
@@ -3921,7 +3962,9 @@ func (a *App) migrateOrchestratorPool() error {
 	if err := a.store.SavePool(pool); err != nil {
 		return err
 	}
+	// silenterr:ok — migration cleanup: stale key deletion is fire-and-forget
 	_ = a.store.DeleteSetting("ollama_url")
+	// silenterr:ok — migration cleanup: stale key deletion is fire-and-forget
 	_ = a.store.DeleteSetting("ollama_model")
 	return nil
 }
@@ -3960,7 +4003,9 @@ func (a *App) SetGoalStatus(id, status string) error {
 		now := time.Now()
 		if g, err := a.store.GetGoal(id); err == nil {
 			g.AchievedAt = &now
-			_ = a.store.SaveGoal(g)
+			if err := a.store.SaveGoal(g); err != nil {
+				log.Printf("SetGoalStatus: SaveGoal %s: %v", id, err)
+			}
 		}
 	}
 	a.bus.Publish(eventbus.EvtGoalUpdated, id)
@@ -4241,6 +4286,7 @@ func (a *App) DiagnoseIssue(workspaceID string, issueNumber int) (*diagnose.Issu
 	// Gather persisted sessions newest-first.
 	var sessions []types.Session
 	if a.store != nil {
+		// silenterr:ok — nil-slice fallback is acceptable; live session data below compensates
 		sessions, _ = a.store.ListSessionsForIssue(workspaceID, issueNumber)
 	}
 
@@ -4463,7 +4509,7 @@ func (a *App) PostPRComment(workspaceID string, issueNumber int, body string, re
 	commentID, err := a.gh.PostIssueComment(a.ctx, ws, issueNumber, body)
 	if err != nil {
 		// Queue as pending_post so the UI shows a pending indicator; clear on next success.
-		_, _ = a.store.UpsertPRComment(types.PRComment{
+		if _, uErr := a.store.UpsertPRComment(types.PRComment{
 			WorkspaceID: workspaceID,
 			IssueNumber: issueNumber,
 			CommentID:   -time.Now().UnixNano(), // temporary negative ID to avoid clash
@@ -4472,12 +4518,14 @@ func (a *App) PostPRComment(workspaceID string, issueNumber int, body string, re
 			Kind:        types.PRCommentKindConversation,
 			CreatedAt:   time.Now(),
 			PendingPost: true,
-		})
+		}); uErr != nil {
+			log.Printf("PostPRComment: UpsertPRComment pending #%d: %v", issueNumber, uErr)
+		}
 		return fmt.Errorf("post comment: %w", err)
 	}
 
 	// Record in local store (no pending_post since it succeeded).
-	_, _ = a.store.UpsertPRComment(types.PRComment{
+	if _, uErr := a.store.UpsertPRComment(types.PRComment{
 		WorkspaceID: workspaceID,
 		IssueNumber: issueNumber,
 		CommentID:   commentID,
@@ -4485,7 +4533,9 @@ func (a *App) PostPRComment(workspaceID string, issueNumber int, body string, re
 		Body:        body,
 		Kind:        types.PRCommentKindConversation,
 		CreatedAt:   time.Now(),
-	})
+	}); uErr != nil {
+		log.Printf("PostPRComment: UpsertPRComment #%d: %v", issueNumber, uErr)
+	}
 	if a.bus != nil {
 		a.bus.Publish(eventbus.EvtPRCommentPosted, map[string]any{
 			"workspace_id": workspaceID,
@@ -4553,7 +4603,9 @@ func (a *App) RequestFixForComments(workspaceID string, issueNumber int, comment
 			entry = fmt.Sprintf("[%s:%d] %s: %s", c.FilePath, c.LineNumber, c.Author, c.Body)
 		}
 		noteLines = append(noteLines, entry)
-		_ = a.store.MarkPRCommentRead(workspaceID, issueNumber, c.CommentID)
+		if err := a.store.MarkPRCommentRead(workspaceID, issueNumber, c.CommentID); err != nil {
+			log.Printf("RequestFixForComments: MarkPRCommentRead #%d comment %d: %v", issueNumber, c.CommentID, err)
+		}
 	}
 	if len(noteLines) == 0 {
 		return fmt.Errorf("selected comments not found")

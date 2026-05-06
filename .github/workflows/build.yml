@@ -80,7 +80,15 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: go vet
+      - name: build silenterr vettool
+        if: matrix.name == 'linux'
+        run: go build -o /tmp/silenterr ./internal/lint/silenterr/cmd/silenterr
+
+      - name: go vet (with silenterr)
+        if: matrix.name == 'linux'
+        run: go vet -vettool=/tmp/silenterr ./...
+
+      - name: go vet (stdlib analyzers)
         run: go vet ./...
 
       - name: go test
