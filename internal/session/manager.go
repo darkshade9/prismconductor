@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"prismconductor/internal/complexity"
 	"prismconductor/internal/eventbus"
 	pcgit "prismconductor/internal/git"
 	"prismconductor/internal/harness"
@@ -1677,6 +1678,10 @@ func planPrompt(ws types.Workspace, issue types.Issue, related []string, context
 			base = fmt.Sprintf("/conductor-plan --issue %d --repo %s", issue.Number, ws.RepoPath)
 		}
 	}
+	// Prepend the workspace's complexity scale guidance so the planner knows
+	// which values are valid for estimated_complexity (issue #233).
+	fragment := complexity.PromptFragment(string(ws.ComplexityScale))
+	base = "## Workspace complexity scale\n\n" + fragment + "\n\n---\n\n" + base
 	return applyCollectionContext(base, bundled, related, contextMD)
 }
 

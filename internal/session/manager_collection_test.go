@@ -48,17 +48,26 @@ func hybridWS(id, repoPath, nativeCmd string) types.Workspace {
 }
 
 // TestPlanPromptNoCollectionIsUnchanged guards the regression: a workspace not
-// in any collection must produce a byte-identical prompt to what the system
-// emits today.
+// in any collection must produce a prompt that contains the bundled plan command
+// prefixed by the workspace complexity scale guidance and no collection fields.
 func TestPlanPromptNoCollectionIsUnchanged(t *testing.T) {
 	ws := bundledWS("ws-1", "/repo/app")
 	issue := types.Issue{Number: 42}
 
-	// Expected: unchanged bundled plan prompt (no collection fields)
-	want := "/conductor-plan --issue 42 --repo /repo/app"
 	got := planPrompt(ws, issue, nil, "")
-	if got != want {
-		t.Errorf("planPrompt without collection =\n  %q\nwant\n  %q", got, want)
+
+	// Must end with the base command (no collection flags).
+	wantSuffix := "/conductor-plan --issue 42 --repo /repo/app"
+	if !strings.HasSuffix(got, wantSuffix) {
+		t.Errorf("planPrompt without collection: expected suffix %q, got:\n%q", wantSuffix, got)
+	}
+	// Must contain the complexity scale prefix.
+	if !strings.Contains(got, "## Workspace complexity scale") {
+		t.Errorf("planPrompt without collection: missing complexity scale header, got:\n%q", got)
+	}
+	// Must not contain collection context.
+	if strings.Contains(got, "## Shared collection context") {
+		t.Errorf("planPrompt without collection: unexpectedly contains collection context, got:\n%q", got)
 	}
 }
 

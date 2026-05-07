@@ -52,6 +52,60 @@ function SigningStrategyEditor({ workspace, onSave }: { workspace: types.Workspa
   );
 }
 
+const COMPLEXITY_SCALE_OPTIONS: { value: string; label: string; description: string; advanced?: boolean }[] = [
+  { value: "",         label: "T-shirt (default)", description: "XS, S, M, L, XL — intuitive for most teams" },
+  { value: "fibonacci", label: "Fibonacci",         description: "1, 2, 3, 5, 8, 13, 21, ? — more granular; use ? when work needs breakdown" },
+  { value: "linear10",  label: "Linear 1–10",       description: "1–10 integer scale — only recommended when teams have calibrated baselines", advanced: true },
+];
+
+function ComplexityScaleEditor({ workspace, onSave }: { workspace: types.Workspace; onSave: () => void }) {
+  const current = workspace.complexity_scale ?? "";
+  const [showAdvanced, setShowAdvanced] = useState(current === "linear10");
+
+  async function save(scale: string) {
+    const updated = types.Workspace.createFrom({
+      ...workspace,
+      complexity_scale: scale === "" ? undefined : scale,
+    });
+    await UpdateWorkspace(updated);
+    onSave();
+  }
+
+  const visibleOptions = COMPLEXITY_SCALE_OPTIONS.filter((opt) => !opt.advanced || showAdvanced);
+
+  return (
+    <div>
+      <div className="text-xs text-slate-400 mb-2">Complexity scale</div>
+      <div className="flex flex-col gap-1.5">
+        {visibleOptions.map((opt) => (
+          <label key={opt.value} className="flex items-start gap-2 text-xs cursor-pointer">
+            <input
+              type="radio"
+              name={`complexity-scale-${workspace.id}`}
+              value={opt.value}
+              checked={current === opt.value}
+              onChange={() => save(opt.value)}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="text-slate-200">{opt.label}</span>
+              <span className="text-slate-500 ml-1">— {opt.description}</span>
+            </span>
+          </label>
+        ))}
+        {!showAdvanced && (
+          <button
+            onClick={() => setShowAdvanced(true)}
+            className="text-xs text-slate-500 hover:text-slate-400 text-left mt-0.5"
+          >
+            Show advanced options
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AutoArchiveEditor({ workspace, onSave }: { workspace: types.Workspace; onSave: () => void }) {
   const cfg = workspace.auto_archive ?? { enabled: false, days_closed: 7 };
   const [enabled, setEnabled] = useState(cfg.enabled);
@@ -517,6 +571,7 @@ export function WorkspacesPanel() {
                       <div className="text-xs text-slate-400 mb-2">Pipeline</div>
                       <PipelineEditor workspace={ws} />
                     </div>
+                    <ComplexityScaleEditor workspace={ws} onSave={refresh} />
                     <AutoArchiveEditor workspace={ws} onSave={refresh} />
                     <RetryPolicyEditor workspace={ws} onSave={refresh} />
                     <SigningStrategyEditor workspace={ws} onSave={refresh} />

@@ -2323,6 +2323,7 @@ export namespace types {
 	    // Go type: time
 	    provisioning_at?: any;
 	    retry_policy?: RetryPolicy;
+	    complexity_scale?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Workspace(source);
@@ -2349,6 +2350,7 @@ export namespace types {
 	        this.provisioning = source["provisioning"];
 	        this.provisioning_at = this.convertValues(source["provisioning_at"], null);
 	        this.retry_policy = this.convertValues(source["retry_policy"], RetryPolicy);
+	        this.complexity_scale = source["complexity_scale"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

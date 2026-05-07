@@ -64,6 +64,16 @@ const (
 	SigningStrategyLocal     SigningStrategy = "local"
 	SigningStrategyManual    SigningStrategy = "manual"
 )
+
+// ComplexityScale selects which estimation vocabulary the planner emits for
+// a workspace (issue #233). Empty string is equivalent to ComplexityScaleTShirt.
+type ComplexityScale string
+
+const (
+	ComplexityScaleTShirt   ComplexityScale = "tshirt"
+	ComplexityScaleFibonacci ComplexityScale = "fibonacci"
+	ComplexityScaleLinear10  ComplexityScale = "linear10"
+)
 type Workspace struct {
 	ID              string          `json:"id"`
 	DisplayName     string          `json:"display_name"`
@@ -98,6 +108,10 @@ type Workspace struct {
 	// RetryPolicy configures auto-retry behaviour for execute sessions in this
 	// workspace. Nil means use DefaultRetryPolicy (#221).
 	RetryPolicy *RetryPolicy `json:"retry_policy,omitempty"`
+
+	// ComplexityScale selects the estimation vocabulary for this workspace's
+	// planner output. Empty means tshirt (default). See internal/complexity/scales.go.
+	ComplexityScale ComplexityScale `json:"complexity_scale,omitempty"`
 }
 
 // WorkspacePipeline is the per-workspace pipeline configuration (issue #146).
