@@ -63,6 +63,7 @@ export function WorkspaceSwitcher({
   const WorkspaceButton = ({ w }: { w: types.Workspace }) => (
     <button
       key={w.id}
+      data-testid="workspace-chip"
       onClick={() => setSelected(w.id)}
       className={
         "px-2 py-0.5 rounded border inline-flex items-center gap-1.5 " +
