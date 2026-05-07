@@ -340,3 +340,89 @@ func TestRetryExecuteForApprovedPlan_RequiresRegistry(t *testing.T) {
 		t.Fatal("expected error when wsReg and store are nil")
 	}
 }
+
+// Issue #247: when an execute session fails after a PR has been opened,
+// handleSessionStateChange must move the card to REVIEW and emit a toast.
+func TestHandleSessionStateChange_RollsBackToReviewWhenPROpen(t *testing.T) {
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	const wsID = "ws1"
+	const issueNum = 77
+	prNum := 99
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: wsID,
+		Number:      issueNum,
+		Title:       "issue with open PR",
+		State:       "open",
+		Column:      types.ColInProgress,
+		PRNumber:    &prNum,
+	}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+
+	a := &App{store: s, bus: eventbus.New()}
+	failedSess := types.Session{
+		ID:            "sess-fail",
+		WorkspaceID:   wsID,
+		IssueNumber:   issueNum,
+		Mode:          types.ModeExecute,
+		State:         types.StateBlocked,
+		BlockedReason: "lint failed",
+	}
+	a.handleSessionStateChange(failedSess, types.StateRunning)
+
+	// Card must be rolled back to REVIEW.
+	iss, err := s.LoadIssue(wsID, issueNum)
+	if err != nil {
+		t.Fatalf("LoadIssue: %v", err)
+	}
+	if iss.Column != types.ColReview {
+		t.Errorf("column = %q, want %q", iss.Column, types.ColReview)
+	}
+}
+
+// Issue #247: when an execute session fails with NO open PR, the card must
+// NOT be rolled back to REVIEW (preserve existing behaviour).
+func TestHandleSessionStateChange_NoRollbackWhenNoPR(t *testing.T) {
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	const wsID = "ws1"
+	const issueNum = 88
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: wsID,
+		Number:      issueNum,
+		Title:       "issue without PR",
+		State:       "open",
+		Column:      types.ColInProgress,
+	}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+
+	a := &App{store: s, bus: eventbus.New()}
+	failedSess := types.Session{
+		ID:            "sess-fail-no-pr",
+		WorkspaceID:   wsID,
+		IssueNumber:   issueNum,
+		Mode:          types.ModeExecute,
+		State:         types.StateFailed,
+		BlockedReason: "build failed",
+	}
+	a.handleSessionStateChange(failedSess, types.StateRunning)
+
+	// Column must NOT have changed — no PR, no rollback.
+	iss, err := s.LoadIssue(wsID, issueNum)
+	if err != nil {
+		t.Fatalf("LoadIssue: %v", err)
+	}
+	if iss.Column != types.ColInProgress {
+		t.Errorf("column = %q, want %q (no rollback expected without PR)", iss.Column, types.ColInProgress)
+	}
+}

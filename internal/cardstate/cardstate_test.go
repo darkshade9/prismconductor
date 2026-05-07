@@ -197,12 +197,22 @@ func TestDeriveCardState(t *testing.T) {
 			wantState: cardstate.CardStateMergeConflict,
 		},
 		{
-			name: "merge conflict NOT in review column → ignored",
+			name: "merge conflict NOT in review column, no PR → ignored",
 			params: cardstate.DeriveParams{
 				Column:       types.ColInProgress,
 				HasConflicts: true,
+				// PRNumber nil: conflict signal exists but no PR yet, so ignored.
 			},
 			wantState: cardstate.CardStateTodo,
+		},
+		{
+			name: "merge conflict with PR, NOT in review column → merge_conflict",
+			params: cardstate.DeriveParams{
+				Column:       types.ColInProgress,
+				PRNumber:     ptr(7),
+				HasConflicts: true,
+			},
+			wantState: cardstate.CardStateMergeConflict,
 		},
 		{
 			name: "tests failing in review column",
@@ -214,12 +224,22 @@ func TestDeriveCardState(t *testing.T) {
 			wantState: cardstate.CardStateTestsFailing,
 		},
 		{
-			name: "tests failing NOT in review column → ignored",
+			name: "tests failing NOT in review column, no PR → ignored",
 			params: cardstate.DeriveParams{
 				Column:          types.ColInProgress,
 				HasTestsFailing: true,
+				// PRNumber nil: test signal exists but no PR yet, so ignored.
 			},
 			wantState: cardstate.CardStateTodo,
+		},
+		{
+			name: "tests failing with PR, NOT in review column → tests_failing",
+			params: cardstate.DeriveParams{
+				Column:          types.ColInProgress,
+				PRNumber:        ptr(7),
+				HasTestsFailing: true,
+			},
+			wantState: cardstate.CardStateTestsFailing,
 		},
 		{
 			name: "last_failure (blocked reason) → blocked",

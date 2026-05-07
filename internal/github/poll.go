@@ -96,6 +96,11 @@ type Poller struct {
 	// can filter out the conductor's own comments from the unread-badge signal.
 	ghUserOnce sync.Once
 	ghUser     string
+
+	// lastPollAt records the time the most recent fanOut completed. The watchdog
+	// goroutine uses it to detect a stalled loop (issue #247).
+	lastPollMu sync.Mutex
+	lastPollAt time.Time
 }
 
 // NewPoller constructs a Poller with sensible defaults.
@@ -164,6 +169,9 @@ func (p *Poller) Run(ctx context.Context) {
 	p.running = true
 	p.mu.Unlock()
 
+	// Watchdog: restarts a stalled poll loop (issue #247).
+	go p.runWatchdog(ctx)
+
 	// Initial fetch.
 	p.fanOut(ctx)
 
@@ -222,10 +230,55 @@ func (p *Poller) fanOut(ctx context.Context) {
 		}(ws)
 	}
 	wg.Wait()
+	now := time.Now()
+	p.lastPollMu.Lock()
+	p.lastPollAt = now
+	p.lastPollMu.Unlock()
 	if p.Bus != nil {
 		p.Bus.Publish(eventbus.EventType("github_poll_done"), map[string]any{
-			"at": time.Now(),
+			"at": now,
 		})
+	}
+}
+
+// LastPollAt returns the time the most recent fanOut completed, or zero if
+// no poll has completed yet. Safe for concurrent use.
+func (p *Poller) LastPollAt() time.Time {
+	p.lastPollMu.Lock()
+	defer p.lastPollMu.Unlock()
+	return p.lastPollAt
+}
+
+// runWatchdog monitors lastPollAt and pokes the poll loop if it goes quiet
+// for more than 3× the configured interval. Emits EvtPollerWatchdogFired
+// on the bus so the app layer can surface a toast (issue #247).
+// Returns when ctx is cancelled.
+func (p *Poller) runWatchdog(ctx context.Context) {
+	threshold := 3 * p.Interval
+	ticker := time.NewTicker(p.Interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.lastPollMu.Lock()
+			last := p.lastPollAt
+			p.lastPollMu.Unlock()
+			if last.IsZero() {
+				continue // no poll has completed yet; watchdog not armed
+			}
+			if time.Since(last) < threshold {
+				continue
+			}
+			log.Printf("github poller watchdog: no poll completed in %v — poking loop", time.Since(last).Round(time.Second))
+			p.PokeNow()
+			if p.Bus != nil {
+				p.Bus.Publish(eventbus.EvtPollerWatchdogFired, map[string]any{
+					"stale_seconds": int(time.Since(last).Seconds()),
+				})
+			}
+		}
 	}
 }
 

@@ -924,7 +924,7 @@ function StatusRow({
   }
 
   const showConflicts =
-    conflictsInfo && column === "review" && !activeSession && !pausedSession && !waitingForPool;
+    conflictsInfo && !activeSession && !pausedSession && !waitingForPool;
   if (showConflicts && conflictsInfo) {
     const fileCount = conflictsInfo.conflicting_files?.length ?? 0;
     return (
@@ -963,7 +963,7 @@ function StatusRow({
   }
 
   const showTestsFailing =
-    testsFailingInfo && column === "review" && !activeSession && !pausedSession && !waitingForPool;
+    testsFailingInfo && !activeSession && !pausedSession && !waitingForPool;
   if (showTestsFailing && testsFailingInfo) {
     const jobCount = testsFailingInfo.failing_jobs?.length ?? 0;
     const maxReached = testsFailingInfo.max_attempts_reached ?? false;
