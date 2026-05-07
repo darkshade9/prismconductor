@@ -65,11 +65,17 @@ jobs:
         # Runs only if the cached step didn't finish cleanly — usually the
         # GitHub Actions cache backend hanging mid-restore. The 3-min cap
         # above means we wasted at most 3 min before falling through here.
+        #
+        # The dpkg lock is sometimes held by the runner's background
+        # unattended-upgrades process. Stop it before installing and pass
+        # DPkg::Lock::Timeout so apt waits up to 60 s instead of dying.
         if: steps.apt_cache.outcome != 'success'
         run: |
           echo "::warning::apt-cache step did not succeed (outcome=${{ steps.apt_cache.outcome }}); falling back to plain apt-get install"
-          sudo apt-get update
-          sudo apt-get install -y \
+          sudo systemctl stop unattended-upgrades || true
+          sudo killall apt-get || true
+          sudo apt-get -o DPkg::Lock::Timeout=60 update
+          sudo apt-get -o DPkg::Lock::Timeout=60 install -y \
             libgtk-3-dev \
             libwebkit2gtk-4.0-dev \
             build-essential \
