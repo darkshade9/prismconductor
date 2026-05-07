@@ -13,21 +13,21 @@
       "shell": "/bin/bash"
     },
     "skill_profile": {
+      "extra_context_files": null,
       "mode": "bundled",
-      "use_conductor_plan": true,
-      "use_conductor_execute": true,
-      "use_conductor_close": false,
-      "native_plan_command": "",
-      "native_execute_command": "",
       "native_close_command": "",
-      "extra_context_files": null
+      "native_execute_command": "",
+      "native_plan_command": "",
+      "use_conductor_close": false,
+      "use_conductor_execute": true,
+      "use_conductor_plan": true
     },
     "conventions": {
-      "test_command": "",
       "build_command": "",
       "lint_command": "",
+      "package_manager": "",
       "py_env_path": "",
-      "package_manager": ""
+      "test_command": ""
     },
     "complexity_scale": "tshirt",
     "enabled": true
@@ -46,21 +46,21 @@
       "shell": "/bin/bash"
     },
     "skill_profile": {
+      "extra_context_files": null,
       "mode": "bundled",
-      "use_conductor_plan": true,
-      "use_conductor_execute": true,
-      "use_conductor_close": false,
-      "native_plan_command": "",
-      "native_execute_command": "",
       "native_close_command": "",
-      "extra_context_files": null
+      "native_execute_command": "",
+      "native_plan_command": "",
+      "use_conductor_close": false,
+      "use_conductor_execute": true,
+      "use_conductor_plan": true
     },
     "conventions": {
-      "test_command": "",
       "build_command": "",
       "lint_command": "",
+      "package_manager": "",
       "py_env_path": "",
-      "package_manager": ""
+      "test_command": ""
     },
     "enabled": true
   }
