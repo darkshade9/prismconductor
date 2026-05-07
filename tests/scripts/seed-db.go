@@ -1,8 +1,8 @@
 //go:build ignore
 
-// seed-db generates tests/fixtures/seed.db — the canonical SQLite fixture
-// used by the visual smoke spec (tests/e2e/visual.spec.ts). Run from the
-// repo root:
+// seed-db generates tests/fixtures/seed.db and tests/fixtures/workspaces.json
+// — the canonical fixtures used by the visual smoke spec
+// (tests/e2e/visual.spec.ts). Run from the repo root:
 //
 //	go run ./tests/scripts/seed-db.go [-out tests/fixtures/seed.db]
 //
@@ -10,6 +10,10 @@
 //   - "Seeded Project" — 5 cards spread across TODO/PLAN/IN_PROGRESS/REVIEW/DONE
 //     plus a ready-to-execute plan on the PLAN card.
 //   - "Empty Project" — no cards, used for the empty-board screenshot.
+//
+// workspaces.json is written alongside seed.db and must be copied to the
+// PRISMCONDUCTOR_DATA_DIR by the CI workflow so ListWorkspaces() can serve
+// the workspace chips in visual.spec.ts.
 package main
 
 import (
@@ -55,7 +59,60 @@ func main() {
 		log.Fatalf("seed: %v", err)
 	}
 
-	fmt.Printf("fixture written to %s\n", *out)
+	// Write workspaces.json so the workspace registry (which reads from
+	// workspaces.json, not the SQLite workspaces table) has the same data.
+	wsOut := filepath.Join(filepath.Dir(*out), "workspaces.json")
+	if err := writeWorkspacesJSON(wsOut); err != nil {
+		log.Fatalf("workspaces.json: %v", err)
+	}
+
+	fmt.Printf("fixture written to %s and %s\n", *out, wsOut)
+}
+
+// workspaceFixture mirrors the minimal fields that workspace.Registry reads.
+type workspaceFixture struct {
+	ID            string                 `json:"id"`
+	DisplayName   string                 `json:"display_name"`
+	RepoPath      string                 `json:"repo_path"`
+	GitHubOwner   string                 `json:"github_owner"`
+	GitHubRepo    string                 `json:"github_repo"`
+	DefaultBranch string                 `json:"default_branch"`
+	Color         string                 `json:"color"`
+	AgentEnv      map[string]interface{} `json:"agent_env"`
+	SkillProfile  map[string]interface{} `json:"skill_profile"`
+	Conventions   map[string]interface{} `json:"conventions"`
+	Enabled       bool                   `json:"enabled"`
+}
+
+func writeWorkspacesJSON(path string) error {
+	env := map[string]interface{}{"env_vars": map[string]interface{}{}, "pre_commands": []string{}, "shell": "/bin/bash"}
+	sp := map[string]interface{}{
+		"mode": "bundled", "use_conductor_plan": true, "use_conductor_execute": true,
+		"use_conductor_close": false, "native_plan_command": "", "native_execute_command": "",
+		"native_close_command": "", "extra_context_files": nil,
+	}
+	conv := map[string]interface{}{"test_command": "", "build_command": "", "lint_command": "", "py_env_path": "", "package_manager": ""}
+
+	workspaces := []workspaceFixture{
+		{
+			ID: "seeded-ws", DisplayName: "Seeded Project",
+			RepoPath: "/tmp/seeded-repo", GitHubOwner: "test", GitHubRepo: "seeded-repo",
+			DefaultBranch: "main", Color: "#3b82f6",
+			AgentEnv: env, SkillProfile: sp, Conventions: conv, Enabled: true,
+		},
+		{
+			ID: "empty-ws", DisplayName: "Empty Project",
+			RepoPath: "/tmp/empty-repo", GitHubOwner: "test", GitHubRepo: "empty-repo",
+			DefaultBranch: "main", Color: "#64748b",
+			AgentEnv: env, SkillProfile: sp, Conventions: conv, Enabled: true,
+		},
+	}
+
+	b, err := json.MarshalIndent(workspaces, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o644)
 }
 
 func applySchema(db *sql.DB) error {

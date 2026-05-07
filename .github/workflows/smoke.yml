@@ -97,6 +97,7 @@ jobs:
           export PRISMCONDUCTOR_DATA_DIR="$RUNNER_TEMP/prismconductor-smoke"
           mkdir -p "$PRISMCONDUCTOR_DATA_DIR"
           cp tests/fixtures/seed.db "$PRISMCONDUCTOR_DATA_DIR/conductor.db"
+          cp tests/fixtures/workspaces.json "$PRISMCONDUCTOR_DATA_DIR/workspaces.json"
           echo "PRISMCONDUCTOR_DATA_DIR=$PRISMCONDUCTOR_DATA_DIR" >> "$GITHUB_ENV"
           xvfb-run --auto-servernum --server-args='-screen 0 1280x800x24' \
             wails dev -loglevel error > /tmp/wails-dev.log 2>&1 &
