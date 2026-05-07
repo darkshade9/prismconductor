@@ -1,4 +1,8 @@
 name: smoke
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
 on:
   push:
     # main is covered by build.yml (full matrix + security); smoke runs on feature branches only
