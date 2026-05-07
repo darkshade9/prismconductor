@@ -110,7 +110,7 @@ test.describe("visual captures", () => {
     await disableAnimations(page);
 
     // Click the "Seeded Project" workspace chip to filter to that workspace.
-    await page.getByRole("button", { name: "Seeded Project" }).click();
+    await page.getByRole("button", { name: "Seeded Project", exact: true }).click();
     await page.waitForTimeout(500);
 
     await page.screenshot({
@@ -124,7 +124,7 @@ test.describe("visual captures", () => {
     await disableAnimations(page);
 
     // Select seeded workspace first so the PLAN-column card is visible.
-    await page.getByRole("button", { name: "Seeded Project" }).click();
+    await page.getByRole("button", { name: "Seeded Project", exact: true }).click();
     await page.waitForTimeout(500);
 
     // Click the plan-ready card (issue #102 — "Refactor database schema").
