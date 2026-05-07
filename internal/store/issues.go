@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -103,6 +104,13 @@ func (s *Store) SaveIssue(iss types.Issue) (bool, error) {
 			// the push succeeded. MarkPROpened is the only caller that clears it.
 			if prev.NeedsPRInfo != nil {
 				iss.NeedsPRInfo = prev.NeedsPRInfo
+			}
+			// Preserve WaitingForDep: set by the GitHub poller when a cross-
+			// workspace dep is still open; cleared by the same poller when the
+			// dep closes. A generic SaveIssue (e.g. from applyResult) must not
+			// clobber this conductor-managed field (issue #210).
+			if prev.WaitingForDep != nil {
+				iss.WaitingForDep = prev.WaitingForDep
 			}
 			// Preserve FailureReason: set by the conductor on execute failure;
 			// the GitHub poll has no opinion on it (#194).
@@ -900,5 +908,29 @@ func (s *Store) SetIssueFailureReason(workspaceID string, issueNumber int, reaso
 	_, err := s.DB.Exec(
 		`UPDATE issues SET json = json_set(json, '$.failure_reason', ?) WHERE workspace_id = ? AND number = ?`,
 		reason, workspaceID, issueNumber)
+	return err
+}
+
+// SetIssueWaitingForDep writes (or clears) the waiting_for_dep field in the
+// issue JSON blob. dep == nil clears the field. Uses json_set to bypass
+// SaveIssue's preservation logic, same pattern as SetIssueWaitingForPool.
+// Only the GitHub poller should call this (issue #210).
+func (s *Store) SetIssueWaitingForDep(workspaceID string, issueNumber int, dep *types.IssueDep) error {
+	if s == nil || s.DB == nil {
+		return errors.New("store unavailable")
+	}
+	if dep == nil {
+		_, err := s.DB.Exec(
+			`UPDATE issues SET json = json_remove(json, '$.waiting_for_dep') WHERE workspace_id = ? AND number = ?`,
+			workspaceID, issueNumber)
+		return err
+	}
+	b, err := json.Marshal(dep)
+	if err != nil {
+		return err
+	}
+	_, err = s.DB.Exec(
+		`UPDATE issues SET json = json_set(json, '$.waiting_for_dep', json(?)) WHERE workspace_id = ? AND number = ?`,
+		string(b), workspaceID, issueNumber)
 	return err
 }

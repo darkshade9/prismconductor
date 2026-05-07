@@ -26,6 +26,12 @@ const (
 	EvtIssueClosed         EventKind = "issue_closed"
 	EvtPoolEnqueued        EventKind = "pool_enqueued"
 	EvtPoolDequeued        EventKind = "pool_dequeued"
+	// EvtDepWaiting fires when an unresolved cross-workspace dep is detected
+	// (issue #210). DepInfo carries the blocking dep identity.
+	EvtDepWaiting  EventKind = "dep_waiting"
+	// EvtDepResolved fires when all cross-workspace deps for an issue are
+	// satisfied and WaitingForDep is cleared (issue #210).
+	EvtDepResolved EventKind = "dep_resolved"
 )
 
 // Event is the input to ApplyEvent. It carries the kind plus any additional
@@ -37,6 +43,8 @@ type Event struct {
 	PRNumber     *int
 	PRURL        string
 	OccurredAt   time.Time
+	// DepInfo is populated for EvtDepWaiting events (issue #210).
+	DepInfo *types.IssueDep
 }
 
 // SideEffect is an explicit action that must be performed after a state
@@ -137,6 +145,10 @@ func ApplyEvent(
 		next.WaitingForPool = true
 	case EvtPoolDequeued:
 		next.WaitingForPool = false
+	case EvtDepWaiting:
+		next.WaitingForDep = ev.DepInfo
+	case EvtDepResolved:
+		next.WaitingForDep = nil
 	}
 
 	toState, details := DeriveCardState(next)

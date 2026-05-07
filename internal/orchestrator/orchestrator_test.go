@@ -179,6 +179,89 @@ func TestRunRank_NoOrchestratorPool_NoOps(t *testing.T) {
 	}
 }
 
+// multiWsStubStore routes ListIssues by workspace ID for cross-workspace tests.
+type multiWsStubStore struct {
+	stubStore
+	byWS map[string][]types.Issue
+}
+
+func (s *multiWsStubStore) ListIssues(wsID string) ([]types.Issue, error) {
+	s.listIssuesHits++
+	if v, ok := s.byWS[wsID]; ok {
+		return v, nil
+	}
+	return s.issues, nil
+}
+
+func TestPickNextUnblockedCrossWsDepOpen(t *testing.T) {
+	// Issue 1 in ws1 depends on issue 10 in ws2 (cross-workspace).
+	// ws2 issue 10 is still open → issue 1 must be blocked.
+	ws2Issues := []types.Issue{
+		{WorkspaceID: "ws2", Number: 10, State: "open"},
+	}
+	ws1Issues := []types.Issue{
+		{WorkspaceID: "ws1", Number: 1, State: "open", Column: types.ColTodo,
+			Dependencies: types.IssueDepList{{WorkspaceID: "ws2", Number: 10}}},
+	}
+	st := &multiWsStubStore{
+		byWS: map[string][]types.Issue{"ws2": ws2Issues, "ws1": ws1Issues},
+	}
+	st.issues = ws1Issues
+
+	crossWsOpen := buildCrossWsOpenSet(st, ws1Issues)
+	got := pickNextUnblocked(ws1Issues, ws1Issues, crossWsOpen)
+	if got != nil {
+		t.Errorf("expected nil (blocked on open cross-ws dep), got issue #%d", got.Number)
+	}
+}
+
+func TestPickNextUnblockedCrossWsDepClosed(t *testing.T) {
+	// Issue 1 in ws1 depends on issue 10 in ws2, but ws2 issue 10 is closed.
+	// → issue 1 is unblocked.
+	ws2Issues := []types.Issue{
+		{WorkspaceID: "ws2", Number: 10, State: "closed"},
+	}
+	ws1Issues := []types.Issue{
+		{WorkspaceID: "ws1", Number: 1, State: "open", Column: types.ColTodo,
+			Dependencies: types.IssueDepList{{WorkspaceID: "ws2", Number: 10}}},
+	}
+	st := &multiWsStubStore{
+		byWS: map[string][]types.Issue{"ws2": ws2Issues, "ws1": ws1Issues},
+	}
+	st.issues = ws1Issues
+
+	crossWsOpen := buildCrossWsOpenSet(st, ws1Issues)
+	got := pickNextUnblocked(ws1Issues, ws1Issues, crossWsOpen)
+	if got == nil {
+		t.Error("expected issue to be unblocked (cross-ws dep is closed), got nil")
+	}
+}
+
+func TestBuildCrossWsOpenSetDedupsLoads(t *testing.T) {
+	// Two candidates both reference ws2; buildCrossWsOpenSet should only call
+	// ListIssues("ws2") once.
+	ws2Issues := []types.Issue{
+		{WorkspaceID: "ws2", Number: 5, State: "open"},
+	}
+	ws1Issues := []types.Issue{
+		{WorkspaceID: "ws1", Number: 1, State: "open", Column: types.ColTodo,
+			Dependencies: types.IssueDepList{{WorkspaceID: "ws2", Number: 5}}},
+		{WorkspaceID: "ws1", Number: 2, State: "open", Column: types.ColTodo,
+			Dependencies: types.IssueDepList{{WorkspaceID: "ws2", Number: 5}}},
+	}
+	st := &multiWsStubStore{
+		byWS: map[string][]types.Issue{"ws2": ws2Issues, "ws1": ws1Issues},
+	}
+	st.issues = ws1Issues
+
+	buildCrossWsOpenSet(st, ws1Issues)
+	// ListIssues("ws1") is never called; ListIssues("ws2") called once.
+	// Total hits should be 1 (only "ws2").
+	if st.listIssuesHits != 1 {
+		t.Errorf("ListIssues hit %d times, want 1 (ws2 deduped)", st.listIssuesHits)
+	}
+}
+
 // TestRunRank_ResolverHit invokes the LLM only when the resolver returns a
 // non-nil client. Confirms the resolver is consulted on every call (not at
 // construction time).

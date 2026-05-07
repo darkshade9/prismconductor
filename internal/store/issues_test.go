@@ -978,3 +978,120 @@ func TestSetIssueWaitingForPool_SetsTrue(t *testing.T) {
 		t.Fatal("WaitingForPool should be true after SetIssueWaitingForPool(true)")
 	}
 }
+
+func TestSetIssueWaitingForDep_SetAndClear(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      200,
+		State:       "open",
+		Column:      types.ColReview,
+	}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+
+	dep := &types.IssueDep{WorkspaceID: "infra", Number: 42}
+	if err := s.SetIssueWaitingForDep("ws1", 200, dep); err != nil {
+		t.Fatalf("SetIssueWaitingForDep(set): %v", err)
+	}
+
+	iss, err := s.LoadIssue("ws1", 200)
+	if err != nil {
+		t.Fatalf("LoadIssue after set: %v", err)
+	}
+	if iss.WaitingForDep == nil {
+		t.Fatal("WaitingForDep is nil after SetIssueWaitingForDep")
+	}
+	if iss.WaitingForDep.WorkspaceID != "infra" || iss.WaitingForDep.Number != 42 {
+		t.Errorf("WaitingForDep = %+v, want {infra 42}", iss.WaitingForDep)
+	}
+
+	// Clear it.
+	if err := s.SetIssueWaitingForDep("ws1", 200, nil); err != nil {
+		t.Fatalf("SetIssueWaitingForDep(clear): %v", err)
+	}
+
+	iss, err = s.LoadIssue("ws1", 200)
+	if err != nil {
+		t.Fatalf("LoadIssue after clear: %v", err)
+	}
+	if iss.WaitingForDep != nil {
+		t.Errorf("WaitingForDep = %+v after clear, want nil", iss.WaitingForDep)
+	}
+}
+
+func TestSaveIssuePreservesWaitingForDep(t *testing.T) {
+	s := newTestStore(t)
+	dep := &types.IssueDep{WorkspaceID: "svc", Number: 7}
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID:   "ws1",
+		Number:        201,
+		State:         "open",
+		Column:        types.ColReview,
+		WaitingForDep: dep,
+	}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+
+	// Simulate a GitHub poll tick: SaveIssue with no WaitingForDep set on the
+	// incoming issue (as the poller only calls SetIssueWaitingForDep, not SaveIssue).
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: "ws1",
+		Number:      201,
+		State:       "open",
+		Column:      types.ColReview,
+		Title:       "updated title",
+	}); err != nil {
+		t.Fatalf("SaveIssue (poll tick): %v", err)
+	}
+
+	iss, err := s.LoadIssue("ws1", 201)
+	if err != nil {
+		t.Fatalf("LoadIssue: %v", err)
+	}
+	if iss.WaitingForDep == nil {
+		t.Fatal("WaitingForDep was cleared by SaveIssue — preservation rule missing")
+	}
+	if iss.WaitingForDep.WorkspaceID != "svc" || iss.WaitingForDep.Number != 7 {
+		t.Errorf("WaitingForDep = %+v, want {svc 7}", iss.WaitingForDep)
+	}
+}
+
+func TestSaveIssuePreservesCrossWsDeps(t *testing.T) {
+	s := newTestStore(t)
+	crossDep := types.IssueDep{WorkspaceID: "infra", Number: 99}
+	sameDep := types.IssueDep{WorkspaceID: "", Number: 3}
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID:  "ws1",
+		Number:       202,
+		State:        "open",
+		Column:       types.ColTodo,
+		Dependencies: types.IssueDepList{crossDep, sameDep},
+	}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+
+	iss, err := s.LoadIssue("ws1", 202)
+	if err != nil {
+		t.Fatalf("LoadIssue: %v", err)
+	}
+	if len(iss.Dependencies) != 2 {
+		t.Fatalf("Dependencies len = %d, want 2", len(iss.Dependencies))
+	}
+
+	var hasCross, hasSame bool
+	for _, d := range iss.Dependencies {
+		if d.WorkspaceID == "infra" && d.Number == 99 {
+			hasCross = true
+		}
+		if d.WorkspaceID == "" && d.Number == 3 {
+			hasSame = true
+		}
+	}
+	if !hasCross {
+		t.Error("cross-workspace dep missing after round-trip")
+	}
+	if !hasSame {
+		t.Error("same-workspace dep missing after round-trip")
+	}
+}

@@ -17,6 +17,8 @@ export function AcknowledgeComment(arg1:string,arg2:number,arg3:number):Promise<
 
 export function ActivateGoal(arg1:string):Promise<void>;
 
+export function AddIssueDep(arg1:string,arg2:number,arg3:types.IssueDep):Promise<void>;
+
 export function AddManualIssue(arg1:string,arg2:number,arg3:string,arg4:string,arg5:Array<string>,arg6:string):Promise<types.Issue>;
 
 export function AddWorkspace(arg1:types.Workspace):Promise<void>;
@@ -178,6 +180,8 @@ export function RefreshIssuesNow():Promise<void>;
 export function RejectPlan(arg1:string,arg2:number):Promise<void>;
 
 export function RemoveIssue(arg1:string,arg2:number):Promise<void>;
+
+export function RemoveIssueDep(arg1:string,arg2:number,arg3:types.IssueDep):Promise<void>;
 
 export function RemoveWorkspace(arg1:string):Promise<void>;
 

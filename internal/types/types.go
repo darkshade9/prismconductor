@@ -2,6 +2,7 @@
 package types
 
 import (
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -348,6 +349,41 @@ const (
 	GoalAbandoned GoalStatus = "abandoned"
 )
 
+// --- IssueDep (§6.3, issue #210) ---
+
+// IssueDep identifies a dependency on a GitHub issue, optionally in another
+// workspace. WorkspaceID == "" means same workspace (legacy same-workspace
+// behavior). WorkspaceID is the short workspace key (e.g. "infra", "app").
+type IssueDep struct {
+	WorkspaceID string `json:"workspace_id"`
+	Number      int    `json:"number"`
+}
+
+// IssueDepList is a slice of IssueDep that unmarshals transparently from the
+// legacy []int format (same-workspace deps written before issue #210) as well
+// as the new []IssueDep format.
+type IssueDepList []IssueDep
+
+func (d *IssueDepList) UnmarshalJSON(b []byte) error {
+	// New canonical format: [{workspace_id,number}…]
+	var deps []IssueDep
+	if err := json.Unmarshal(b, &deps); err == nil {
+		*d = deps
+		return nil
+	}
+	// Legacy format: [1, 2, 3] — treat as same-workspace deps.
+	var ints []int
+	if err := json.Unmarshal(b, &ints); err != nil {
+		return err
+	}
+	out := make(IssueDepList, len(ints))
+	for i, n := range ints {
+		out[i] = IssueDep{Number: n}
+	}
+	*d = out
+	return nil
+}
+
 // --- Issue (§6.3) ---
 
 type Issue struct {
@@ -360,10 +396,10 @@ type Issue struct {
 	URL         string    `json:"url"`
 	UpdatedAt   time.Time `json:"updated_at"`
 
-	GoalID       *string     `json:"goal_id,omitempty"`
-	Priority     float64     `json:"priority"`
-	Dependencies []int       `json:"dependencies"`
-	DepRationale string      `json:"dep_rationale"`
+	GoalID       *string      `json:"goal_id,omitempty"`
+	Priority     float64      `json:"priority"`
+	Dependencies IssueDepList `json:"dependencies"`
+	DepRationale string       `json:"dep_rationale"`
 	Column       BoardColumn `json:"column"`
 	Plan         *Plan       `json:"plan,omitempty"`
 	SessionID    *string     `json:"session_id,omitempty"`
@@ -375,6 +411,12 @@ type Issue struct {
 	// WaitingForPool is set true when a spawn attempt was queued because no
 	// pool had free capacity (issue #40). Cleared on successful drain.
 	WaitingForPool bool `json:"waiting_for_pool,omitempty"`
+
+	// WaitingForDep is set to the first unresolved cross-workspace dependency
+	// for this issue. Non-nil when the issue is in REVIEW but a referenced
+	// dep in another workspace is still open (issue #210). Cleared by the
+	// GitHub poller when the dep closes/merges.
+	WaitingForDep *IssueDep `json:"waiting_for_dep,omitempty"`
 
 	// Pipeline tracking fields (issue #146). Stamped at first pipeline-step
 	// spawn so in-flight cards continue on the saved pipeline version.
