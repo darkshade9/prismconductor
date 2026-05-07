@@ -13,6 +13,9 @@ jobs:
     # Pin until upstream Wails fully supports 4.1 in the default profile.
     runs-on: ubuntu-22.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v6
         with:
