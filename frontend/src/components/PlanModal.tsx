@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { noAutoCorrect } from "../lib/inputs";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ApprovePlan, LatestPlan, PlanCostEstimate, RejectPlan, SetIssueLabels, SubmitAnswers, WriteAnswersOnly } from "../../wailsjs/go/main/App";
+import { AddIssueDep, ApprovePlan, LatestPlan, ListIssues, PlanCostEstimate, RejectPlan, RemoveIssueDep, SetIssueLabels, SubmitAnswers, WriteAnswersOnly } from "../../wailsjs/go/main/App";
 import { main, types } from "../../wailsjs/go/models";
 import { useIssueStore } from "../stores/issueStore";
 import { useIssueViewStore } from "../stores/useIssueViewStore";
@@ -306,6 +306,8 @@ export function PlanModal({
                 </Section>
               )}
 
+              <DepsSection issue={issue} onIssueRefresh={refreshIssues} />
+
               <Section title="Refine plan (free-form)">
                 <textarea
                   {...noAutoCorrect}
@@ -555,4 +557,154 @@ function minutesAgo(iso: any): number | null {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return null;
   return Math.max(0, Math.floor((Date.now() - d.getTime()) / 60000));
+}
+
+// DepsSection lets users manage cross-workspace issue dependencies (issue #210).
+// Shows current deps as removable chips and a workspace-picker + issue-search
+// form to add new ones.
+function DepsSection({
+  issue,
+  onIssueRefresh,
+}: {
+  issue: types.Issue;
+  onIssueRefresh: (wsID?: string) => Promise<void> | void;
+}) {
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const [adding, setAdding] = useState(false);
+  const [selWsID, setSelWsID] = useState("");
+  const [siblingIssues, setSiblingIssues] = useState<types.Issue[]>([]);
+  const [loadingIssues, setLoadingIssues] = useState(false);
+  const [selIssueNum, setSelIssueNum] = useState<number | "">("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Only offer cross-workspace deps — sibling workspaces exclude the current one.
+  const siblings = workspaces.filter((w) => w.id !== issue.workspace_id && w.enabled);
+
+  useEffect(() => {
+    if (!selWsID) { setSiblingIssues([]); return; }
+    setLoadingIssues(true);
+    setSelIssueNum("");
+    ListIssues(selWsID)
+      .then((issues) => setSiblingIssues(issues ?? []))
+      .catch(() => setSiblingIssues([]))
+      .finally(() => setLoadingIssues(false));
+  }, [selWsID]);
+
+  async function addDep() {
+    if (!selWsID || !selIssueNum) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await AddIssueDep(issue.workspace_id, issue.number, new types.IssueDep({ workspace_id: selWsID, number: selIssueNum }));
+      setAdding(false);
+      setSelWsID("");
+      setSelIssueNum("");
+      await onIssueRefresh(issue.workspace_id);
+    } catch (e: any) {
+      setErr(String(e?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeDep(dep: types.IssueDep) {
+    setBusy(true);
+    setErr(null);
+    try {
+      await RemoveIssueDep(issue.workspace_id, issue.number, dep);
+      await onIssueRefresh(issue.workspace_id);
+    } catch (e: any) {
+      setErr(String(e?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const deps = issue.dependencies ?? [];
+  // Only show cross-workspace deps in this section; same-workspace deps shown on card.
+  const crossDeps = deps.filter((d) => d.workspace_id && d.workspace_id !== issue.workspace_id);
+
+  if (crossDeps.length === 0 && !adding && siblings.length === 0) return null;
+
+  return (
+    <Section title="Cross-workspace dependencies">
+      <div className="space-y-2">
+        {crossDeps.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {crossDeps.map((d) => (
+              <span
+                key={`${d.workspace_id}#${d.number}`}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-amber-900/30 border border-amber-700 text-amber-200"
+              >
+                {d.workspace_id}#{d.number}
+                <button
+                  type="button"
+                  onClick={() => removeDep(d)}
+                  disabled={busy}
+                  className="text-amber-400 hover:text-red-400 disabled:opacity-50 leading-none"
+                  title="Remove dependency"
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {adding ? (
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              value={selWsID}
+              onChange={(e) => setSelWsID(e.target.value)}
+              className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200"
+            >
+              <option value="">Workspace…</option>
+              {siblings.map((w) => (
+                <option key={w.id} value={w.id}>{w.display_name || w.id}</option>
+              ))}
+            </select>
+            {selWsID && (
+              <select
+                value={selIssueNum}
+                onChange={(e) => setSelIssueNum(Number(e.target.value) || "")}
+                disabled={loadingIssues}
+                className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 max-w-[220px]"
+              >
+                <option value="">{loadingIssues ? "Loading…" : "Issue…"}</option>
+                {siblingIssues
+                  .filter((i) => i.state === "open" || i.state === "")
+                  .map((i) => (
+                    <option key={i.number} value={i.number}>#{i.number} — {i.title.slice(0, 60)}</option>
+                  ))}
+              </select>
+            )}
+            <button
+              type="button"
+              onClick={addDep}
+              disabled={busy || !selWsID || !selIssueNum}
+              className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-xs"
+            >
+              Add
+            </button>
+            <button
+              type="button"
+              onClick={() => { setAdding(false); setSelWsID(""); setSelIssueNum(""); }}
+              className="text-xs text-slate-500 hover:text-slate-300"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : siblings.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="text-xs text-sky-400 hover:text-sky-300"
+          >
+            + Add cross-workspace dependency
+          </button>
+        ) : null}
+        {err && <div className="text-red-400 text-xs">{err}</div>}
+      </div>
+    </Section>
+  );
 }

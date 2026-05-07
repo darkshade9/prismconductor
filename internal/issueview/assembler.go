@@ -454,6 +454,7 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		HasOrphanQuestion: orphanQuestion != nil,
 		PlanFailed:        planFailed,
 		PendingRetry:      pendingRetry,
+		WaitingForDep:     iss.WaitingForDep,
 	})
 	var csDetailsPtr *cardstate.CardStateDetails
 	if cs != cardstate.CardStateTodo && cs != cardstate.CardStateDone {
@@ -478,6 +479,7 @@ func (a *Assembler) Assemble(workspaceID string, issueNumber int) (IssueView, er
 		UnreadCommentCount: unreadCommentCount,
 		CardState:          cs,
 		CardStateDetails:   csDetailsPtr,
+		WaitingForDep:      iss.WaitingForDep,
 	}, nil
 }
 

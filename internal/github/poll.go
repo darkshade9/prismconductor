@@ -25,6 +25,9 @@ type Store interface {
 	SaveLabels(workspaceID string, labels []types.Label) error
 	UpsertPRComment(c types.PRComment) (bool, error)
 	MostRecentFailedExecuteSession(workspaceID string, issueNumber int) (*types.Session, error)
+	// SetIssueWaitingForDep writes or clears the waiting_for_dep field
+	// on an issue JSON blob (issue #210).
+	SetIssueWaitingForDep(workspaceID string, issueNumber int, dep *types.IssueDep) error
 }
 
 // WorkspaceSource lets the poller pick up newly-added workspaces between ticks.
@@ -402,6 +405,14 @@ func (p *Poller) pollOne(ctx context.Context, ws types.Workspace) error {
 		}
 	}
 
+	// Cross-workspace dep check (issue #210): for issues with IssueDep entries
+	// referencing other workspaces, check if those deps are still open. If any
+	// are, set WaitingForDep on the issue to surface a UI badge. When all
+	// cross-workspace deps are satisfied, clear WaitingForDep. Bounded by the
+	// number of issues with cross-workspace deps (typically few), so API impact
+	// is negligible. Uses the current prev list since it includes all columns.
+	p.probeDepStatus(ws, prev)
+
 	// Piggy-back label fetch on the same tick. Failures are logged and don't
 	// abort the issue cycle (the cache stays stale until the next tick).
 	if labels, err := p.Client.ListLabels(ctx, ws); err != nil {
@@ -412,6 +423,72 @@ func (p *Poller) pollOne(ctx context.Context, ws types.Workspace) error {
 		p.Bus.Publish(eventbus.EvtLabelsUpdated, map[string]any{"workspace_id": ws.ID})
 	}
 	return nil
+}
+
+// probeDepStatus checks cross-workspace dependencies for issues in prev and
+// sets or clears WaitingForDep on each issue accordingly (issue #210).
+// Only examines issues that have at least one cross-workspace dep. Loads each
+// sibling workspace's issue list at most once per tick.
+func (p *Poller) probeDepStatus(ws types.Workspace, prev []types.Issue) {
+	siblingCache := map[string]map[int]bool{} // wsID → open issue numbers
+
+	for _, iss := range prev {
+		var firstBlocking *types.IssueDep
+		for i := range iss.Dependencies {
+			dep := &iss.Dependencies[i]
+			if dep.WorkspaceID == "" {
+				continue // same-workspace deps managed by orchestrator
+			}
+			// Load and cache sibling workspace open-issue set.
+			openNums, ok := siblingCache[dep.WorkspaceID]
+			if !ok {
+				openNums = map[int]bool{}
+				siblingIssues, err := p.Store.ListIssues(dep.WorkspaceID)
+				if err != nil {
+					log.Printf("dep probe: list issues %s: %v", dep.WorkspaceID, err)
+					siblingCache[dep.WorkspaceID] = openNums
+					continue
+				}
+				for _, si := range siblingIssues {
+					if si.State == "" || si.State == "open" {
+						openNums[si.Number] = true
+					}
+				}
+				siblingCache[dep.WorkspaceID] = openNums
+			}
+			if openNums[dep.Number] {
+				firstBlocking = dep
+				break
+			}
+		}
+
+		// Determine whether current WaitingForDep matches desired state.
+		switch {
+		case firstBlocking != nil && (iss.WaitingForDep == nil ||
+			iss.WaitingForDep.WorkspaceID != firstBlocking.WorkspaceID ||
+			iss.WaitingForDep.Number != firstBlocking.Number):
+			// Set or update WaitingForDep.
+			dep := *firstBlocking
+			if err := p.Store.SetIssueWaitingForDep(ws.ID, iss.Number, &dep); err != nil {
+				log.Printf("dep probe: set waiting_for_dep %s#%d: %v", ws.ID, iss.Number, err)
+			} else if p.Bus != nil {
+				p.Bus.Publish(eventbus.EvtIssueLabelChanged, map[string]any{
+					"workspace_id": ws.ID,
+					"number":       iss.Number,
+				})
+			}
+		case firstBlocking == nil && iss.WaitingForDep != nil:
+			// Clear WaitingForDep — all cross-workspace deps satisfied.
+			if err := p.Store.SetIssueWaitingForDep(ws.ID, iss.Number, nil); err != nil {
+				log.Printf("dep probe: clear waiting_for_dep %s#%d: %v", ws.ID, iss.Number, err)
+			} else if p.Bus != nil {
+				p.Bus.Publish(eventbus.EvtIssueLabelChanged, map[string]any{
+					"workspace_id": ws.ID,
+					"number":       iss.Number,
+				})
+			}
+		}
+	}
 }
 
 func (p *Poller) publish(t eventbus.EventType, ws types.Workspace, iss types.Issue) {

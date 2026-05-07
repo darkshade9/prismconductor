@@ -33,6 +33,7 @@ type CardStateValue =
   | "in_progress"
   | "blocked"
   | "waiting_for_pool"
+  | "waiting_for_dep"
   | "needs_pr"
   | "orphan_question"
   | "merge_conflict"
@@ -143,6 +144,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, o
     ].some(phrase => combined.includes(phrase));
   })();
 
+  const waitingForDep = view?.waiting_for_dep ?? issue.waiting_for_dep ?? null;
   const blocked = (issue.dependencies ?? []).length > 0;
   const isPrimitive = !blocked && (issue.priority ?? 0) >= 0.7;
 
@@ -164,7 +166,8 @@ export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, o
         case "merge_conflict":
         case "tests_failing":
         case "plan_failed":     return "blocked";
-        case "review":          return "review";
+        case "review":
+        case "waiting_for_dep": return "review";
         // waiting_for_pool and needs_pr use hardcoded glows below.
         case "waiting_for_pool":
         case "needs_pr":
@@ -345,6 +348,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, o
         workspaceID={issue.workspace_id}
         issueNumber={issue.number}
         waitingForPool={issue.waiting_for_pool ?? false}
+        waitingForDep={waitingForDep}
         column={issue.column}
         prNumber={issue.pr_number ?? null}
         testsFailingInfo={testsFailingInfo}
@@ -578,6 +582,7 @@ function StatusRow({
   workspaceID,
   issueNumber,
   waitingForPool,
+  waitingForDep,
   column,
   prNumber,
   testsFailingInfo,
@@ -600,11 +605,12 @@ function StatusRow({
   orphanPRInfo: OrphanPRInfo | null;
   blocked: boolean;
   isPrimitive: boolean;
-  dependencies: number[];
+  dependencies: types.IssueDep[];
   labels: string[];
   workspaceID: string;
   issueNumber: number;
   waitingForPool: boolean;
+  waitingForDep: types.IssueDep | null;
   column: string;
   prNumber: number | null;
   testsFailingInfo: TestsFailingInfo | null;
@@ -1246,7 +1252,15 @@ function StatusRow({
         {isPrimitive && <span className="text-emerald-400">🔴 primitive</span>}
         {blocked && (
           <span className="text-amber-300">
-            🚫 blocked by {dependencies.map((n) => `#${n}`).join(", ")}
+            🚫 blocked by {dependencies.map((d) => d.workspace_id ? `${d.workspace_id}#${d.number}` : `#${d.number}`).join(", ")}
+          </span>
+        )}
+        {waitingForDep && (
+          <span
+            className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-700/30 text-amber-200 border border-amber-700"
+            title={`Waiting for ${waitingForDep.workspace_id || "this workspace"}#${waitingForDep.number} to close before merging`}
+          >
+            ⏳ waiting for {waitingForDep.workspace_id ? `${waitingForDep.workspace_id}#${waitingForDep.number}` : `#${waitingForDep.number}`}
           </span>
         )}
         <LabelChips

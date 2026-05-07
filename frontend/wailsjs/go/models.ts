@@ -1004,6 +1004,7 @@ export namespace issueview {
 	    unread_comment_count: number;
 	    card_state?: string;
 	    card_state_details?: cardstate.CardStateDetails;
+	    waiting_for_dep?: types.IssueDep;
 	
 	    static createFrom(source: any = {}) {
 	        return new IssueView(source);
@@ -1028,6 +1029,7 @@ export namespace issueview {
 	        this.unread_comment_count = source["unread_comment_count"];
 	        this.card_state = source["card_state"];
 	        this.card_state_details = this.convertValues(source["card_state_details"], cardstate.CardStateDetails);
+	        this.waiting_for_dep = this.convertValues(source["waiting_for_dep"], types.IssueDep);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1698,6 +1700,20 @@ export namespace types {
 		    return a;
 		}
 	}
+	export class IssueDep {
+	    workspace_id: string;
+	    number: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new IssueDep(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.workspace_id = source["workspace_id"];
+	        this.number = source["number"];
+	    }
+	}
 	export class Issue {
 	    number: number;
 	    workspace_id: string;
@@ -1710,7 +1726,7 @@ export namespace types {
 	    updated_at: any;
 	    goal_id?: string;
 	    priority: number;
-	    dependencies: number[];
+	    dependencies: IssueDep[];
 	    dep_rationale: string;
 	    column: string;
 	    plan?: Plan;
@@ -1723,6 +1739,7 @@ export namespace types {
 	    // Go type: time
 	    closed_at?: any;
 	    waiting_for_pool?: boolean;
+	    waiting_for_dep?: IssueDep;
 	    pipeline_step_id?: string;
 	    pipeline_loops?: Record<string, number>;
 	    pipeline_version?: number;
@@ -1749,7 +1766,7 @@ export namespace types {
 	        this.updated_at = this.convertValues(source["updated_at"], null);
 	        this.goal_id = source["goal_id"];
 	        this.priority = source["priority"];
-	        this.dependencies = source["dependencies"];
+	        this.dependencies = this.convertValues(source["dependencies"], IssueDep);
 	        this.dep_rationale = source["dep_rationale"];
 	        this.column = source["column"];
 	        this.plan = this.convertValues(source["plan"], Plan);
@@ -1760,6 +1777,7 @@ export namespace types {
 	        this.archived_at = this.convertValues(source["archived_at"], null);
 	        this.closed_at = this.convertValues(source["closed_at"], null);
 	        this.waiting_for_pool = source["waiting_for_pool"];
+	        this.waiting_for_dep = this.convertValues(source["waiting_for_dep"], IssueDep);
 	        this.pipeline_step_id = source["pipeline_step_id"];
 	        this.pipeline_loops = source["pipeline_loops"];
 	        this.pipeline_version = source["pipeline_version"];
@@ -1789,6 +1807,7 @@ export namespace types {
 		    return a;
 		}
 	}
+	
 	
 	export class Label {
 	    name: string;

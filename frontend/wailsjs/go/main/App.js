@@ -10,6 +10,10 @@ export function ActivateGoal(arg1) {
   return window['go']['main']['App']['ActivateGoal'](arg1);
 }
 
+export function AddIssueDep(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AddIssueDep'](arg1, arg2, arg3);
+}
+
 export function AddManualIssue(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['AddManualIssue'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
@@ -332,6 +336,10 @@ export function RejectPlan(arg1, arg2) {
 
 export function RemoveIssue(arg1, arg2) {
   return window['go']['main']['App']['RemoveIssue'](arg1, arg2);
+}
+
+export function RemoveIssueDep(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RemoveIssueDep'](arg1, arg2, arg3);
 }
 
 export function RemoveWorkspace(arg1) {

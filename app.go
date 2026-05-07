@@ -2229,6 +2229,73 @@ func (a *App) SetIssueLabels(workspaceID string, issueNumber int, names []string
 	return nil
 }
 
+// AddIssueDep appends a cross-workspace dependency to an issue, deduplicating
+// before save. Publishes EvtIssueLabelChanged so the card reassembles (issue #210).
+func (a *App) AddIssueDep(workspaceID string, issueNumber int, dep types.IssueDep) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	iss, err := a.store.LoadIssue(workspaceID, issueNumber)
+	if err != nil {
+		return err
+	}
+	for _, d := range iss.Dependencies {
+		if d.WorkspaceID == dep.WorkspaceID && d.Number == dep.Number {
+			return nil // already present
+		}
+	}
+	iss.Dependencies = append(iss.Dependencies, dep)
+	if _, err := a.store.SaveIssue(iss); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtIssueLabelChanged, map[string]any{
+			"workspace_id": workspaceID,
+			"number":       issueNumber,
+		})
+	}
+	if a.assembler != nil {
+		a.assembler.Reassemble(workspaceID, issueNumber)
+	}
+	return nil
+}
+
+// RemoveIssueDep removes a dependency from an issue. No-op if not present.
+// Publishes EvtIssueLabelChanged so the card reassembles (issue #210).
+func (a *App) RemoveIssueDep(workspaceID string, issueNumber int, dep types.IssueDep) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	iss, err := a.store.LoadIssue(workspaceID, issueNumber)
+	if err != nil {
+		return err
+	}
+	var next types.IssueDepList
+	for _, d := range iss.Dependencies {
+		if d.WorkspaceID == dep.WorkspaceID && d.Number == dep.Number {
+			continue // remove this one
+		}
+		next = append(next, d)
+	}
+	if len(next) == len(iss.Dependencies) {
+		return nil // not found, no-op
+	}
+	iss.Dependencies = next
+	if _, err := a.store.SaveIssue(iss); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtIssueLabelChanged, map[string]any{
+			"workspace_id": workspaceID,
+			"number":       issueNumber,
+		})
+	}
+	if a.assembler != nil {
+		a.assembler.Reassemble(workspaceID, issueNumber)
+	}
+	return nil
+}
+
 // autoApplyPlanLabels intersects plan.SuggestedLabels with the workspace label
 // cache, drops missing names (logged, never invented — issue #24 q3 C),
 // reconciles the prior plan revision's axis label (q2 A), and pushes the

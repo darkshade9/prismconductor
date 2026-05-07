@@ -105,6 +105,10 @@ type IssueView struct {
 	// blocked reason, session ID, failure cause, etc. Nil-safe: always check
 	// CardState first.
 	CardStateDetails *cardstate.CardStateDetails `json:"card_state_details,omitempty"`
+
+	// WaitingForDep is set when the issue has an unresolved cross-workspace
+	// dependency (issue #210). Non-nil → show a waiting badge on the card.
+	WaitingForDep *types.IssueDep `json:"waiting_for_dep,omitempty"`
 }
 
 // OrphanPRInfo is surfaced when an execute session pushed a branch but failed

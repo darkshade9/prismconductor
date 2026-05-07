@@ -5,7 +5,11 @@
 // (issue #30).
 package cardstate
 
-import "prismconductor/internal/types"
+import (
+	"fmt"
+
+	"prismconductor/internal/types"
+)
 
 // CardState is the canonical visual state of a board card. It is derived
 // entirely from backend data and emitted as part of IssueView so the frontend
@@ -46,6 +50,10 @@ const (
 	// CardStateRetryScheduled — execute failed with a retryable cause; the
 	// scheduler has queued an automatic re-spawn with exponential backoff (#221).
 	CardStateRetryScheduled CardState = "retry_scheduled"
+	// CardStateWaitingForDep — card is in REVIEW with a green PR but at least
+	// one cross-workspace dependency is still open (issue #210). Merge should
+	// be held until the dep resolves.
+	CardStateWaitingForDep CardState = "waiting_for_dep"
 )
 
 // PendingRetryInfo carries the retry schedule for a card in retry_scheduled
@@ -105,6 +113,10 @@ type DeriveParams struct {
 	// issue. Non-nil overrides the blocked state so the card shows a countdown
 	// instead of a permanent error badge (#221).
 	PendingRetry *PendingRetryInfo
+
+	// WaitingForDep is set when the issue has an unresolved cross-workspace
+	// dependency. Non-nil surfaces a waiting badge in REVIEW (issue #210).
+	WaitingForDep *types.IssueDep
 }
 
 // DeriveCardState maps DeriveParams to a single CardState + detail blob.
@@ -234,6 +246,11 @@ func DeriveCardState(p DeriveParams) (CardState, CardStateDetails) {
 	if p.Plan != nil && p.Plan.ReadyToExecute && p.Plan.ApprovedAt == nil {
 		if p.Column != types.ColReview && p.Column != types.ColDone {
 			return CardStatePlanReady, CardStateDetails{Reason: "plan ready for approval"}
+		}
+	}
+	if p.WaitingForDep != nil && p.Column == types.ColReview {
+		return CardStateWaitingForDep, CardStateDetails{
+			Reason: fmt.Sprintf("waiting for %s#%d to close before merging", p.WaitingForDep.WorkspaceID, p.WaitingForDep.Number),
 		}
 	}
 	if p.Column == types.ColReview && p.PRNumber != nil {
