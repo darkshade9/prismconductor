@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -210,14 +209,10 @@ func (o *Orchestrator) autoPull(reason string) {
 	// Order by priority desc, with blocked items last.
 	sortByOrchestratorPriority(candidates)
 
-	// Build a cross-workspace open-issue set for dep checking. Only loads
-	// workspace issues that candidates actually reference (issue #210).
-	crossWsOpen := buildCrossWsOpenSet(o.store, candidates)
-
 	// If all plan slots are taken, enqueue the next candidate so the drain can
 	// retry as soon as a slot frees (issue #40). Skip if nothing is queued.
 	if o.pool.FreePlanSlots() <= 0 {
-		next := pickNextUnblocked(candidates, all, crossWsOpen)
+		next := pickNextUnblocked(candidates, all, o.store)
 		if next != nil {
 			o.enqueuePending(next, types.RolePlan, "spawn:plan")
 		}
@@ -225,7 +220,7 @@ func (o *Orchestrator) autoPull(reason string) {
 	}
 
 	for o.pool.FreePlanSlots() > 0 {
-		next := pickNextUnblocked(candidates, all, crossWsOpen)
+		next := pickNextUnblocked(candidates, all, o.store)
 		if next == nil {
 			return
 		}
@@ -268,9 +263,10 @@ func (o *Orchestrator) autoPull(reason string) {
 }
 
 // pickNextUnblocked returns the first candidate currently in TODO with no
-// open dependencies, or nil. `all` is the full universe used to check
-// same-workspace deps; `crossWsOpen` covers cross-workspace deps (issue #210).
-func pickNextUnblocked(candidates []types.Issue, all []types.Issue, crossWsOpen map[string]bool) *types.Issue {
+// open dependencies, or nil. `all` is the full universe used to check whether
+// same-workspace dependency issues are still open. `xdepStore` is used to
+// resolve cross-workspace deps via CrossDeps (nil = skip cross-dep check).
+func pickNextUnblocked(candidates []types.Issue, all []types.Issue, xdepStore CrossDepLoader) *types.Issue {
 	openSet := map[int]bool{}
 	for _, iss := range all {
 		if iss.State == "" || iss.State == "open" {
@@ -284,50 +280,26 @@ func pickNextUnblocked(candidates []types.Issue, all []types.Issue, crossWsOpen 
 		}
 		blocked := false
 		for _, dep := range c.Dependencies {
-			if dep.WorkspaceID == "" {
-				if openSet[dep.Number] {
-					blocked = true
-					break
-				}
-			} else {
-				if crossWsOpen[dep.WorkspaceID+"#"+strconv.Itoa(dep.Number)] {
-					blocked = true
-					break
-				}
+			// Only check same-workspace deps here; cross-workspace deps are
+			// tracked via CrossDeps and checked below (Phase B, issue #208).
+			if dep.WorkspaceID == "" && openSet[dep.Number] {
+				blocked = true
+				break
 			}
 		}
 		if blocked {
 			continue
 		}
+		// Cross-workspace dep check (Phase B, issue #208).
+		if xdepStore != nil && len(c.CrossDeps) > 0 {
+			ok, err := AllCrossDepsResolved(xdepStore, c.CrossDeps)
+			if err != nil || !ok {
+				continue
+			}
+		}
 		return c
 	}
 	return nil
-}
-
-// buildCrossWsOpenSet loads issues from sibling workspaces referenced by
-// candidate deps and returns a "wsID#num" → true map for open issues.
-// Only loads each sibling workspace once (issue #210).
-func buildCrossWsOpenSet(st Store, candidates []types.Issue) map[string]bool {
-	seen := map[string]bool{}
-	result := map[string]bool{}
-	for _, c := range candidates {
-		for _, dep := range c.Dependencies {
-			if dep.WorkspaceID == "" || seen[dep.WorkspaceID] {
-				continue
-			}
-			seen[dep.WorkspaceID] = true
-			issues, err := st.ListIssues(dep.WorkspaceID)
-			if err != nil {
-				continue
-			}
-			for _, iss := range issues {
-				if iss.State == "" || iss.State == "open" {
-					result[dep.WorkspaceID+"#"+strconv.Itoa(iss.Number)] = true
-				}
-			}
-		}
-	}
-	return result
 }
 
 func sortByOrchestratorPriority(in []types.Issue) {

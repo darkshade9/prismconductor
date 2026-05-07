@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { noAutoCorrect } from "../lib/inputs";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AddIssueDep, ApprovePlan, LatestPlan, ListIssues, PlanCostEstimate, RejectPlan, RemoveIssueDep, SetIssueLabels, SubmitAnswers, WriteAnswersOnly } from "../../wailsjs/go/main/App";
+import { AddIssueDep, ApprovePlan, LatestPlan, ListCollections, ListIssues, PlanCostEstimate, RejectPlan, RemoveIssueDep, SetIssueLabels, SubmitAnswers, WriteAnswersOnly } from "../../wailsjs/go/main/App";
+import { EventsOn } from "../../wailsjs/runtime/runtime";
 import { main, types } from "../../wailsjs/go/models";
 import { useIssueStore } from "../stores/issueStore";
 import { useIssueViewStore } from "../stores/useIssueViewStore";
@@ -42,9 +43,10 @@ export function PlanModal({
   // cards while the chip still says prismconductor, exactly the
   // background-context-switch bug from the ApprovePlan path.
   const selectedWorkspace = useWorkspaceStore((s) => s.selectedID);
-  const workspaces = useWorkspaceStore((s) => s.workspaces);
-  const activeWorkspace = workspaces.find((w) => w.id === issue?.workspace_id);
+  const allWorkspaces = useWorkspaceStore((s) => s.workspaces);
+  const activeWorkspace = allWorkspaces.find((w) => w.id === issue?.workspace_id);
   const refreshLabels = useLabelsStore((s) => s.refresh);
+  const [collections, setCollections] = useState<types.Collection[]>([]);
   const labelsCache = useLabelsStore((s) => (issue ? s.byWorkspace[issue.workspace_id] ?? EMPTY_LABELS : EMPTY_LABELS));
   const [plan, setPlan] = useState<types.Plan | null>(null);
   const [costEstimate, setCostEstimate] = useState<main.CostEstimate | null>(null);
@@ -62,6 +64,14 @@ export function PlanModal({
     setAnswers(emptyAnswers());
     onClose();
   }, [onClose]);
+
+  useEffect(() => {
+    ListCollections().then((cols) => setCollections(cols ?? [])).catch(() => {});
+    const off = EventsOn("collections.updated", () => {
+      ListCollections().then((cols) => setCollections(cols ?? [])).catch(() => {});
+    });
+    return () => { off(); };
+  }, []);
 
   useEffect(() => {
     if (!open || !issue) return;
@@ -86,6 +96,17 @@ export function PlanModal({
   }, [open, issue?.workspace_id, issue?.number, refreshLabels]);
 
   if (!open || !issue) return null;
+
+  // Find sibling workspaces from the collection this workspace belongs to.
+  const siblingWorkspaces = (() => {
+    const col = collections.find((c) => (c.workspace_ids ?? []).includes(issue.workspace_id));
+    if (!col) return [];
+    return (col.workspace_ids ?? [])
+      .filter((id) => id !== issue.workspace_id)
+      .map((id) => allWorkspaces.find((ws) => ws.id === id))
+      .filter((ws): ws is types.Workspace => ws != null && ws.enabled);
+  })();
+  const crossDepsDetected = (plan as any)?.cross_deps_detected as types.IssueDep[] | undefined;
 
   const ageMin = plan ? minutesAgo(plan.generated_at) : null;
   const questions = plan?.questions ?? [];
@@ -291,6 +312,37 @@ export function PlanModal({
                   </ul>
                 )}
               </CollapsibleSection>
+
+              {(siblingWorkspaces.length > 0 || (crossDepsDetected ?? []).length > 0) && (
+                <CollapsibleSection title="Related Repos" defaultOpen={true}>
+                  {siblingWorkspaces.length > 0 && (
+                    <ul className="text-xs space-y-0.5 mb-2">
+                      {siblingWorkspaces.map((ws) => (
+                        <li key={ws.id} className="flex items-center gap-1.5">
+                          <span
+                            className="w-2 h-2 rounded-full flex-shrink-0"
+                            style={{ background: ws.color || "#666" }}
+                          />
+                          <span className="text-slate-300 font-medium">{ws.display_name}</span>
+                          <span className="text-slate-500 font-mono truncate">{ws.repo_path}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {(crossDepsDetected ?? []).length > 0 && (
+                    <div className="mt-1">
+                      <p className="text-xs text-slate-500 mb-1">Cross-workspace dependencies detected:</p>
+                      <ul className="text-xs space-y-0.5">
+                        {(crossDepsDetected ?? []).map((d, i) => (
+                          <li key={i} className="text-indigo-300">
+                            ⏳ {d.workspace_id}#{d.number}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </CollapsibleSection>
+              )}
 
               <CollapsibleSection title="Executive Summary" defaultOpen={true}>
                 {plan.executive_summary ? (

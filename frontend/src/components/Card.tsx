@@ -344,6 +344,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, o
         blocked={blocked}
         isPrimitive={isPrimitive}
         dependencies={issue.dependencies ?? []}
+        crossDeps={issue.cross_deps ?? []}
         labels={issue.labels ?? []}
         workspaceID={issue.workspace_id}
         issueNumber={issue.number}
@@ -578,6 +579,7 @@ function StatusRow({
   blocked,
   isPrimitive,
   dependencies,
+  crossDeps,
   labels,
   workspaceID,
   issueNumber,
@@ -606,6 +608,7 @@ function StatusRow({
   blocked: boolean;
   isPrimitive: boolean;
   dependencies: types.IssueDep[];
+  crossDeps: types.IssueDep[];
   labels: string[];
   workspaceID: string;
   issueNumber: number;
@@ -1245,7 +1248,7 @@ function StatusRow({
     );
   }
   const showContinue = column === "review" && prNumber != null && !activeSession && !pausedSession && !waitingForPool;
-  const showPlanNow = !blocked && (column === "todo" || column === "plan");
+  const showPlanNow = !blocked && crossDeps.length === 0 && (column === "todo" || column === "plan");
   return (
     <>
       <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
@@ -1261,6 +1264,14 @@ function StatusRow({
             title={`Waiting for ${waitingForDep.workspace_id || "this workspace"}#${waitingForDep.number} to close before merging`}
           >
             ⏳ waiting for {waitingForDep.workspace_id ? `${waitingForDep.workspace_id}#${waitingForDep.number}` : `#${waitingForDep.number}`}
+          </span>
+        )}
+        {!blocked && crossDeps.length > 0 && (
+          <span
+            className="text-indigo-300"
+            title={crossDeps.map((d) => `${d.workspace_id}#${d.number}`).join(", ")}
+          >
+            ⏳ waiting on {crossDeps.map((d) => `${d.workspace_id}#${d.number}`).join(", ")}
           </span>
         )}
         <LabelChips

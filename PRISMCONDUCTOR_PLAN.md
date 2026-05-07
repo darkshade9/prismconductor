@@ -272,8 +272,11 @@ type Issue struct {
     // Conductor-managed:
     GoalID         *string         `json:"goal_id,omitempty"`
     Priority       float64         `json:"priority"`        // 0.0-1.0, orchestrator-assigned
-    Dependencies   []int           `json:"dependencies"`    // issue numbers this depends on
+    Dependencies   []int           `json:"dependencies"`    // same-workspace issue numbers this depends on
     DepRationale   string          `json:"dep_rationale"`   // why these deps
+    // CrossDeps lists cross-workspace dependencies (Phase B, issue #208).
+    // An issue with unresolved CrossDeps is blocked from being pulled to PLAN.
+    CrossDeps      []IssueDep      `json:"cross_deps,omitempty"`
     Column         BoardColumn     `json:"column"`          // local workflow state
     Plan           *Plan           `json:"plan,omitempty"`
     SessionID      *string         `json:"session_id,omitempty"`
@@ -305,6 +308,8 @@ type Plan struct {
     PlanMarkdown         string       `json:"plan_markdown"`         // for human display
     FilesToModify        []FileIntent `json:"files_to_modify"`
     DependenciesDetected []int        `json:"dependencies_detected"`
+    // CrossDepsDetected lists cross-workspace deps the planner found (Phase B, issue #208).
+    CrossDepsDetected    []IssueDep   `json:"cross_deps_detected,omitempty"`
     SuggestedLabels      []string     `json:"suggested_labels,omitempty"` // optional, planner-suggested labels to apply (#14)
     Questions            []Question   `json:"questions"`
     EstimatedComplexity  string       `json:"estimated_complexity"`  // small | medium | large
@@ -318,6 +323,12 @@ type FileIntent struct {
     Intent string `json:"intent"` // "add" | "modify" | "delete" | "read-only"
 }
 
+// IssueDep is a cross-workspace dependency reference (Phase B, issue #208).
+type IssueDep struct {
+    WorkspaceID string `json:"workspace_id"`
+    Number      int    `json:"number"`
+}
+
 type Question struct {
     ID       string       `json:"id"`
     Type     QuestionType `json:"type"`
@@ -326,6 +337,9 @@ type Question struct {
     Default  *string      `json:"default,omitempty"`
     Required bool         `json:"required"`
     Answer   *string      `json:"answer,omitempty"`   // populated by user
+    // Audience controls routing: "" or "user" = surface to human;
+    // "peer_agent" = auto-route to configured architect pool (issue #208 Q3).
+    Audience string       `json:"audience,omitempty"`
 }
 
 type QuestionType string
