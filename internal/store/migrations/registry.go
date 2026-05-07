@@ -48,6 +48,20 @@ CREATE TABLE IF NOT EXISTS collection_members (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_collection_members_workspace
     ON collection_members(workspace_id);`,
 	},
+	{
+		ID:          "20260507_00_add_cross_workspace_deps",
+		Description: "issue #208 Phase B: cross-workspace issue dependency index (CrossDeps stored in issue JSON; this table enables efficient reverse-lookup and future multi-instance coordination)",
+		SQL: `
+CREATE TABLE IF NOT EXISTS cross_workspace_deps (
+    workspace_id      TEXT    NOT NULL,
+    issue_number      INTEGER NOT NULL,
+    dep_workspace_id  TEXT    NOT NULL,
+    dep_issue_number  INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, issue_number, dep_workspace_id, dep_issue_number)
+);
+CREATE INDEX IF NOT EXISTS idx_cwd_dep
+    ON cross_workspace_deps (dep_workspace_id, dep_issue_number);`,
+	},
 }
 
 // All returns every known migration in application order.

@@ -1626,6 +1626,7 @@ export namespace types {
 	    default?: string;
 	    required: boolean;
 	    answer?: string;
+	    audience?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Question(source);
@@ -1640,6 +1641,7 @@ export namespace types {
 	        this.default = source["default"];
 	        this.required = source["required"];
 	        this.answer = source["answer"];
+	        this.audience = source["audience"];
 	    }
 	}
 	export class Plan {
@@ -1651,6 +1653,7 @@ export namespace types {
 	    plan_markdown: string;
 	    files_to_modify: FileIntent[];
 	    dependencies_detected: number[];
+	    cross_deps_detected?: IssueDep[];
 	    suggested_labels?: string[];
 	    questions: Question[];
 	    estimated_complexity: string;
@@ -1674,6 +1677,7 @@ export namespace types {
 	        this.plan_markdown = source["plan_markdown"];
 	        this.files_to_modify = this.convertValues(source["files_to_modify"], FileIntent);
 	        this.dependencies_detected = source["dependencies_detected"];
+	        this.cross_deps_detected = this.convertValues(source["cross_deps_detected"], IssueDep);
 	        this.suggested_labels = source["suggested_labels"];
 	        this.questions = this.convertValues(source["questions"], Question);
 	        this.estimated_complexity = source["estimated_complexity"];
@@ -1728,6 +1732,7 @@ export namespace types {
 	    priority: number;
 	    dependencies: IssueDep[];
 	    dep_rationale: string;
+	    cross_deps?: IssueDep[];
 	    column: string;
 	    plan?: Plan;
 	    session_id?: string;
@@ -1768,6 +1773,7 @@ export namespace types {
 	        this.priority = source["priority"];
 	        this.dependencies = this.convertValues(source["dependencies"], IssueDep);
 	        this.dep_rationale = source["dep_rationale"];
+	        this.cross_deps = this.convertValues(source["cross_deps"], IssueDep);
 	        this.column = source["column"];
 	        this.plan = this.convertValues(source["plan"], Plan);
 	        this.session_id = source["session_id"];

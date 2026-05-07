@@ -258,8 +258,18 @@ CREATE TABLE IF NOT EXISTS collection_members (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_collection_members_workspace ON collection_members(workspace_id);
 CREATE TABLE IF NOT EXISTS schema_migrations (
-    id TEXT PRIMARY KEY
+    id         TEXT    PRIMARY KEY,
+    applied_at INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS cross_workspace_deps (
+    workspace_id      TEXT    NOT NULL,
+    issue_number      INTEGER NOT NULL,
+    dep_workspace_id  TEXT    NOT NULL,
+    dep_issue_number  INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, issue_number, dep_workspace_id, dep_issue_number)
+);
+CREATE INDEX IF NOT EXISTS idx_cwd_dep
+    ON cross_workspace_deps (dep_workspace_id, dep_issue_number);
 `)
 	return err
 }
@@ -280,12 +290,16 @@ func seedData(db *sql.DB) error {
 	defer tx.Rollback() //nolint:errcheck
 
 	// Mark all known migrations as applied so the app doesn't re-run them.
+	// applied_at is required by migrations.Run() — use a fixed epoch so the
+	// fixture is deterministic.
+	const epoch = int64(1746057600) // 2026-05-01T00:00:00Z
 	for _, id := range []string{
 		"20250504_00_initial_migration_framework",
 		"20260505_00_add_card_state_transitions",
 		"20260506_00_add_collections",
+		"20260507_00_add_cross_workspace_deps",
 	} {
-		if _, err := tx.Exec(`INSERT INTO schema_migrations(id) VALUES(?)`, id); err != nil {
+		if _, err := tx.Exec(`INSERT INTO schema_migrations(id, applied_at) VALUES(?,?)`, id, epoch); err != nil {
 			return fmt.Errorf("migration stamp %s: %w", id, err)
 		}
 	}

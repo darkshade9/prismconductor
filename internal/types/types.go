@@ -400,6 +400,9 @@ type Issue struct {
 	Priority     float64      `json:"priority"`
 	Dependencies IssueDepList `json:"dependencies"`
 	DepRationale string       `json:"dep_rationale"`
+	// CrossDeps lists cross-workspace dependencies (Phase B of issue #208).
+	// An issue with unresolved CrossDeps is blocked from being pulled to PLAN.
+	CrossDeps []IssueDep `json:"cross_deps,omitempty"`
 	Column       BoardColumn `json:"column"`
 	Plan         *Plan       `json:"plan,omitempty"`
 	SessionID    *string     `json:"session_id,omitempty"`
@@ -492,12 +495,16 @@ type Plan struct {
 	PlanMarkdown         string       `json:"plan_markdown"`
 	FilesToModify        []FileIntent `json:"files_to_modify"`
 	DependenciesDetected []int        `json:"dependencies_detected"`
-	SuggestedLabels      []string     `json:"suggested_labels,omitempty"`
-	Questions            []Question   `json:"questions"`
-	EstimatedComplexity  string       `json:"estimated_complexity"`
-	ReadyToExecute       bool         `json:"ready_to_execute"`
-	GeneratedAt          time.Time    `json:"generated_at"`
-	ApprovedAt           *time.Time   `json:"approved_at,omitempty"`
+	// CrossDepsDetected lists cross-workspace dependencies detected by the planner
+	// (Phase B of issue #208). Kept separate from DependenciesDetected for
+	// backward compatibility.
+	CrossDepsDetected []IssueDep `json:"cross_deps_detected,omitempty"`
+	SuggestedLabels   []string   `json:"suggested_labels,omitempty"`
+	Questions         []Question `json:"questions"`
+	EstimatedComplexity string     `json:"estimated_complexity"`
+	ReadyToExecute      bool       `json:"ready_to_execute"`
+	GeneratedAt         time.Time  `json:"generated_at"`
+	ApprovedAt          *time.Time `json:"approved_at,omitempty"`
 }
 
 // Label is a GitHub repo label mirrored locally.
@@ -520,6 +527,9 @@ type Question struct {
 	Default  *string      `json:"default,omitempty"`
 	Required bool         `json:"required"`
 	Answer   *string      `json:"answer,omitempty"`
+	// Audience controls who receives this question. "" or "user" means surface
+	// to the human; "peer_agent" means route to an architect-pool worker.
+	Audience string `json:"audience,omitempty"`
 }
 
 type QuestionType string
