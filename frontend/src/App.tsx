@@ -31,11 +31,13 @@ import { TitleSearch } from "./components/Header";
 import { PoolsHeader } from "./components/PoolsHeader";
 import { AgentTerminalDrawer } from "./components/AgentTerminalDrawer";
 import { useAgentTerminalStore } from "./stores/useAgentTerminalStore";
+import { useDiagnosticUnlock } from "./hooks/useDiagnosticUnlock";
 
 type PlanRef = { workspace_id: string; number: number };
 type PlanTarget = PlanRef | null;
 
 function App() {
+  useDiagnosticUnlock();
   const appendLine = useSessionStore((s) => s.appendLine);
   const setMeta = useSessionStore((s) => s.setMeta);
   const setActive = useSessionStore((s) => s.setActive);

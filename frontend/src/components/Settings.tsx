@@ -7,8 +7,9 @@ import { LogsPanel } from "./LogsPanel";
 import { AppearancePanel } from "./AppearancePanel";
 import { CollectionsPanel } from "./CollectionsPanel";
 import { EventDiagnostics } from "./EventDiagnostics";
+import { useSettingsStore } from "../stores/useSettingsStore";
 
-type Tab = "workspaces" | "collections" | "pools" | "skills" | "notify" | "appearance" | "logs" | "diagnostics";
+type Tab = "workspaces" | "collections" | "pools" | "skills" | "notify" | "appearance" | "logs" | "advanced" | "diagnostics";
 
 export function Settings({
   open,
@@ -20,6 +21,12 @@ export function Settings({
   initialTab?: Tab;
 }) {
   const [tab, setTab] = useState<Tab>(initialTab ?? "workspaces");
+  const showDiagnostics = useSettingsStore((s) => s.showDiagnostics);
+  const diagnosticsUnlocked = useSettingsStore((s) => s.diagnosticsUnlocked);
+  const setShowDiagnostics = useSettingsStore((s) => s.setShowDiagnostics);
+
+  const diagnosticsVisible = import.meta.env.DEV || showDiagnostics || diagnosticsUnlocked;
+
   if (!open) return null;
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
@@ -39,7 +46,8 @@ export function Settings({
                 ["notify", "Notifications"],
                 ["appearance", "Appearance"],
                 ["logs", "Logs"],
-                ...(import.meta.env.DEV ? [["diagnostics", "Diagnostics"] as [Tab, string]] : []),
+                ["advanced", "Advanced"],
+                ...(diagnosticsVisible ? [["diagnostics", "Diagnostics"] as [Tab, string]] : []),
               ] as [Tab, string][]
             ).map(([k, label]) => (
               <button
@@ -62,7 +70,34 @@ export function Settings({
             {tab === "notify" && <NotifyPanel />}
             {tab === "appearance" && <AppearancePanel />}
             {tab === "logs" && <LogsPanel />}
-            {tab === "diagnostics" && import.meta.env.DEV && <EventDiagnostics />}
+            {tab === "advanced" && (
+              <div className="space-y-4">
+                <div>
+                  <div className="text-slate-300 text-sm font-medium mb-1">Diagnostics</div>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={showDiagnostics}
+                      onChange={(e) => setShowDiagnostics(e.target.checked)}
+                      className="accent-sky-500"
+                    />
+                    <span className="text-slate-400 text-sm">
+                      Show Diagnostics tab
+                    </span>
+                  </label>
+                  <p className="text-slate-500 text-xs mt-1">
+                    Exposes the Event Diagnostics panel for on-device debugging. Persists across restarts.
+                    You can also unlock it for the current session with{" "}
+                    <kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-300">
+                      {typeof navigator !== "undefined" && /Mac|Macintosh/.test(navigator.platform || navigator.userAgent)
+                        ? "⌘⌥D"
+                        : "Ctrl+Alt+D"}
+                    </kbd>.
+                  </p>
+                </div>
+              </div>
+            )}
+            {tab === "diagnostics" && diagnosticsVisible && <EventDiagnostics />}
           </div>
         </div>
       </div>
