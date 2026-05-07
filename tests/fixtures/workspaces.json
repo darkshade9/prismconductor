@@ -1,0 +1,66 @@
+[
+  {
+    "id": "seeded-ws",
+    "display_name": "Seeded Project",
+    "repo_path": "/tmp/seeded-repo",
+    "github_owner": "test",
+    "github_repo": "seeded-repo",
+    "default_branch": "main",
+    "color": "#3b82f6",
+    "agent_env": {
+      "env_vars": {},
+      "pre_commands": [],
+      "shell": "/bin/bash"
+    },
+    "skill_profile": {
+      "mode": "bundled",
+      "use_conductor_plan": true,
+      "use_conductor_execute": true,
+      "use_conductor_close": false,
+      "native_plan_command": "",
+      "native_execute_command": "",
+      "native_close_command": "",
+      "extra_context_files": null
+    },
+    "conventions": {
+      "test_command": "",
+      "build_command": "",
+      "lint_command": "",
+      "py_env_path": "",
+      "package_manager": ""
+    },
+    "enabled": true
+  },
+  {
+    "id": "empty-ws",
+    "display_name": "Empty Project",
+    "repo_path": "/tmp/empty-repo",
+    "github_owner": "test",
+    "github_repo": "empty-repo",
+    "default_branch": "main",
+    "color": "#64748b",
+    "agent_env": {
+      "env_vars": {},
+      "pre_commands": [],
+      "shell": "/bin/bash"
+    },
+    "skill_profile": {
+      "mode": "bundled",
+      "use_conductor_plan": true,
+      "use_conductor_execute": true,
+      "use_conductor_close": false,
+      "native_plan_command": "",
+      "native_execute_command": "",
+      "native_close_command": "",
+      "extra_context_files": null
+    },
+    "conventions": {
+      "test_command": "",
+      "build_command": "",
+      "lint_command": "",
+      "py_env_path": "",
+      "package_manager": ""
+    },
+    "enabled": true
+  }
+]

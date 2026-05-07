@@ -448,6 +448,9 @@ export function WorkspacesPanel() {
                       {ws.remote_config?.token_expired && (
                         <span className="text-[10px] bg-amber-900 text-amber-300 px-1.5 py-0.5 rounded">TOKEN EXPIRED</span>
                       )}
+                      {ws.remote_config?.remote_unreachable && (
+                        <span className="text-[10px] bg-red-900 text-red-300 px-1.5 py-0.5 rounded" title={`Endpoint unreachable: ${ws.remote_config.cf_worker_endpoint_url}`}>UNREACHABLE</span>
+                      )}
                     </div>
                     <div className="text-xs text-slate-500 truncate">
                       {ws.github_owner}/{ws.github_repo} · {ws.skill_profile?.mode ?? "bundled"}
@@ -491,6 +494,21 @@ export function WorkspacesPanel() {
                 </div>
                 {isExpanded && (
                   <div className="mt-2 space-y-4">
+                    {ws.remote_config?.remote_unreachable && (
+                      <div className="rounded border border-red-800 bg-red-950 p-3 text-xs space-y-2">
+                        <div className="text-red-300 font-medium">Remote worker endpoint unreachable</div>
+                        <div className="text-red-400 font-mono break-all">{ws.remote_config.cf_worker_endpoint_url}</div>
+                        <div className="text-slate-400">Re-run setup to redeploy with a corrected URL, or edit the endpoint directly in the Cloudflare dashboard.</div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setExpanded(ws.id)}
+                            className="px-2 py-1 bg-sky-800 hover:bg-sky-700 rounded text-xs text-sky-200"
+                          >
+                            Re-run Setup
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     {ws.execution_target === "remote" && (
                       <RemoteAuthPanel workspace={ws} onSave={refresh} />
                     )}

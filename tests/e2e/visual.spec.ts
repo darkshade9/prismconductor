@@ -45,8 +45,18 @@ async function waitForBoard(page: import("@playwright/test").Page) {
   );
   // Wait for the WorkspaceSwitcher to render (contains the "Workspace:" label).
   await expect(page.getByText("Workspace:")).toBeVisible({ timeout: SETTLE_MS });
+  // Wait for the workspace list to load from the backend. The "Workspace:" label
+  // is a static span that appears before ListWorkspaces() responds; workspace
+  // chip buttons (data-testid="workspace-chip") only appear after the IPC call
+  // completes. Give the backend up to 20s — in CI under xvfb-run the IPC
+  // connection can take several seconds to establish.
+  await page
+    .locator('[data-testid="workspace-chip"]')
+    .or(page.getByText("no workspaces yet, add one in Settings"))
+    .first()
+    .waitFor({ state: "visible", timeout: 20_000 });
   // Short soak so async card fetches finish.
-  await page.waitForTimeout(SETTLE_MS);
+  await page.waitForTimeout(500);
 }
 
 // Disable CSS transitions / animations globally so screenshots are
@@ -100,7 +110,7 @@ test.describe("visual captures", () => {
     await disableAnimations(page);
 
     // Click the "Seeded Project" workspace chip to filter to that workspace.
-    await page.getByRole("button", { name: "Seeded Project" }).click();
+    await page.getByRole("button", { name: "Seeded Project", exact: true }).click();
     await page.waitForTimeout(500);
 
     await page.screenshot({
@@ -114,7 +124,7 @@ test.describe("visual captures", () => {
     await disableAnimations(page);
 
     // Select seeded workspace first so the PLAN-column card is visible.
-    await page.getByRole("button", { name: "Seeded Project" }).click();
+    await page.getByRole("button", { name: "Seeded Project", exact: true }).click();
     await page.waitForTimeout(500);
 
     // Click the plan-ready card (issue #102 — "Refactor database schema").
@@ -133,8 +143,9 @@ test.describe("visual captures", () => {
     await waitForBoard(page);
     await disableAnimations(page);
 
-    // Open settings via the header button.
-    await page.getByRole("button", { name: "Settings" }).click();
+    // Open settings via the header button. Use exact:true to avoid matching the
+    // PoolsHeader div whose aria-label="Open pool settings" also contains "Settings".
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
     await page.waitForTimeout(500);
 
     await page.screenshot({

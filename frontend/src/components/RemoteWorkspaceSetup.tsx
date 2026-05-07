@@ -442,14 +442,32 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
               The worker bundle will be uploaded to your CF account. The GitHub PAT will be stored as a CF Secret (GITHUB_PAT) — never saved locally.
             </div>
           </div>
-          {error && <div className="text-red-400 text-xs">{error}</div>}
+          {error && (
+            <div className="space-y-1">
+              <div className="text-red-400 text-xs">{error}</div>
+              {error.includes("no Workers subdomain configured") && (
+                <div className="text-xs text-slate-400">
+                  Visit{" "}
+                  <a
+                    href="https://dash.cloudflare.com"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sky-400 hover:underline"
+                  >
+                    dash.cloudflare.com
+                  </a>
+                  {" "}→ Workers &amp; Pages → Choose a subdomain, then retry.
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex justify-between pt-1">
             <button onClick={() => setStep("repo")} className="text-xs text-slate-500 hover:text-slate-300">
               ← Back
             </button>
             <button
               onClick={deploy}
-              disabled={busy}
+              disabled={busy || (!!error && error.includes("no Workers subdomain configured"))}
               className="px-3 py-1 bg-sky-700 hover:bg-sky-600 rounded text-xs disabled:opacity-40"
             >
               {busy ? "Deploying…" : "Deploy & Create Workspace"}

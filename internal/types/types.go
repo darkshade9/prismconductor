@@ -47,6 +47,9 @@ type RemoteConfig struct {
 	// TokenExpired is set true when the conductor detects a 401 from the remote
 	// worker. Cleared when the user re-deploys via Settings → Workspace → Auth.
 	TokenExpired bool `json:"token_expired,omitempty"`
+	// RemoteUnreachable is set true when the startup probe cannot reach the
+	// CFWorkerEndpointURL. Cleared on next successful probe or redeploy.
+	RemoteUnreachable bool `json:"remote_unreachable,omitempty"`
 }
 
 // SigningStrategy controls how the conductor-execute worker attempts to commit

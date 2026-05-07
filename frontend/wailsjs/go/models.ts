@@ -2073,6 +2073,7 @@ export namespace types {
 	    cf_deployment_version?: string;
 	    cf_secret_refs: RemoteSecretRefs;
 	    token_expired?: boolean;
+	    remote_unreachable?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new RemoteConfig(source);
@@ -2086,6 +2087,7 @@ export namespace types {
 	        this.cf_deployment_version = source["cf_deployment_version"];
 	        this.cf_secret_refs = this.convertValues(source["cf_secret_refs"], RemoteSecretRefs);
 	        this.token_expired = source["token_expired"];
+	        this.remote_unreachable = source["remote_unreachable"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
