@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -199,6 +201,12 @@ func (a *App) startup(ctx context.Context) {
 		if stale := a.wsReg.ReconcileProvisioning(); len(stale) > 0 {
 			a.emitToast("info", "Workspace Cleanup", fmt.Sprintf("Removed %d stale provisioning workspace(s): %v", len(stale), stale), nil)
 		}
+	}
+
+	// Issue #244: probe remote workspace endpoints in the background and mark
+	// any that are unreachable so the user sees an actionable warning.
+	if a.wsReg != nil {
+		go a.probeRemoteWorkspaceEndpoints()
 	}
 
 	// Issue #22: prune any orphan worktrees from prior conductor sessions, then
@@ -739,6 +747,56 @@ func (a *App) gcWorktreesAll() {
 					log.Printf("24h GC remove %s: %v", e.Path, err)
 				}
 			}
+		}
+	}
+}
+
+// probeRemoteWorkspaceEndpoints performs a best-effort HEAD probe against
+// every remote workspace's CFWorkerEndpointURL and marks unreachable ones
+// with RemoteUnreachable=true so the UI can surface an actionable warning.
+// Runs once in a background goroutine at startup (issue #244).
+func (a *App) probeRemoteWorkspaceEndpoints() {
+	if a.wsReg == nil {
+		return
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	for _, ws := range a.wsReg.List() {
+		if ws.ExecutionTarget != types.ExecutionTargetRemote || ws.RemoteConfig == nil || ws.RemoteConfig.CFWorkerEndpointURL == "" {
+			continue
+		}
+		probeURL := ws.RemoteConfig.CFWorkerEndpointURL + "/health"
+		req, err := http.NewRequest("HEAD", probeURL, nil)
+		if err != nil {
+			continue
+		}
+		resp, probeErr := client.Do(req)
+		unreachable := probeErr != nil
+		if resp != nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+		if ws.RemoteConfig.RemoteUnreachable == unreachable {
+			continue
+		}
+		updated := ws
+		rc := *updated.RemoteConfig
+		rc.RemoteUnreachable = unreachable
+		updated.RemoteConfig = &rc
+		if err := a.wsReg.Update(updated); err != nil {
+			log.Printf("probeRemoteWorkspaceEndpoints: update %s: %v", ws.ID, err)
+			continue
+		}
+		if unreachable {
+			log.Printf("probeRemoteWorkspaceEndpoints: %s endpoint unreachable: %v", ws.ID, probeErr)
+			a.emitToast("warning", ws.DisplayName,
+				fmt.Sprintf("Remote worker endpoint unreachable — re-run setup or fix the URL: %s", ws.RemoteConfig.CFWorkerEndpointURL),
+				map[string]any{
+					"workspace_id": ws.ID,
+					"action":       "focus_workspace",
+				})
+		}
+		if a.ctx != nil {
+			wailsbus.EmitEvent(a.ctx, "workspace.updated", ws.ID)
 		}
 	}
 }
@@ -1733,6 +1791,16 @@ func (a *App) MoveIssueColumn(workspaceID string, number int, column string) err
 					if err != nil {
 						a.poolReg.ReleaseByPool(pool.ID)
 						log.Printf("auto-spawn plan #%d FAILED: %v", number, err)
+						if mvErr := a.store.MoveIssueColumn(workspaceID, number, types.ColTodo); mvErr != nil {
+							log.Printf("drag-to-PLAN: rollback #%d to TODO: %v", number, mvErr)
+						}
+						a.emitToast("error", toastWorkspaceName(a.wsReg, workspaceID),
+							fmt.Sprintf("Failed to start plan for #%d: %v", number, err),
+							map[string]any{
+								"workspace_id": workspaceID,
+								"issue_number": number,
+								"action":       "focus_card",
+							})
 					} else {
 						log.Printf("drag-to-PLAN: spawn ok for #%d, session=%s pid=%d pool=%s", number, sess.ID[:8], sess.PID, pool.ID)
 					}

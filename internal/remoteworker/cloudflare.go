@@ -29,6 +29,9 @@ const (
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
+// healthClient is used only for the post-deploy endpoint probe (shorter timeout).
+var healthClient = &http.Client{Timeout: 5 * time.Second}
+
 // TokenVerifyResult is returned by VerifyToken to the App layer.
 type TokenVerifyResult struct {
 	AccountID string `json:"account_id"`
@@ -164,12 +167,104 @@ func DeployWorker(accountID, token, workspaceID string, workerScript []byte) (De
 	}
 	_ = json.Unmarshal(raw, &script)
 
-	endpointURL := fmt.Sprintf("https://%s.workers.dev", workerName)
+	subdomain, err := getAccountSubdomain(accountID, token)
+	if err != nil {
+		return DeployResult{}, fmt.Errorf("get account subdomain: %w", err)
+	}
+	if subdomain == "" {
+		return DeployResult{}, fmt.Errorf("This Cloudflare account has no Workers subdomain configured. " +
+			"Visit the Cloudflare dashboard → Workers & Pages and click 'Choose a subdomain' first, then retry deployment.")
+	}
+
+	if err := enableScriptSubdomain(accountID, workerName, token); err != nil {
+		return DeployResult{}, fmt.Errorf("enable workers.dev for script: %w", err)
+	}
+
+	endpointURL := fmt.Sprintf("https://%s.%s.workers.dev", workerName, subdomain)
+
+	if err := probeWorkerEndpoint(endpointURL); err != nil {
+		return DeployResult{}, fmt.Errorf("Worker deployed but the resulting URL %s did not respond. "+
+			"Check that the workers.dev subdomain is enabled for this script in the Cloudflare dashboard: %w", endpointURL, err)
+	}
+
 	return DeployResult{
 		WorkerName:          workerName,
 		CFWorkerEndpointURL: endpointURL,
 		DeploymentVersion:   script.Etag,
 	}, nil
+}
+
+// getAccountSubdomain queries GET /accounts/{id}/workers/subdomain and returns
+// the account's workers.dev subdomain, or an empty string when none is configured.
+func getAccountSubdomain(accountID, token string) (string, error) {
+	url := fmt.Sprintf("%s/accounts/%s/workers/subdomain", cfAPIBase, accountID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("CF API request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	var env cfResponse
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return "", fmt.Errorf("CF subdomain parse (%d): %w", resp.StatusCode, err)
+	}
+	if !env.Success {
+		if len(env.Errors) > 0 {
+			return "", env.Errors[0]
+		}
+		return "", fmt.Errorf("CF API error (HTTP %d)", resp.StatusCode)
+	}
+	var result struct {
+		Subdomain string `json:"subdomain"`
+	}
+	if err := json.Unmarshal(env.Result, &result); err != nil {
+		return "", fmt.Errorf("CF subdomain result parse: %w", err)
+	}
+	return result.Subdomain, nil
+}
+
+// enableScriptSubdomain calls POST /accounts/{id}/workers/scripts/{name}/subdomain
+// with {"enabled": true} so the script is reachable on workers.dev.
+func enableScriptSubdomain(accountID, workerName, token string) error {
+	payload, _ := json.Marshal(map[string]bool{"enabled": true})
+	url := fmt.Sprintf("%s/accounts/%s/workers/scripts/%s/subdomain", cfAPIBase, accountID, workerName)
+	_, err := cfDo("POST", url, token, bytes.NewReader(payload), "application/json")
+	if err != nil {
+		return fmt.Errorf("enable subdomain: %w", err)
+	}
+	return nil
+}
+
+// probeWorkerEndpoint verifies the deployed endpoint is reachable. It tries
+// GET /health first; if /health returns 404 it falls back to a HEAD on the
+// root. DNS failure or connection timeout are treated as probe failures.
+func probeWorkerEndpoint(endpointURL string) error {
+	resp, err := healthClient.Get(endpointURL + "/health")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		resp2, err2 := healthClient.Head(endpointURL)
+		if err2 != nil {
+			return err2
+		}
+		resp2.Body.Close()
+		return nil
+	}
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // UpsertSecret creates or replaces a secret on a deployed CF Worker.
