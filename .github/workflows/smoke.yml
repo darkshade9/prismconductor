@@ -55,7 +55,7 @@ jobs:
       # which fits the 15-min job budget; happy-case is unchanged.
       - name: install wails system deps (cached)
         id: apt_cache
-        uses: awalsh128/cache-apt-pkgs-action@v1.4.3
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.0
         timeout-minutes: 3
         continue-on-error: true
         with:
