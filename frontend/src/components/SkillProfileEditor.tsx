@@ -16,6 +16,14 @@ const MODE_DESC: Record<SkillMode, string> = {
 
 const STAGES = ["plan", "execute", "continue", "close"] as const;
 
+export function conductorFirst(skills: types.SkillRef[]): types.SkillRef[] {
+  return [...skills].sort((a, b) => {
+    const aC = a.path.startsWith("conductor-") ? 0 : 1;
+    const bC = b.path.startsWith("conductor-") ? 0 : 1;
+    return aC - bC;
+  });
+}
+
 export function SkillProfileEditor({ workspace }: { workspace: types.Workspace }) {
   const refresh = useWorkspaceStore((s) => s.refresh);
   const [pools, setPools] = useState<workerpool.PoolStatus[]>([]);
@@ -29,7 +37,7 @@ export function SkillProfileEditor({ workspace }: { workspace: types.Workspace }
 
   useEffect(() => {
     DiscoverWorkspaceSkills(workspace.id)
-      .then((refs) => setAvailableSkills(refs ?? []))
+      .then((refs) => setAvailableSkills(conductorFirst(refs ?? [])))
       .catch((err) => console.error("SkillProfileEditor DiscoverWorkspaceSkills", err));
   }, [workspace.id]);
 
