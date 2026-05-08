@@ -13,9 +13,9 @@ The product spec lives in `PRISMCONDUCTOR_PLAN.md`. Treat it as the source of tr
 ## Layout
 
 - `internal/types/` — cross-package data model (§6).
-- `internal/{eventbus,session,store,workerpool,ollama,orchestrator,workspace,github,skills/bundle}/` — one package per backend concern (§17). Notifications are now in-app Wails-event toasts emitted directly from `app.go`'s `emitToast` (issue #32); no dedicated package.
+- `internal/{eventbus,session,store,workerpool,ollama,orchestrator,workspace,github,skills/bundle}/` — one package per backend concern (§17). Notifications are now in-app Wails-event toasts emitted directly from `app.go`'s `emitToast` (issue #32); no dedicated package. `internal/remoteworker/` is preserved but paused (#254): all spawn methods return `ErrRemoteWorkspacePaused` for `execution_target=="remote"` workspaces.
 - `frontend/src/components/` — Board, Card, Column, PlanModal, QuestionForm, SessionDrawer, GoalPane, WorkspaceSwitcher, Settings.
-- `frontend/wailsjs/` — auto-generated bindings; never edit by hand. Run `wails generate module` after adding bound methods.
+- `frontend/wailsjs/` — auto-generated bindings; never edit by hand. Run `wails generate module` after adding bound methods. Note: `wails generate module` requires `frontend/dist` to exist (run `wails build` first in a fresh worktree); in a bare worktree, add new entries to `App.js` and `App.d.ts` manually, following the existing alphabetical pattern.
 
 ## Build
 

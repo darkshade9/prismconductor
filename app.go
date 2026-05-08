@@ -896,6 +896,45 @@ func (a *App) UpdateWorkspace(ws types.Workspace) error {
 	return a.wsReg.Update(ws)
 }
 
+// ConvertWorkspaceToLocal converts a paused remote workspace to a local one
+// by assigning a repo path and clearing the remote configuration (#254).
+// The git-repo and github-remote onboarding checks must pass before the
+// workspace record is updated (q2=yes: validate before persisting).
+func (a *App) ConvertWorkspaceToLocal(workspaceID, repoPath string) error {
+	if a.wsReg == nil {
+		return fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("workspace %q not found", workspaceID)
+	}
+
+	insp := workspace.Inspect(repoPath)
+	for _, c := range insp.Checks {
+		if (c.Name == "git repo" || c.Name == "github remote") && !c.Pass {
+			return fmt.Errorf("onboarding check %q failed: %s", c.Name, c.Info)
+		}
+	}
+
+	ws.ExecutionTarget = types.ExecutionTargetLocal
+	ws.RepoPath = repoPath
+	ws.RemoteConfig = nil
+	ws.Provisioning = false
+	ws.ProvisioningAt = nil
+	if insp.GitHubOwner != "" {
+		ws.GitHubOwner = insp.GitHubOwner
+		ws.GitHubRepo = insp.GitHubRepo
+	}
+	if insp.DefaultBranch != "" {
+		ws.DefaultBranch = insp.DefaultBranch
+	}
+	if err := a.wsReg.Update(ws); err != nil {
+		return err
+	}
+	a.emitToast("success", ws.DisplayName, "Converted to local workspace.", nil)
+	return nil
+}
+
 // RemoveWorkspace removes a workspace by ID. Any pools bound to this workspace
 // are silently rebound to shared so capacity isn't orphaned (issue #109, q1).
 // For remote workspaces the CF API token is removed from the OS keyring (issue #178).

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { DeployRemoteWorker, GCWorktrees, ListPools, RemoveWorkspace, RotateRemoteWorkerKey, RunAutoArchiveNow, UpdateWorkspace } from "../../wailsjs/go/main/App";
+import { ConvertWorkspaceToLocal, DeployRemoteWorker, GCWorktrees, ListPools, PickRepoPath, RemoveWorkspace, RotateRemoteWorkerKey, RunAutoArchiveNow, UpdateWorkspace } from "../../wailsjs/go/main/App";
 import { types, workerpool } from "../../wailsjs/go/models";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { AddWorkspaceModal } from "./AddWorkspaceModal";
@@ -427,6 +427,65 @@ function RemoteAuthPanel({ workspace, onSave }: { workspace: types.Workspace; on
   );
 }
 
+function ConvertToLocalPanel({ workspaceID, onDone }: { workspaceID: string; onDone: () => void }) {
+  const [repoPath, setRepoPath] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function pickPath() {
+    try {
+      const p = await PickRepoPath();
+      if (p) setRepoPath(p);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    }
+  }
+
+  async function convert() {
+    if (!repoPath) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await ConvertWorkspaceToLocal(workspaceID, repoPath);
+      await onDone();
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded border border-amber-800 bg-amber-950/30 p-3 space-y-2">
+      <div className="text-xs text-amber-300 font-medium">Remote execution paused</div>
+      <div className="text-xs text-slate-400">
+        New sessions cannot start on this workspace. Provide a local repo path to convert it to a local workspace.
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          {...noAutoCorrect}
+          type="text"
+          value={repoPath}
+          onChange={(e) => setRepoPath(e.target.value)}
+          placeholder="/absolute/path/to/repo"
+          className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 font-mono"
+        />
+        <button onClick={pickPath} className="px-2 py-1 border border-slate-700 rounded text-xs hover:bg-slate-800">
+          Browse…
+        </button>
+      </div>
+      {error && <div className="text-red-400 text-xs">{error}</div>}
+      <button
+        onClick={convert}
+        disabled={!repoPath || busy}
+        className="px-3 py-1 bg-emerald-700 hover:bg-emerald-600 rounded text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        {busy ? "Converting…" : "Convert to local"}
+      </button>
+    </div>
+  );
+}
+
 export function WorkspacesPanel() {
   const { workspaces, refresh, loading } = useWorkspaceStore();
   const [adding, setAdding] = useState(false);
@@ -497,7 +556,7 @@ export function WorkspacesPanel() {
                     <div className="flex items-center gap-1.5">
                       <span className="text-sm text-slate-200">{ws.display_name || ws.id}</span>
                       {ws.execution_target === "remote" && (
-                        <span className="text-[10px] bg-sky-900 text-sky-300 px-1.5 py-0.5 rounded">Remote</span>
+                        <span className="text-[10px] bg-amber-900 text-amber-300 px-1.5 py-0.5 rounded" title="Remote execution is paused — convert to local to resume">Paused</span>
                       )}
                       {ws.remote_config?.token_expired && (
                         <span className="text-[10px] bg-amber-900 text-amber-300 px-1.5 py-0.5 rounded">TOKEN EXPIRED</span>
@@ -548,23 +607,8 @@ export function WorkspacesPanel() {
                 </div>
                 {isExpanded && (
                   <div className="mt-2 space-y-4">
-                    {ws.remote_config?.remote_unreachable && (
-                      <div className="rounded border border-red-800 bg-red-950 p-3 text-xs space-y-2">
-                        <div className="text-red-300 font-medium">Remote worker endpoint unreachable</div>
-                        <div className="text-red-400 font-mono break-all">{ws.remote_config.cf_worker_endpoint_url}</div>
-                        <div className="text-slate-400">Re-run setup to redeploy with a corrected URL, or edit the endpoint directly in the Cloudflare dashboard.</div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => setExpanded(ws.id)}
-                            className="px-2 py-1 bg-sky-800 hover:bg-sky-700 rounded text-xs text-sky-200"
-                          >
-                            Re-run Setup
-                          </button>
-                        </div>
-                      </div>
-                    )}
                     {ws.execution_target === "remote" && (
-                      <RemoteAuthPanel workspace={ws} onSave={refresh} />
+                      <ConvertToLocalPanel workspaceID={ws.id} onDone={refresh} />
                     )}
                     <SkillProfileEditor workspace={ws} />
                     <div>

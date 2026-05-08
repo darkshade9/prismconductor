@@ -54,6 +54,10 @@ export function ContinueWork(arg1, arg2, arg3) {
   return window['go']['main']['App']['ContinueWork'](arg1, arg2, arg3);
 }
 
+export function ConvertWorkspaceToLocal(arg1, arg2) {
+  return window['go']['main']['App']['ConvertWorkspaceToLocal'](arg1, arg2);
+}
+
 export function CreateCollection(arg1) {
   return window['go']['main']['App']['CreateCollection'](arg1);
 }
