@@ -12,14 +12,31 @@ import (
 // repoGlobs are the directory patterns searched for repo-supplied skill files,
 // in priority order. PrismConductor's own directory is first so repo authors
 // can explicitly ship overrides there; common tool directories follow.
+// Each root is listed twice: the flat *.md form and the one-level subdirectory
+// form (skill-name/SKILL.md). filepath.Glob is non-recursive, so both casings
+// of the sentinel filename are listed explicitly for Linux compatibility.
 var repoGlobs = []string{
 	".prismconductor/skills/*.md",
+	".prismconductor/skills/*/SKILL.md",
+	".prismconductor/skills/*/skill.md",
 	".claude/commands/*.md",
+	".claude/commands/*/SKILL.md",
+	".claude/commands/*/skill.md",
 	".claude/skills/*.md",
+	".claude/skills/*/SKILL.md",
+	".claude/skills/*/skill.md",
 	".cursor/rules/*.md",
+	".cursor/rules/*/SKILL.md",
+	".cursor/rules/*/skill.md",
 	".cursor/commands/*.md",
+	".cursor/commands/*/SKILL.md",
+	".cursor/commands/*/skill.md",
 	".codex/skills/*.md",
+	".codex/skills/*/SKILL.md",
+	".codex/skills/*/skill.md",
 	".codex/commands/*.md",
+	".codex/commands/*/SKILL.md",
+	".codex/commands/*/skill.md",
 }
 
 // Discover returns all available skills for the given workspace. Bundled
@@ -84,7 +101,14 @@ func discoverRepo(repoPath string) []types.SkillRef {
 				continue
 			}
 			seen[match] = true
-			name := strings.TrimSuffix(filepath.Base(match), ".md")
+			base := filepath.Base(match)
+			var name string
+			if strings.EqualFold(base, "skill.md") {
+				// subdirectory layout: skill-name/SKILL.md — use parent dir as name
+				name = filepath.Base(filepath.Dir(match))
+			} else {
+				name = strings.TrimSuffix(base, ".md")
+			}
 			out = append(out, types.SkillRef{
 				Path:        match,
 				Source:      "repo",
