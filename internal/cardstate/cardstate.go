@@ -132,8 +132,8 @@ type DeriveParams struct {
 //  7. Active session execute-mode → in_progress
 //  8. No active session + waiting_for_pool → waiting_for_pool
 //  9. No active session + needs_pr → needs_pr
-//  10. No active session + merge_conflict → merge_conflict
-//  11. No active session + tests_failing → tests_failing
+//  10. No active session + merge_conflict (PR open, any column) → merge_conflict
+//  11. No active session + tests_failing (PR open, any column) → tests_failing
 //  12. No active session + last_failure → blocked
 //  13. No active session + plan_failed → plan_failed
 //  14. Plan ready (not approved) → plan_ready
@@ -207,10 +207,10 @@ func DeriveCardState(p DeriveParams) (CardState, CardStateDetails) {
 			BlockedReason: p.NeedsPRInfo.Reason,
 		}
 	}
-	if p.HasConflicts && p.Column == types.ColReview {
+	if p.HasConflicts && p.PRNumber != nil {
 		return CardStateMergeConflict, CardStateDetails{Reason: "PR has merge conflicts with its base branch"}
 	}
-	if p.HasTestsFailing && p.Column == types.ColReview {
+	if p.HasTestsFailing && p.PRNumber != nil {
 		return CardStateTestsFailing, CardStateDetails{Reason: "PR check runs are failing"}
 	}
 	if p.LastFailure != nil {

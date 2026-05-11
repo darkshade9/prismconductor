@@ -353,6 +353,9 @@ func (a *App) startup(ctx context.Context) {
 		// Issue #124: PR merge-conflict detection and resolution worker.
 		a.bus.Subscribe(a.handlePRConflictsDetected)
 		a.bus.Subscribe(a.handlePRConflictsResolved)
+
+		// Issue #247: poller watchdog toast.
+		a.bus.Subscribe(a.handlePollerWatchdogFired)
 	}
 
 	// Issue #17: answer-file watcher. Polls each enabled workspace's
@@ -499,6 +502,23 @@ func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionSta
 		}
 		if err := a.store.SetIssueFailureReason(sess.WorkspaceID, sess.IssueNumber, reason); err != nil {
 			log.Printf("SetIssueFailureReason #%d: %v", sess.IssueNumber, err)
+		}
+
+		// When the execute session fails and the issue already has an open PR,
+		// roll the card back to REVIEW so it is not stranded in IN_PROGRESS.
+		// The user can inspect or re-open the PR from the REVIEW column (#247).
+		if iss, loadErr := a.store.LoadIssue(sess.WorkspaceID, sess.IssueNumber); loadErr == nil && iss.PRNumber != nil {
+			if mvErr := a.store.MoveIssueColumn(sess.WorkspaceID, sess.IssueNumber, types.ColReview); mvErr != nil {
+				log.Printf("handleSessionStateChange: rollback to REVIEW #%d: %v", sess.IssueNumber, mvErr)
+			} else {
+				a.emitToast("warning", toastWorkspaceName(a.wsReg, sess.WorkspaceID),
+					fmt.Sprintf("#%d execute/continue failed; card returned to REVIEW. Last error: %s", sess.IssueNumber, reason),
+					map[string]any{
+						"workspace_id": sess.WorkspaceID,
+						"issue_number": sess.IssueNumber,
+						"action":       "focus_card",
+					})
+			}
 		}
 
 		// Attempt to schedule an automatic retry for transient failures (#221).
@@ -3966,6 +3986,17 @@ func (a *App) handlePRConflictsResolved(e eventbus.Event) {
 				"issue_number": p.IssueNumber,
 				"action":       "focus_card",
 			})
+	}
+}
+
+// handlePollerWatchdogFired handles EvtPollerWatchdogFired (#247): emits a
+// warning toast when the GitHub poll loop has been restarted by the watchdog.
+func (a *App) handlePollerWatchdogFired(e eventbus.Event) {
+	if e.Type != eventbus.EvtPollerWatchdogFired {
+		return
+	}
+	if !a.notificationsSuppressed() {
+		a.emitToast("warning", "GitHub Poller", "GitHub poller was stuck — restarted", nil)
 	}
 }
 

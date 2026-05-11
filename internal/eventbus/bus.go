@@ -67,6 +67,9 @@ const (
 	EvtRetryFired     EventType = "retry_fired"
 	EvtRetryCancelled EventType = "retry_cancelled"
 	EvtRetryExhausted EventType = "retry_exhausted"
+
+	// Issue #247: poller watchdog fired when the GitHub poll loop stalls.
+	EvtPollerWatchdogFired EventType = "poller_watchdog_fired"
 )
 
 type Event struct {
