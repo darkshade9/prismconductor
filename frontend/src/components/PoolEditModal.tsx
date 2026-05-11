@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import {
   CreatePool,
   ListWorkspaces,
-  ProbeProviderModels,
   SavePool,
 } from "../../wailsjs/go/main/App";
 import { main, types } from "../../wailsjs/go/models";
 import { noAutoCorrect } from "../lib/inputs";
+import { ModelSelect } from "./ModelSelect";
+import { useModelsStore } from "../stores/modelsStore";
 
 type Role = "plan" | "work" | "orchestrator";
 type Scope = "shared" | "workspace";
@@ -82,8 +83,6 @@ export function PoolEditModal({
   const [outputCapKBStr, setOutputCapKBStr] = useState<string>(
     initial?.output_cap != null ? String(Math.round((initial.output_cap as number) / 1024)) : "",
   );
-  const [models, setModels] = useState<string[]>([]);
-  const [probing, setProbing] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [saveErr, setSaveErr] = useState<string>("");
@@ -92,6 +91,12 @@ export function PoolEditModal({
     () => providers.find((p) => p.kind === providerKind),
     [providers, providerKind],
   );
+
+  const resolvedEndpoint = endpoint || (providerInfo?.default_endpoint ?? "");
+  const fetchModels = useModelsStore((s) => s.fetch);
+  const invalidateModels = useModelsStore((s) => s.invalidate);
+  const modelEntry = useModelsStore((s) => s.getEntry(providerKind, resolvedEndpoint));
+  const probing = modelEntry?.loading ?? false;
 
   // Disable Save when picking role=orchestrator while another enabled
   // orchestrator pool already exists (and isn't the row we're editing).
@@ -124,29 +129,16 @@ export function PoolEditModal({
     }
   }, [model, providerKind]);
 
-  async function probe(): Promise<string[]> {
-    if (!providerInfo) return [];
-    setProbing(true);
-    try {
-      const list = await ProbeProviderModels(
-        providerKind,
-        endpoint || providerInfo.default_endpoint,
-        apiKey,
-      );
-      setModels(list ?? []);
-      return list ?? [];
-    } catch (err) {
-      setModels([]);
-      throw err;
-    } finally {
-      setProbing(false);
-    }
-  }
+  // Auto-probe when provider changes.
+  useEffect(() => {
+    if (!providerInfo) return;
+    fetchModels(providerKind, resolvedEndpoint, apiKey).catch(() => {});
+  }, [providerKind]);
 
   async function onEndpointBlur() {
     if (!providerInfo) return;
     try {
-      await probe();
+      await fetchModels(providerKind, resolvedEndpoint, apiKey);
     } catch {
       // Silent — UI keeps the model field as free-text.
     }
@@ -155,7 +147,8 @@ export function PoolEditModal({
   async function onTestConnection() {
     setTestResult(null);
     try {
-      const list = await probe();
+      invalidateModels(providerKind, resolvedEndpoint);
+      const list = await fetchModels(providerKind, resolvedEndpoint, apiKey);
       const sample = list.slice(0, 3).join(", ");
       setTestResult({
         ok: true,
@@ -286,7 +279,6 @@ export function PoolEditModal({
               value={providerKind}
               onChange={(e) => {
                 setProviderKind(e.target.value);
-                setModels([]);
                 setTestResult(null);
                 const info = providers.find((p) => p.kind === e.target.value);
                 if (info && !initial) setEndpoint(info.default_endpoint);
@@ -331,28 +323,13 @@ export function PoolEditModal({
 
           <div>
             <div className="text-xs text-slate-500 mb-1">Model</div>
-            {models.length > 0 ? (
-              <select
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
-              >
-                <option value="">— pick a model —</option>
-                {models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                {...noAutoCorrect}
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="model id (free text)"
-                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono text-xs"
-              />
-            )}
+            <ModelSelect
+              provider={providerKind}
+              endpoint={resolvedEndpoint}
+              apiKey={apiKey}
+              value={model}
+              onChange={setModel}
+            />
           </div>
 
           <div className="flex items-center gap-2">
