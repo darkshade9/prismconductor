@@ -1,5 +1,16 @@
 package migrations
 
+import (
+	"database/sql"
+	"strings"
+)
+
+// isAlreadyExists returns true when the SQLite error text indicates the column
+// or table already exists (ALTER TABLE on an existing column).
+func isAlreadyExists(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "duplicate column name")
+}
+
 // all is the ordered list of every migration this binary knows about.
 // IDs must be lexicographically ordered (YYYYMMDD_NN_description).
 // Never remove or reorder entries; only append.
@@ -61,6 +72,38 @@ CREATE TABLE IF NOT EXISTS cross_workspace_deps (
 );
 CREATE INDEX IF NOT EXISTS idx_cwd_dep
     ON cross_workspace_deps (dep_workspace_id, dep_issue_number);`,
+	},
+	{
+		ID:          "20260511_00_add_providers",
+		Description: "issue #268: centralized provider credential entities; nullable provider_id FK on pools",
+		SQL: `
+CREATE TABLE IF NOT EXISTS providers (
+    id         TEXT    PRIMARY KEY,
+    name       TEXT    NOT NULL,
+    kind       TEXT    NOT NULL,
+    endpoint   TEXT    NOT NULL DEFAULT '',
+    api_key    TEXT    NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+);`,
+		Up: func(tx *sql.Tx) error {
+			// The pools table is created by legacy migrate(), which runs before
+			// the versioned migration framework on existing DBs. On a bare DB
+			// (e.g. migration-framework tests) the table may not exist yet; in
+			// that case the ALTER TABLE is a no-op and the legacy path will add
+			// the column via its own idempotent ALTER TABLE on first open.
+			var tblCount int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='pools'`).Scan(&tblCount); err != nil {
+				return err
+			}
+			if tblCount == 0 {
+				return nil
+			}
+			_, err := tx.Exec(`ALTER TABLE pools ADD COLUMN provider_id TEXT`)
+			if err != nil && !isAlreadyExists(err) {
+				return err
+			}
+			return nil
+		},
 	},
 }
 

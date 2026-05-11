@@ -90,6 +90,10 @@ export function DeletePool(arg1) {
   return window['go']['main']['App']['DeletePool'](arg1);
 }
 
+export function DeleteProviderEntity(arg1) {
+  return window['go']['main']['App']['DeleteProviderEntity'](arg1);
+}
+
 export function DeployRemoteWorker(arg1, arg2, arg3) {
   return window['go']['main']['App']['DeployRemoteWorker'](arg1, arg2, arg3);
 }
@@ -266,6 +270,10 @@ export function ListPools() {
   return window['go']['main']['App']['ListPools']();
 }
 
+export function ListProviderEntities() {
+  return window['go']['main']['App']['ListProviderEntities']();
+}
+
 export function ListProviders() {
   return window['go']['main']['App']['ListProviders']();
 }
@@ -424,6 +432,10 @@ export function SaveGoal(arg1) {
 
 export function SavePool(arg1) {
   return window['go']['main']['App']['SavePool'](arg1);
+}
+
+export function SaveProviderEntity(arg1) {
+  return window['go']['main']['App']['SaveProviderEntity'](arg1);
 }
 
 export function SaveWorkspacePipeline(arg1, arg2) {

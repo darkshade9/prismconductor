@@ -44,7 +44,7 @@ func (s *Store) ListPools() ([]types.Pool, error) {
 		return nil, errors.New("store unavailable")
 	}
 	rows, err := s.DB.Query(`
-SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id
+SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id, COALESCE(provider_id,'')
 FROM pools
 ORDER BY priority ASC, created_at ASC, id ASC`)
 	if err != nil {
@@ -68,7 +68,7 @@ func (s *Store) ListPoolsByRole(role types.Role) ([]types.Pool, error) {
 		return nil, errors.New("store unavailable")
 	}
 	rows, err := s.DB.Query(`
-SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id
+SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id, COALESCE(provider_id,'')
 FROM pools
 WHERE role = ?
 ORDER BY priority ASC, created_at ASC, id ASC`, string(role))
@@ -93,7 +93,7 @@ func (s *Store) GetPool(id string) (types.Pool, error) {
 		return types.Pool{}, errors.New("store unavailable")
 	}
 	row := s.DB.QueryRow(`
-SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id
+SELECT id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id, COALESCE(provider_id,'')
 FROM pools WHERE id = ?`, id)
 	return scanPool(row)
 }
@@ -138,8 +138,8 @@ func (s *Store) SavePool(p types.Pool) error {
 		scope = string(types.PoolScopeShared)
 	}
 	_, err = s.DB.Exec(`
-INSERT INTO pools (id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pools (id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id, provider_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     name = excluded.name,
     provider = excluded.provider,
@@ -156,10 +156,11 @@ ON CONFLICT(id) DO UPDATE SET
     bash_timeout_ms = excluded.bash_timeout_ms,
     output_cap = excluded.output_cap,
     scope = excluded.scope,
-    workspace_id = excluded.workspace_id`,
+    workspace_id = excluded.workspace_id,
+    provider_id = excluded.provider_id`,
 		p.ID, p.Name, string(p.Provider), p.Endpoint, p.Model,
 		p.Capacity, enabled, p.APIKey, string(p.Role), p.CreatedAt.Unix(), p.Priority, p.Temperature,
-		p.MaxTurns, p.MaxInputTokens, bashTimeoutMs, p.OutputCap, scope, p.WorkspaceID)
+		p.MaxTurns, p.MaxInputTokens, bashTimeoutMs, p.OutputCap, scope, p.WorkspaceID, nullableString(p.ProviderID))
 	return err
 }
 
@@ -220,11 +221,11 @@ func (s *Store) CreatePool(p types.Pool) error {
 		scope = string(types.PoolScopeShared)
 	}
 	_, err = tx.Exec(`
-INSERT INTO pools (id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+INSERT INTO pools (id, name, provider, endpoint, model, capacity, enabled, api_key, role, created_at, priority, temperature, max_turns, max_input_tokens, bash_timeout_ms, output_cap, scope, workspace_id, provider_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Name, string(p.Provider), p.Endpoint, p.Model,
 		p.Capacity, enabled, p.APIKey, string(p.Role), p.CreatedAt.Unix(), p.Priority, p.Temperature,
-		p.MaxTurns, p.MaxInputTokens, bashTimeoutMs, p.OutputCap, scope, p.WorkspaceID)
+		p.MaxTurns, p.MaxInputTokens, bashTimeoutMs, p.OutputCap, scope, p.WorkspaceID, nullableString(p.ProviderID))
 	if err != nil {
 		return err
 	}
@@ -345,15 +346,16 @@ func scanPool(r rowScanner) (types.Pool, error) {
 	var createdAt int64
 	var temperature sql.NullFloat64
 	var maxTurns, maxInputTokens, bashTimeoutMs, outputCap sql.NullInt64
-	var scope, workspaceID string
+	var scope, workspaceID, providerID string
 	if err := r.Scan(&p.ID, &p.Name, &provider, &p.Endpoint, &p.Model,
 		&p.Capacity, &enabled, &p.APIKey, &role, &createdAt, &p.Priority, &temperature,
-		&maxTurns, &maxInputTokens, &bashTimeoutMs, &outputCap, &scope, &workspaceID); err != nil {
+		&maxTurns, &maxInputTokens, &bashTimeoutMs, &outputCap, &scope, &workspaceID, &providerID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return types.Pool{}, fmt.Errorf("pool not found")
 		}
 		return types.Pool{}, err
 	}
+	p.ProviderID = providerID
 	p.Provider = types.Provider(provider)
 	p.Role = types.Role(role)
 	if p.Role == "" {
@@ -387,3 +389,4 @@ func scanPool(r rowScanner) (types.Pool, error) {
 	p.WorkspaceID = workspaceID
 	return p, nil
 }
+

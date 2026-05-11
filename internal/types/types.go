@@ -228,13 +228,27 @@ type ConventionHints struct {
 	PackageManager string `json:"package_manager"`
 }
 
+// --- ProviderEntity (issue #268: centralized LLM credentials) ---
+
+// ProviderEntity is a persisted set of LLM credentials shared across pools.
+// Distinct from the Provider enum (which names a driver kind like "claude").
+type ProviderEntity struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Kind      Provider  `json:"kind"`
+	Endpoint  string    `json:"endpoint"`
+	APIKey    string    `json:"api_key,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // --- Pool (heterogeneous worker fleets, §6.6 / issue #27, role added in #39) ---
 
 type Pool struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Provider  Provider  `json:"provider"`
-	Endpoint  string    `json:"endpoint"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	ProviderID string    `json:"provider_id,omitempty"`
+	Provider   Provider  `json:"provider"`
+	Endpoint   string    `json:"endpoint"`
 	Model     string    `json:"model"`
 	Capacity  int       `json:"capacity"`
 	Enabled   bool      `json:"enabled"`

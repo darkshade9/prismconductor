@@ -2,6 +2,7 @@ import { useState } from "react";
 import { WorkspacesPanel } from "./WorkspacesPanel";
 import { BundledSkillsViewer } from "./BundledSkillsViewer";
 import { PoolsPanel } from "./PoolsPanel";
+import { ProvidersPanel } from "./ProvidersPanel";
 import { NotifyPanel } from "./NotifyPanel";
 import { LogsPanel } from "./LogsPanel";
 import { AppearancePanel } from "./AppearancePanel";
@@ -9,7 +10,7 @@ import { CollectionsPanel } from "./CollectionsPanel";
 import { EventDiagnostics } from "./EventDiagnostics";
 import { useSettingsStore } from "../stores/useSettingsStore";
 
-type Tab = "workspaces" | "collections" | "pools" | "skills" | "notify" | "appearance" | "logs" | "advanced" | "diagnostics";
+type Tab = "workspaces" | "collections" | "providers" | "pools" | "skills" | "notify" | "appearance" | "logs" | "advanced" | "diagnostics";
 
 export function Settings({
   open,
@@ -41,6 +42,7 @@ export function Settings({
               [
                 ["workspaces", "Workspaces"],
                 ["collections", "Collections"],
+                ["providers", "Providers"],
                 ["pools", "Pools"],
                 ["skills", "Bundled skills"],
                 ["notify", "Notifications"],
@@ -65,6 +67,7 @@ export function Settings({
           <div className="flex-1 p-4 overflow-y-auto">
             {tab === "workspaces" && <WorkspacesPanel />}
             {tab === "collections" && <CollectionsPanel />}
+            {tab === "providers" && <ProvidersPanel />}
             {tab === "pools" && <PoolsPanel />}
             {tab === "skills" && <BundledSkillsViewer />}
             {tab === "notify" && <NotifyPanel />}
