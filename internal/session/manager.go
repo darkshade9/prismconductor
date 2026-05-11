@@ -136,10 +136,16 @@ type Manager struct {
 // Sentinel so callers can branch on it cleanly via errors.Is.
 var ErrDuplicateSpawn = errors.New("duplicate spawn refused: same (workspace, issue, mode) already in flight")
 
-// ErrRemoteNotReady is returned by SpawnPlan when the workspace has
+// ErrRemoteNotReady is returned by spawnRemotePlan when the workspace has
 // ExecutionTarget=remote but RemoteConfig or CFWorkerEndpointURL is not
-// configured. The caller should surface this as an immediate card error.
+// configured. Kept for backwards compat; the public spawn methods now return
+// ErrRemoteWorkspacePaused before reaching this internal check (#254).
 var ErrRemoteNotReady = errors.New("remote workspace not ready: no worker endpoint configured")
+
+// ErrRemoteWorkspacePaused is returned by all spawn methods when the workspace
+// has ExecutionTarget=remote. Remote execution is paused as of issue #254;
+// use ConvertWorkspaceToLocal to re-enable the workspace.
+var ErrRemoteWorkspacePaused = errors.New("remote workspace is paused — convert to local to use this workspace")
 
 type runtimeSession struct {
 	sess           *types.Session
@@ -325,9 +331,12 @@ func (m *Manager) SetProviders(r *llm.Registry) { m.providers = r }
 // Issue #191: when ws.ExecutionTarget is "remote", delegates to spawnRemotePlan
 // instead of running a local subprocess. Returns ErrRemoteNotReady immediately
 // if the remote endpoint is not configured so the caller can surface an error.
+//
+// Issue #254: remote execution is paused. All remote workspaces return
+// ErrRemoteWorkspacePaused immediately so no session is created.
 func (m *Manager) SpawnPlan(ws types.Workspace, issue types.Issue, pool types.Pool) (*types.Session, error) {
 	if ws.ExecutionTarget == types.ExecutionTargetRemote {
-		return m.spawnRemotePlan(ws, issue, pool)
+		return nil, ErrRemoteWorkspacePaused
 	}
 	// Phase 2 (issue #197): pre-fetch the issue body to a known path so the
 	// plan worker can read it without an extra GitHub API call.
@@ -368,9 +377,12 @@ func writeIssuePayload(repoPath string, issue types.Issue) {
 //
 // Issue #171: when ws.ExecutionTarget is "remote", delegates to spawnRemote
 // instead of creating a local worktree. Local flow is unchanged.
+//
+// Issue #254: remote execution is paused. All remote workspaces return
+// ErrRemoteWorkspacePaused immediately so no session is created.
 func (m *Manager) SpawnExecute(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool) (*types.Session, error) {
-	if ws.ExecutionTarget == types.ExecutionTargetRemote && ws.RemoteConfig != nil {
-		return m.spawnRemote(ws, issue, plan, pool, "")
+	if ws.ExecutionTarget == types.ExecutionTargetRemote {
+		return nil, ErrRemoteWorkspacePaused
 	}
 	base := ws.DefaultBranch
 	if base == "" {
@@ -431,9 +443,12 @@ func (m *Manager) SpawnExecute(ws types.Workspace, issue types.Issue, plan types
 //
 // Issue #171: remote workspaces resume via spawnRemote with the questionID
 // forwarded; the remote worker handles re-hydrating the branch.
+//
+// Issue #254: remote execution is paused. All remote workspaces return
+// ErrRemoteWorkspacePaused immediately.
 func (m *Manager) SpawnExecuteResume(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool, questionID string) (*types.Session, error) {
-	if ws.ExecutionTarget == types.ExecutionTargetRemote && ws.RemoteConfig != nil {
-		return m.spawnRemote(ws, issue, plan, pool, questionID)
+	if ws.ExecutionTarget == types.ExecutionTargetRemote {
+		return nil, ErrRemoteWorkspacePaused
 	}
 	slug := branchSlug(issue.Title)
 	branch := fmt.Sprintf("feat/issue-%d-%s", issue.Number, slug)

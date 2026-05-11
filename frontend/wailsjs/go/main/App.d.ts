@@ -39,6 +39,8 @@ export function ClearIssueFailure(arg1:string,arg2:number):Promise<void>;
 
 export function ContinueWork(arg1:string,arg2:number,arg3:string):Promise<void>;
 
+export function ConvertWorkspaceToLocal(arg1:string,arg2:string):Promise<void>;
+
 export function CreateCollection(arg1:string):Promise<types.Collection>;
 
 export function CreateLabel(arg1:string,arg2:types.Label):Promise<types.Label>;

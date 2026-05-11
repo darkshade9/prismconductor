@@ -174,6 +174,8 @@ type EnvSpec struct {
 
 Stored in `~/Library/Application Support/PrismConductor/workspaces.json` (macOS) or platform equivalent.
 
+> **Issue #254 — Remote execution paused.** The `execution_target` field exists in the persisted schema and is preserved for existing remote workspaces, but the UI no longer offers remote workspace creation. All three spawn paths (`SpawnPlan`, `SpawnExecute`, `SpawnExecuteResume`) return `ErrRemoteWorkspacePaused` immediately for any workspace with `execution_target == "remote"`. Users with existing remote workspaces can convert them to local via Settings → Workspace → "Convert to local".
+
 #### 6.1.1 SkillProfile
 
 Declares which skills this workspace uses for plan/execute/close. **Defaults to `bundled` mode** for new workspaces — no repo-side files required. See §15.7 for the bundled skill set.

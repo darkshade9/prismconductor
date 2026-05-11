@@ -1,29 +1,13 @@
 package session
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
-	"time"
 
-	"prismconductor/internal/remoteworker"
 	"prismconductor/internal/types"
 )
-
-// swapHTTPClient replaces the package-level http client inside remoteworker
-// for the duration of a test via the test-helper exported by that package.
-// We can't call replaceHTTPClient directly (it's in a different package and
-// test-only), so we use the same httptest.Server trick that the remote-worker
-// tests use: pass the server's client to the equivalent test-helper.
-//
-// This test file directly instantiates a Manager and exercises SpawnPlan;
-// it uses a real httptest.Server whose URL is wired into the workspace
-// RemoteConfig, bypassing the package-level http.Client substitution by
-// relying on the default http.Client pointing at the test server's loopback.
 
 // buildTestManager returns a minimal Manager configured for test spawns.
 func buildTestManager(t *testing.T) *Manager {
@@ -50,8 +34,7 @@ func TestSpawnPlan_LocalWorkspace_DoesNotCallRemote(t *testing.T) {
 	ws := types.Workspace{
 		ID:              "ws-local",
 		ExecutionTarget: types.ExecutionTargetLocal,
-		// No RemoteConfig — but even if present, local target must not call it.
-		RemoteConfig: &types.RemoteConfig{CFWorkerEndpointURL: srv.URL},
+		RemoteConfig:    &types.RemoteConfig{CFWorkerEndpointURL: srv.URL},
 	}
 	issue := types.Issue{Number: 1, WorkspaceID: ws.ID}
 	pool := types.Pool{}
@@ -67,10 +50,9 @@ func TestSpawnPlan_LocalWorkspace_DoesNotCallRemote(t *testing.T) {
 	}
 }
 
-// TestSpawnPlan_RemoteWorkspace_NoConfig_ReturnsErrRemoteNotReady verifies
-// that SpawnPlan returns ErrRemoteNotReady immediately when ExecutionTarget
-// is remote but RemoteConfig or CFWorkerEndpointURL is missing.
-func TestSpawnPlan_RemoteWorkspace_NoConfig_ReturnsErrRemoteNotReady(t *testing.T) {
+// TestSpawnPlan_RemoteWorkspace_ReturnsPaused verifies that SpawnPlan returns
+// ErrRemoteWorkspacePaused for any remote workspace, regardless of config (#254).
+func TestSpawnPlan_RemoteWorkspace_ReturnsPaused(t *testing.T) {
 	cases := []struct {
 		name string
 		ws   types.Workspace
@@ -78,7 +60,7 @@ func TestSpawnPlan_RemoteWorkspace_NoConfig_ReturnsErrRemoteNotReady(t *testing.
 		{
 			name: "nil RemoteConfig",
 			ws: types.Workspace{
-				ID:              "ws-no-rc",
+				ID:              "ws-remote-no-rc",
 				ExecutionTarget: types.ExecutionTargetRemote,
 				RemoteConfig:    nil,
 			},
@@ -86,9 +68,17 @@ func TestSpawnPlan_RemoteWorkspace_NoConfig_ReturnsErrRemoteNotReady(t *testing.
 		{
 			name: "empty CFWorkerEndpointURL",
 			ws: types.Workspace{
-				ID:              "ws-no-url",
+				ID:              "ws-remote-no-url",
 				ExecutionTarget: types.ExecutionTargetRemote,
 				RemoteConfig:    &types.RemoteConfig{CFWorkerEndpointURL: ""},
+			},
+		},
+		{
+			name: "fully configured remote",
+			ws: types.Workspace{
+				ID:              "ws-remote-configured",
+				ExecutionTarget: types.ExecutionTargetRemote,
+				RemoteConfig:    &types.RemoteConfig{CFWorkerEndpointURL: "https://worker.example.com"},
 			},
 		},
 	}
@@ -96,147 +86,64 @@ func TestSpawnPlan_RemoteWorkspace_NoConfig_ReturnsErrRemoteNotReady(t *testing.
 		t.Run(tc.name, func(t *testing.T) {
 			m := buildTestManager(t)
 			_, err := m.SpawnPlan(tc.ws, types.Issue{Number: 1, WorkspaceID: tc.ws.ID}, types.Pool{})
-			if !errors.Is(err, ErrRemoteNotReady) {
-				t.Errorf("want ErrRemoteNotReady, got %v", err)
+			if !errors.Is(err, ErrRemoteWorkspacePaused) {
+				t.Errorf("want ErrRemoteWorkspacePaused, got %v", err)
 			}
 		})
 	}
 }
 
-// TestSpawnPlan_RemoteWorkspace_RoutesToRemote verifies that SpawnPlan posts
-// to the remote worker's /sessions endpoint with mode="plan" when
-// ExecutionTarget is remote and the endpoint is configured.
-func TestSpawnPlan_RemoteWorkspace_RoutesToRemote(t *testing.T) {
-	sessionID := "plan-sess-001"
-	var gotBody map[string]any
-	var gotPath string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		switch {
-		case r.Method == "POST" && r.URL.Path == "/sessions":
-			_ = json.NewDecoder(r.Body).Decode(&gotBody)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(remoteworker.SpawnResponse{SessionID: sessionID})
-
-		case r.Method == "GET" && r.URL.Path == "/sessions/"+sessionID+"/stream":
-			// Return empty SSE stream so the goroutine exits cleanly.
-			w.Header().Set("Content-Type", "text/event-stream")
-
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
-	// Redirect key-file I/O to a temp dir; write a dummy key so Spawn accepts it.
-	keychainDir := t.TempDir()
-	t.Cleanup(remoteworker.OverrideKeychainDir(keychainDir))
-	keyPath := filepath.Join(keychainDir, "secrets", "ws-remote-plan.key")
-	_ = os.MkdirAll(filepath.Dir(keyPath), 0o700)
-	_ = os.WriteFile(keyPath, []byte("test-api-key"), 0o600)
-
+// TestSpawnExecute_RemoteWorkspace_ReturnsPaused verifies that SpawnExecute also
+// returns ErrRemoteWorkspacePaused for any remote workspace (#254).
+func TestSpawnExecute_RemoteWorkspace_ReturnsPaused(t *testing.T) {
 	ws := types.Workspace{
-		ID:              "ws-remote-plan",
+		ID:              "ws-remote-exec",
 		ExecutionTarget: types.ExecutionTargetRemote,
-		RemoteConfig:    &types.RemoteConfig{CFWorkerEndpointURL: srv.URL},
-		GitHubOwner:     "acme",
-		GitHubRepo:      "myrepo",
+		RemoteConfig:    &types.RemoteConfig{CFWorkerEndpointURL: "https://worker.example.com"},
 	}
-	issue := types.Issue{Number: 7, WorkspaceID: ws.ID}
-	pool := types.Pool{Model: "claude-opus-4-7"}
-
 	m := buildTestManager(t)
-	sess, err := m.SpawnPlan(ws, issue, pool)
-	if err != nil {
-		t.Fatalf("SpawnPlan: %v", err)
-	}
-	if sess == nil {
-		t.Fatal("expected non-nil session")
-	}
-	if sess.Mode != types.ModePlan {
-		t.Errorf("session mode = %q, want plan", sess.Mode)
-	}
-	if sess.State != types.StateRunning {
-		t.Errorf("session state = %q, want running", sess.State)
-	}
-
-	// Wait briefly for the SSE goroutine to make the initial HTTP call.
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if gotPath != "" {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-
-	if gotPath != "/sessions" {
-		t.Errorf("request path = %q, want /sessions", gotPath)
-	}
-	if got, ok := gotBody["mode"].(string); !ok || got != "plan" {
-		t.Errorf("request body mode = %v, want \"plan\"", gotBody["mode"])
-	}
-	if got, ok := gotBody["issue_number"].(float64); !ok || int(got) != 7 {
-		t.Errorf("request body issue_number = %v, want 7", gotBody["issue_number"])
+	_, err := m.SpawnExecute(ws, types.Issue{Number: 2, WorkspaceID: ws.ID}, types.Plan{}, types.Pool{})
+	if !errors.Is(err, ErrRemoteWorkspacePaused) {
+		t.Errorf("SpawnExecute: want ErrRemoteWorkspacePaused, got %v", err)
 	}
 }
 
-// TestSpawnPlan_RemoteWorkspace_DuplicateGuard verifies that a second SpawnPlan
-// call for the same workspace+issue returns ErrDuplicateSpawn when the first
-// session is still running.
-func TestSpawnPlan_RemoteWorkspace_DuplicateGuard(t *testing.T) {
-	sessionID := "plan-dup-001"
-	block := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == "POST" && r.URL.Path == "/sessions":
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(remoteworker.SpawnResponse{SessionID: sessionID})
-		case r.Method == "GET":
-			// Block until test ends so the session stays running.
-			w.Header().Set("Content-Type", "text/event-stream")
-			<-block
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(func() { close(block); srv.Close() })
+// TestSpawnExecuteResume_RemoteWorkspace_ReturnsPaused verifies that
+// SpawnExecuteResume returns ErrRemoteWorkspacePaused for any remote workspace (#254).
+func TestSpawnExecuteResume_RemoteWorkspace_ReturnsPaused(t *testing.T) {
+	ws := types.Workspace{
+		ID:              "ws-remote-resume",
+		ExecutionTarget: types.ExecutionTargetRemote,
+		RemoteConfig:    &types.RemoteConfig{CFWorkerEndpointURL: "https://worker.example.com"},
+	}
+	m := buildTestManager(t)
+	_, err := m.SpawnExecuteResume(ws, types.Issue{Number: 3, WorkspaceID: ws.ID}, types.Plan{}, types.Pool{}, "q-123")
+	if !errors.Is(err, ErrRemoteWorkspacePaused) {
+		t.Errorf("SpawnExecuteResume: want ErrRemoteWorkspacePaused, got %v", err)
+	}
+}
 
-	// Redirect key-file I/O to a temp dir; write a dummy key so Spawn accepts it.
-	keychainDir := t.TempDir()
-	t.Cleanup(remoteworker.OverrideKeychainDir(keychainDir))
-	keyPath := filepath.Join(keychainDir, "secrets", "ws-dup-guard.key")
-	_ = os.MkdirAll(filepath.Dir(keyPath), 0o700)
-	_ = os.WriteFile(keyPath, []byte("test-key"), 0o600)
+// TestSpawnPlan_RemoteWorkspace_NoHTTPCall verifies that a paused remote
+// workspace does not make any HTTP call to its configured endpoint (#254).
+func TestSpawnPlan_RemoteWorkspace_NoHTTPCall(t *testing.T) {
+	httpCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpCalled = true
+		http.Error(w, "should not be called", 500)
+	}))
+	defer srv.Close()
 
 	ws := types.Workspace{
-		ID:              "ws-dup-guard",
+		ID:              "ws-remote-no-http",
 		ExecutionTarget: types.ExecutionTargetRemote,
 		RemoteConfig:    &types.RemoteConfig{CFWorkerEndpointURL: srv.URL},
 	}
-	issue := types.Issue{Number: 3, WorkspaceID: ws.ID}
-
 	m := buildTestManager(t)
-	sess1, err := m.SpawnPlan(ws, issue, types.Pool{})
-	if err != nil {
-		t.Fatalf("first SpawnPlan: %v", err)
+	_, err := m.SpawnPlan(ws, types.Issue{Number: 1, WorkspaceID: ws.ID}, types.Pool{})
+	if !errors.Is(err, ErrRemoteWorkspacePaused) {
+		t.Fatalf("want ErrRemoteWorkspacePaused, got %v", err)
 	}
-	// Ensure the session is registered as running before the second call.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		m.mu.Lock()
-		rs, ok := m.sessions[sess1.ID]
-		m.mu.Unlock()
-		if ok && rs != nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	_, err = m.SpawnPlan(ws, issue, types.Pool{})
-	if !errors.Is(err, ErrDuplicateSpawn) {
-		t.Errorf("second SpawnPlan: want ErrDuplicateSpawn, got %v", err)
+	if httpCalled {
+		t.Error("SpawnPlan on a paused remote workspace must not make any HTTP call")
 	}
 }
