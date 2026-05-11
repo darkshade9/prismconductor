@@ -7,6 +7,10 @@ const STAGE_LABELS: Record<string, string> = {
   close: "Close",
 };
 
+export function placeholderText(stage: string): string {
+  return `(default: bundled conductor-${stage})`;
+}
+
 export function SkillDropdown({
   stage,
   skills,
@@ -28,12 +32,22 @@ export function SkillDropdown({
 
   return (
     <label className="flex items-center gap-2">
-      <span className="w-20 text-xs text-slate-400 shrink-0">{label}</span>
+      <span className="w-20 text-xs text-slate-400 shrink-0">
+        {label}
+        {!selected && (
+          <span className="ml-1 text-slate-600 text-[10px]">(default)</span>
+        )}
+      </span>
       <select
         value={selectedPath}
         onChange={handleChange}
         className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 text-xs"
       >
+        {!selected && (
+          <option value="" disabled>
+            {placeholderText(stage)}
+          </option>
+        )}
         {skills.map((s) => (
           <option key={s.path} value={s.path}>
             {s.display_name}
