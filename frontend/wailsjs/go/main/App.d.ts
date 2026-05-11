@@ -57,6 +57,8 @@ export function DeleteLabel(arg1:string,arg2:string):Promise<void>;
 
 export function DeletePool(arg1:string):Promise<void>;
 
+export function DeleteProviderEntity(arg1:string):Promise<void>;
+
 export function DeployRemoteWorker(arg1:string,arg2:string,arg3:string):Promise<main.RemoteDeployResult>;
 
 export function DiagnoseIssue(arg1:string,arg2:number):Promise<diagnose.IssueDiagnosis>;
@@ -145,6 +147,8 @@ export function ListPlans(arg1:string,arg2:number):Promise<Array<types.Plan>>;
 
 export function ListPools():Promise<Array<workerpool.PoolStatus>>;
 
+export function ListProviderEntities():Promise<Array<types.ProviderEntity>>;
+
 export function ListProviders():Promise<Array<main.ProviderInfo>>;
 
 export function ListSessions():Promise<Array<types.Session>>;
@@ -224,6 +228,8 @@ export function RunOrchestrator():Promise<void>;
 export function SaveGoal(arg1:types.Goal):Promise<void>;
 
 export function SavePool(arg1:types.Pool):Promise<void>;
+
+export function SaveProviderEntity(arg1:types.ProviderEntity):Promise<void>;
 
 export function SaveWorkspacePipeline(arg1:string,arg2:types.WorkspacePipeline):Promise<void>;
 

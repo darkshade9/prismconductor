@@ -311,6 +311,13 @@ CREATE TABLE IF NOT EXISTS pools (
 	}
 	// Issue #159: PR comment surface — persisted per (workspace, issue, comment_id).
 	// conversation = issue thread comments; review = PR inline diff comments.
+	// Issue #268: nullable provider_id FK on pools; providers table created by
+	// the versioned migration framework (20260511_00_add_providers).
+	if _, err := s.DB.Exec(`ALTER TABLE pools ADD COLUMN provider_id TEXT`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
 	if _, err := s.DB.Exec(`CREATE TABLE IF NOT EXISTS pr_comments (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace_id TEXT NOT NULL,

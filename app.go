@@ -180,6 +180,9 @@ func (a *App) startup(ctx context.Context) {
 		if err := a.migrateOrchestratorPool(); err != nil {
 			log.Printf("migrate orchestrator pool: %v", err)
 		}
+		// Issue #268: one-shot migration to group pool credentials into Provider
+		// entities. Idempotent; emits a toast when providers are created.
+		a.migratePoolsToProviders()
 		if n, err := a.store.ReconcilePoolPriorities(); err != nil {
 			log.Printf("reconcile pool priorities: %v", err)
 		} else if n > 0 {
@@ -2674,6 +2677,60 @@ func (a *App) ProbeProviderModels(provider types.Provider, endpoint, apiKey stri
 	}
 	pool := types.Pool{Provider: provider, Endpoint: endpoint, APIKey: apiKey}
 	return prov.ListModels(a.ctx, pool)
+}
+
+// --- Provider entities (issue #268) ---
+
+// ListProviderEntities returns every saved provider credential row.
+func (a *App) ListProviderEntities() ([]types.ProviderEntity, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store unavailable")
+	}
+	return a.store.ListProviderEntities()
+}
+
+// SaveProviderEntity upserts a provider row. An empty ID triggers a new UUID.
+func (a *App) SaveProviderEntity(p types.ProviderEntity) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	if p.ID == "" {
+		p.ID = uuid.NewString()
+	}
+	if p.CreatedAt.IsZero() {
+		p.CreatedAt = time.Now()
+	}
+	return a.store.SaveProviderEntity(p)
+}
+
+// DeleteProviderEntity removes a provider row. Returns an error if any pool
+// still references this provider (issue #268 q2).
+func (a *App) DeleteProviderEntity(id string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	return a.store.DeleteProviderEntity(id)
+}
+
+// migratePoolsToProviders is the one-shot startup migration (issue #268 q3).
+// Groups existing pools by (kind, endpoint, api_key), creates Provider rows,
+// and emits a toast with the counts. Idempotent: pools with provider_id set
+// are skipped.
+func (a *App) migratePoolsToProviders() {
+	if a.store == nil {
+		return
+	}
+	created, updated, err := a.store.MigratePoolsToProviders()
+	if err != nil {
+		log.Printf("migratePoolsToProviders: %v", err)
+		return
+	}
+	if created > 0 {
+		a.emitToast("info", "Providers", fmt.Sprintf(
+			"Auto-created %d provider(s) from %d pool credential(s).",
+			created, updated,
+		), nil)
+	}
 }
 
 // migrateClaudePoolFromLegacy seeds one Claude pool the first time the pools

@@ -457,14 +457,18 @@ function PoolRow({
             ${spendToday.toFixed(2)}/day
           </div>
         )}
-        <label className="flex items-center gap-1 text-xs">
-          <input
-            type="checkbox"
-            checked={row.pool.enabled}
-            onChange={(e) => onToggleEnabled(row.pool, e.target.checked)}
-          />
-          enabled
-        </label>
+        <button
+          onClick={() => onToggleEnabled(row.pool, !row.pool.enabled)}
+          className={
+            "text-xs px-2 py-0.5 rounded-full border transition-colors " +
+            (row.pool.enabled
+              ? "bg-emerald-900/50 border-emerald-700 text-emerald-300 hover:bg-emerald-900"
+              : "bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300")
+          }
+          title={row.pool.enabled ? "Click to disable" : "Click to enable"}
+        >
+          {row.pool.enabled ? "enabled" : "disabled"}
+        </button>
         <button
           className="text-xs text-slate-300 hover:text-slate-100 px-2 py-1 border border-slate-700 rounded"
           onClick={onEdit}

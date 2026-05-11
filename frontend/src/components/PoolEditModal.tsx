@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   CreatePool,
+  ListProviderEntities,
   ListWorkspaces,
   SavePool,
 } from "../../wailsjs/go/main/App";
@@ -61,6 +62,10 @@ export function PoolEditModal({
   const [scope, setScope] = useState<Scope>(((initial?.scope as Scope) || "shared") as Scope);
   const [scopeWorkspaceID, setScopeWorkspaceID] = useState<string>(initial?.workspace_id ?? "");
   const [workspaces, setWorkspaces] = useState<types.Workspace[]>([]);
+  const [providerEntities, setProviderEntities] = useState<types.ProviderEntity[]>([]);
+  const [selectedProviderEntityID, setSelectedProviderEntityID] = useState<string>(
+    initial?.provider_id ?? "",
+  );
   const [providerKind, setProviderKind] = useState<string>(
     initial?.provider ?? fallbackProvider,
   );
@@ -120,7 +125,19 @@ export function PoolEditModal({
 
   useEffect(() => {
     ListWorkspaces().then((ws) => setWorkspaces(ws ?? [])).catch(() => {});
+    ListProviderEntities().then((pv) => setProviderEntities(pv ?? [])).catch(() => {});
   }, []);
+
+  function applyProviderEntity(id: string) {
+    setSelectedProviderEntityID(id);
+    if (!id) return;
+    const entity = providerEntities.find((e) => e.id === id);
+    if (!entity) return;
+    setProviderKind(entity.kind);
+    setEndpoint(entity.endpoint);
+    setApiKey(entity.api_key ?? "");
+    setTestResult(null);
+  }
 
   useEffect(() => {
     if (initial) return;
@@ -183,6 +200,7 @@ export function PoolEditModal({
       const pool = types.Pool.createFrom({
         id: initial?.id ?? "",
         name: finalName,
+        provider_id: selectedProviderEntityID || undefined,
         provider: providerKind,
         endpoint: endpoint.trim(),
         model: model.trim(),
@@ -277,6 +295,27 @@ export function PoolEditModal({
               </div>
             )}
           </div>
+
+          {providerEntities.length > 0 && (
+            <div>
+              <div className="text-xs text-slate-500 mb-1">Saved provider (optional)</div>
+              <select
+                value={selectedProviderEntityID}
+                onChange={(e) => applyProviderEntity(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
+              >
+                <option value="">— enter inline —</option>
+                {providerEntities.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                  </option>
+                ))}
+              </select>
+              <div className="text-[11px] text-slate-500 mt-1">
+                Pick a saved provider to auto-fill credentials, or leave blank to enter inline.
+              </div>
+            </div>
+          )}
 
           <div>
             <div className="text-xs text-slate-500 mb-1">Provider</div>
