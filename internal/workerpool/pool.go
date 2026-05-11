@@ -103,8 +103,9 @@ type Registry struct {
 	order    []string
 	canSpawn func(types.Provider) bool
 
-	nextPlanIdx int
-	nextWorkIdx int
+	nextPlanIdx      int
+	nextWorkIdx      int
+	nextArchitectIdx int
 }
 
 // NewRegistry takes a spawnability predicate. The predicate returns true when
@@ -356,6 +357,9 @@ func (r *Registry) acquireRoundRobin(role types.Role) (string, bool) {
 		case types.RoleWork:
 			start = r.nextWorkIdx % prefixLen
 			r.nextWorkIdx = (r.nextWorkIdx + 1) % prefixLen
+		case types.RoleArchitect:
+			start = r.nextArchitectIdx % prefixLen
+			r.nextArchitectIdx = (r.nextArchitectIdx + 1) % prefixLen
 		}
 		// Rotate the preferred group to start at `start`, leave rest unchanged.
 		preferred := append(ids[start:prefixLen:prefixLen], ids[:start]...)
@@ -439,6 +443,16 @@ func (r *Registry) FreePlanSlots() int { return r.freeByRole(types.RolePlan) }
 // FreeWorkSlots sums Free() across enabled role=work pools whose providers can
 // spawn.
 func (r *Registry) FreeWorkSlots() int { return r.freeByRole(types.RoleWork) }
+
+// FreeArchitectSlots sums Free() across enabled role=architect pools.
+func (r *Registry) FreeArchitectSlots() int { return r.freeByRole(types.RoleArchitect) }
+
+// AcquireForArchitect reserves a slot on a role=architect pool. Returns
+// ("", false) when no architect pool is configured or all slots are busy.
+// NO fallback to other roles.
+func (r *Registry) AcquireForArchitect() (string, bool) {
+	return r.acquireRoundRobin(types.RoleArchitect)
+}
 
 func (r *Registry) freeByRole(role types.Role) int {
 	r.mu.RLock()

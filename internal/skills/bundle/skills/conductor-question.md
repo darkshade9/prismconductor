@@ -28,9 +28,13 @@ The execute worker runs in `claude -p` (one-shot) mode and cannot block on user 
      "prompt": "<prompt>",
      "options": ["<opt1>", "..."],
      "default": "<default>",
-     "required": true
+     "required": true,
+     "audience": "<user|peer_agent>"
    }
    ```
+   **`audience` field (issue #211):** Controls who answers the question.
+   - Omit or set `"user"` for questions only a human can answer: business intent, naming/UX preferences, external constraints, timelines, third-party contracts.
+   - Set `"peer_agent"` for **technical judgment questions** that a senior architect can answer without human input: code organization, API shape, technology choice, implementation strategy, whether to add an abstraction. The conductor will try to route the question to a role=architect pool automatically. If no architect pool is configured or all slots are busy, the question falls through to the user with a toast explaining the fallthrough.
 3. Write `.prismconductor/questions/<id>.context.json` with the minimal sidecar the resume worker needs:
    ```json
    {

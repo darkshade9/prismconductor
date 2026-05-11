@@ -139,3 +139,61 @@ func TestFreeSlots_CountsAllScopes(t *testing.T) {
 		t.Fatalf("FreePlanSlots = %d, want 5 (3 shared + 2 workspace-specific)", got)
 	}
 }
+
+// TestAcquireForArchitect_BasicAcquireAndRelease exercises the architect pool
+// slot acquisition path added for issue #211.
+func TestAcquireForArchitect_BasicAcquireAndRelease(t *testing.T) {
+	r := NewRegistry(func(types.Provider) bool { return true })
+	r.Sync([]types.Pool{
+		{
+			ID: "arch-1", Provider: types.ProviderClaude, Capacity: 1,
+			Enabled: true, Role: types.RoleArchitect,
+			Scope: types.PoolScopeShared,
+		},
+	})
+	id, ok := r.AcquireForArchitect()
+	if !ok {
+		t.Fatal("AcquireForArchitect returned ok=false; expected slot available")
+	}
+	if id != "arch-1" {
+		t.Fatalf("AcquireForArchitect returned %q; want arch-1", id)
+	}
+	// Slot is now full; a second acquire must fail.
+	_, ok2 := r.AcquireForArchitect()
+	if ok2 {
+		t.Fatal("second AcquireForArchitect should fail when capacity=1 is exhausted")
+	}
+	// After release the slot is free again.
+	r.ReleaseByPool(id)
+	_, ok3 := r.AcquireForArchitect()
+	if !ok3 {
+		t.Fatal("AcquireForArchitect should succeed after release")
+	}
+}
+
+// TestAcquireForArchitect_NoPool verifies graceful no-architect fallback.
+func TestAcquireForArchitect_NoPool(t *testing.T) {
+	r := NewRegistry(func(types.Provider) bool { return true })
+	r.Sync([]types.Pool{
+		{ID: "work-1", Provider: types.ProviderClaude, Capacity: 2, Enabled: true, Role: types.RoleWork},
+	})
+	_, ok := r.AcquireForArchitect()
+	if ok {
+		t.Fatal("AcquireForArchitect should return ok=false when no architect pool exists")
+	}
+}
+
+// TestFreeArchitectSlots reports correct free slots.
+func TestFreeArchitectSlots(t *testing.T) {
+	r := NewRegistry(func(types.Provider) bool { return true })
+	r.Sync([]types.Pool{
+		{ID: "arch-1", Provider: types.ProviderClaude, Capacity: 2, Enabled: true, Role: types.RoleArchitect},
+	})
+	if got := r.FreeArchitectSlots(); got != 2 {
+		t.Fatalf("FreeArchitectSlots = %d, want 2", got)
+	}
+	r.AcquireForArchitect()
+	if got := r.FreeArchitectSlots(); got != 1 {
+		t.Fatalf("FreeArchitectSlots after one acquire = %d, want 1", got)
+	}
+}

@@ -8,7 +8,7 @@ import {
 import { main, types } from "../../wailsjs/go/models";
 import { noAutoCorrect } from "../lib/inputs";
 
-type Role = "plan" | "work" | "orchestrator";
+type Role = "plan" | "work" | "orchestrator" | "architect";
 type Scope = "shared" | "workspace";
 
 const ROLE_OPTIONS: { value: Role; label: string; help: string }[] = [
@@ -26,6 +26,11 @@ const ROLE_OPTIONS: { value: Role; label: string; help: string }[] = [
     value: "orchestrator",
     label: "Orchestrator",
     help: "Runs the rank+deps backlog pass. At most one enabled.",
+  },
+  {
+    value: "architect",
+    label: "Architect",
+    help: "Peer-agent consultant: auto-answers technical questions from implementers so the human user is not interrupted. Defaults to capacity 1.",
   },
 ];
 
@@ -176,7 +181,7 @@ export function PoolEditModal({
     try {
       const finalName = name.trim() || `${providerKind}-${modelTail(model) || "pool"}`;
       // Orchestrator runs are per-call HTTP, capacity is irrelevant. Persist 1.
-      const finalCapacity = role === "orchestrator" ? 1 : capacity;
+      const finalCapacity = role === "orchestrator" || role === "architect" ? 1 : capacity;
       const parsedTemp = temperatureStr.trim() === "" ? undefined : parseFloat(temperatureStr);
       const parsedMaxTurns = maxTurnsStr.trim() === "" ? undefined : parseInt(maxTurnsStr, 10);
       const parsedMaxInputTokens = maxInputTokensStr.trim() === "" ? undefined : parseInt(maxInputTokensStr, 10);
@@ -375,7 +380,7 @@ export function PoolEditModal({
             )}
           </div>
 
-          {role !== "orchestrator" && (
+          {role !== "orchestrator" && role !== "architect" && (
             <div>
               <div className="text-xs text-slate-500 mb-1">Capacity (1–10)</div>
               <div className="flex items-center gap-3">

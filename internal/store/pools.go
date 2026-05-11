@@ -240,7 +240,7 @@ func (s *Store) ReconcilePoolPriorities() (int, error) {
 	if s == nil || s.DB == nil {
 		return 0, errors.New("store unavailable")
 	}
-	roles := []types.Role{types.RolePlan, types.RoleWork, types.RoleOrchestrator}
+	roles := []types.Role{types.RolePlan, types.RoleWork, types.RoleOrchestrator, types.RoleArchitect}
 	total := 0
 	for _, role := range roles {
 		rows, err := s.DB.Query(`

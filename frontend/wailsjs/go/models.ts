@@ -1232,6 +1232,44 @@ export namespace main {
 	        this.can_spawn = source["can_spawn"];
 	    }
 	}
+	export class QuestionLogEntry {
+	    question: types.Question;
+	    issue_number: number;
+	    workspace_id: string;
+	    answer_source?: string;
+	    answer_text?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new QuestionLogEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.question = this.convertValues(source["question"], types.Question);
+	        this.issue_number = source["issue_number"];
+	        this.workspace_id = source["workspace_id"];
+	        this.answer_source = source["answer_source"];
+	        this.answer_text = source["answer_text"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class RemoteDeployResult {
 	    worker_name: string;
 	    cf_worker_endpoint_url: string;

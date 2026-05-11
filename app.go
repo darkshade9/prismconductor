@@ -490,6 +490,17 @@ func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionSta
 		return
 	}
 
+	// Issue #211: when an execute session pauses for a peer-agent question,
+	// try to auto-route it to an architect pool before surfacing to the user.
+	if sess.State == types.StatePausedForQuestion && sess.PendingQuestionID != "" {
+		if a.tryArchitectRoute(sess) {
+			// Architect accepted the question — skip the "needs answer" toast.
+			// The answer watcher will resume the implementer once the architect
+			// writes answers/<id>.json.
+			return
+		}
+	}
+
 	// When an execute session fails, persist the failure reason on the issue
 	// and move the card to the BLOCKED column so it appears in a dedicated
 	// repair column instead of staying silently in IN_PROGRESS (#194).
@@ -3265,6 +3276,93 @@ type midRunQuestionContext struct {
 	Scratch     string `json:"scratch"`
 }
 
+// tryArchitectRoute checks whether a paused-for-question session has a
+// peer_agent audience and, if so, attempts to route it to a role=architect
+// pool (issue #211). Returns true when the question was successfully handed
+// off to an architect worker — the caller should suppress the normal
+// "needs answer" toast since the implementer will resume automatically.
+// Returns false when:
+//   - the question file is missing or unparseable
+//   - audience is not "peer_agent"
+//   - no architect pool is available or all slots are busy
+//   - spawning the architect worker fails
+//
+// On fallthrough (false + audience was "peer_agent"), emits a toast so the
+// user knows why the question is surfaced to them instead.
+func (a *App) tryArchitectRoute(sess types.Session) bool {
+	if a.wsReg == nil || a.store == nil || a.mgr == nil || a.poolReg == nil {
+		return false
+	}
+	ws, ok := a.wsReg.Get(sess.WorkspaceID)
+	if !ok {
+		return false
+	}
+	qPath := filepath.Join(ws.RepoPath, ".prismconductor", "questions", sess.PendingQuestionID+".json")
+	raw, err := os.ReadFile(qPath)
+	if err != nil {
+		return false
+	}
+	var q types.Question
+	if err := json.Unmarshal(raw, &q); err != nil {
+		log.Printf("tryArchitectRoute: invalid question JSON at %s: %v", qPath, err)
+		return false
+	}
+	if q.Audience != "peer_agent" {
+		return false
+	}
+	// audience == "peer_agent" — attempt architect routing.
+	pool, ok := a.acquireArchitectPool()
+	if !ok {
+		a.emitToast("info", toastWorkspaceName(a.wsReg, sess.WorkspaceID),
+			fmt.Sprintf("#%d architect unavailable — question surfaced to user", sess.IssueNumber),
+			map[string]any{
+				"workspace_id": sess.WorkspaceID,
+				"issue_number": sess.IssueNumber,
+				"action":       "focus_card",
+			})
+		return false
+	}
+	issue, err := a.store.LoadIssue(sess.WorkspaceID, sess.IssueNumber)
+	if err != nil {
+		a.poolReg.ReleaseByPool(pool.ID)
+		log.Printf("tryArchitectRoute: load issue #%d: %v", sess.IssueNumber, err)
+		return false
+	}
+	archSess, err := a.mgr.SpawnArchitectAnswer(ws, issue, sess.PendingQuestionID, pool)
+	if err != nil {
+		a.poolReg.ReleaseByPool(pool.ID)
+		log.Printf("tryArchitectRoute: spawn architect for #%d q=%s: %v", sess.IssueNumber, sess.PendingQuestionID, err)
+		a.emitToast("info", toastWorkspaceName(a.wsReg, sess.WorkspaceID),
+			fmt.Sprintf("#%d architect spawn failed — question surfaced to user", sess.IssueNumber),
+			map[string]any{
+				"workspace_id": sess.WorkspaceID,
+				"issue_number": sess.IssueNumber,
+				"action":       "focus_card",
+			})
+		return false
+	}
+	// Enforce ~30s timeout on the architect worker so a stuck architect never
+	// blocks the implementer indefinitely. The answer watcher will pick up the
+	// written file and resume the implementer regardless of when the kill fires.
+	go func() {
+		time.Sleep(30 * time.Second)
+		if err := a.mgr.Kill(archSess.ID); err == nil {
+			log.Printf("tryArchitectRoute: 30s timeout — killed architect session %s for #%d q=%s",
+				archSess.ID[:8], sess.IssueNumber, sess.PendingQuestionID)
+		}
+	}()
+	a.emitToast("info", toastWorkspaceName(a.wsReg, sess.WorkspaceID),
+		fmt.Sprintf("#%d question routed to architect (%s)", sess.IssueNumber, pool.Name),
+		map[string]any{
+			"workspace_id": sess.WorkspaceID,
+			"issue_number": sess.IssueNumber,
+			"action":       "focus_card",
+		})
+	log.Printf("tryArchitectRoute: architect session %s spawned for #%d q=%s pool=%s",
+		archSess.ID[:8], sess.IssueNumber, sess.PendingQuestionID, pool.Name)
+	return true
+}
+
 // handleMidRunAnswerArrived is the watcher callback (#17). Loads the plan +
 // issue, spawns a resume execute worker on the same branch, and clears the
 // pending_question_id on the OLD session row so subsequent ticks don't re-fire
@@ -3519,6 +3617,95 @@ func (a *App) GetMidRunQuestion(workspaceID string, issueNumber int, questionID 
 		return types.Question{}, fmt.Errorf("invalid question JSON at %s: %w", path, err)
 	}
 	return q, nil
+}
+
+// QuestionLogEntry is one row in the questions log surfaced to the UI
+// (issue #211). Combines the question definition with its answer (if already
+// answered) and metadata about who or what answered it.
+type QuestionLogEntry struct {
+	Question    types.Question `json:"question"`
+	IssueNumber int            `json:"issue_number"`
+	WorkspaceID string         `json:"workspace_id"`
+	// AnswerSource is "user", "architect", or "" when unanswered.
+	AnswerSource string `json:"answer_source,omitempty"`
+	// AnswerText is the resolved answer string for display. For multi-choice
+	// answers it is the first selected value.
+	AnswerText string `json:"answer_text,omitempty"`
+}
+
+// ListMidRunQuestionsLog returns all mid-run questions for a workspace + issue,
+// enriched with answer metadata (issue #211). Reads from the on-disk
+// .prismconductor/questions/ and .prismconductor/answers/ directories.
+// Returns an empty slice (not error) when no questions exist.
+func (a *App) ListMidRunQuestionsLog(workspaceID string, issueNumber int) ([]QuestionLogEntry, error) {
+	if a.wsReg == nil {
+		return nil, fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return nil, fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	qDir := filepath.Join(ws.RepoPath, ".prismconductor", "questions")
+	entries, err := os.ReadDir(qDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []QuestionLogEntry{}, nil
+		}
+		return nil, fmt.Errorf("read questions dir: %w", err)
+	}
+	aDir := filepath.Join(ws.RepoPath, ".prismconductor", "answers")
+	var out []QuestionLogEntry
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || filepath.Ext(name) != ".json" || strings.HasSuffix(name, ".context.json") {
+			continue
+		}
+		qID := strings.TrimSuffix(name, ".json")
+		raw, err := os.ReadFile(filepath.Join(qDir, name))
+		if err != nil {
+			continue
+		}
+		var q types.Question
+		if err := json.Unmarshal(raw, &q); err != nil {
+			continue
+		}
+		// Filter to the requested issue by reading the context sidecar.
+		if issueNumber > 0 {
+			ctxRaw, ctxErr := os.ReadFile(filepath.Join(qDir, qID+".context.json"))
+			if ctxErr != nil {
+				continue
+			}
+			var ctx midRunQuestionContext
+			if err := json.Unmarshal(ctxRaw, &ctx); err != nil || ctx.IssueNumber != issueNumber {
+				continue
+			}
+		}
+		entry := QuestionLogEntry{
+			Question:    q,
+			IssueNumber: issueNumber,
+			WorkspaceID: workspaceID,
+		}
+		// Check for an answer file.
+		answerPath := filepath.Join(aDir, qID+".json")
+		if aRaw, aerr := os.ReadFile(answerPath); aerr == nil {
+			var ans types.MidRunAnswer
+			if jerr := json.Unmarshal(aRaw, &ans); jerr == nil {
+				entry.AnswerText = ans.Answer
+				if len(ans.Multi) > 0 && entry.AnswerText == "" {
+					entry.AnswerText = strings.Join(ans.Multi, ", ")
+				}
+				// Determine source: if the question audience was peer_agent, the
+				// answer was written by an architect worker; otherwise by the user.
+				if q.Audience == "peer_agent" {
+					entry.AnswerSource = "architect"
+				} else {
+					entry.AnswerSource = "user"
+				}
+			}
+		}
+		out = append(out, entry)
+	}
+	return out, nil
 }
 
 // AnswerSubmission is the frontend's payload for the answers form.
@@ -4279,6 +4466,12 @@ func (a *App) acquirePlanPool(ws types.Workspace) (types.Pool, bool) {
 // back to role=plan.
 func (a *App) acquireWorkPool(ws types.Workspace) (types.Pool, bool) {
 	return a.acquirePool(func() (string, bool) { return a.poolReg.AcquireForWork(ws) })
+}
+
+// acquireArchitectPool reserves a slot on a role=architect pool (issue #211).
+// Returns (Pool{}, false) when no architect pool is configured or all are busy.
+func (a *App) acquireArchitectPool() (types.Pool, bool) {
+	return a.acquirePool(func() (string, bool) { return a.poolReg.AcquireForArchitect() })
 }
 
 func (a *App) acquirePool(reserve func() (string, bool)) (types.Pool, bool) {

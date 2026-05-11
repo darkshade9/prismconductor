@@ -289,12 +289,17 @@ const (
 	RolePlan         Role = "plan"
 	RoleWork         Role = "work"
 	RoleOrchestrator Role = "orchestrator"
+	// RoleArchitect marks a pool as a short-lived peer-agent consultant.
+	// When an implementer emits a QUESTION_PENDING with audience="peer_agent",
+	// the conductor spawns one architect worker to answer it automatically
+	// instead of surfacing the question to the human user (issue #211).
+	RoleArchitect Role = "architect"
 )
 
-// ValidRole reports whether r is one of the three known roles.
+// ValidRole reports whether r is one of the known roles.
 func ValidRole(r Role) bool {
 	switch r {
-	case RolePlan, RoleWork, RoleOrchestrator:
+	case RolePlan, RoleWork, RoleOrchestrator, RoleArchitect:
 		return true
 	}
 	return false

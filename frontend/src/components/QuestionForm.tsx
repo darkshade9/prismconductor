@@ -72,6 +72,9 @@ export function QuestionForm({
   state: AnswerState;
   onChange: (next: AnswerState) => void;
 }) {
+  // Questions routed to an architect peer-agent (audience="peer_agent") are
+  // auto-answered by the conductor and should not be rendered to the user.
+  const userQuestions = questions.filter((q) => q.audience !== "peer_agent");
   const [qMenu, setQMenu] = useState<{ x: number; y: number; actions: CopyAction[] } | null>(null);
 
   function setSingle(id: string, value: string) {
@@ -91,7 +94,7 @@ export function QuestionForm({
   return (
     <>
     <ol className="space-y-4 list-none p-0">
-      {questions.map((q, idx) => {
+      {userQuestions.map((q, idx) => {
         const { prompt, expanded } = expandLetterOptions(q.prompt, q.options ?? []);
         return (
           <li
@@ -235,9 +238,11 @@ export function QuestionForm({
   );
 }
 
-// Validate that all required questions have answers.
+// Validate that all required user-facing questions have answers.
+// peer_agent questions are excluded — they are auto-answered by the conductor.
 export function isComplete(questions: types.Question[], state: AnswerState): boolean {
   for (const q of questions) {
+    if (q.audience === "peer_agent") continue;
     if (!q.required) continue;
     if (q.type === "multi_choice") {
       if (!(state.multi[q.id]?.length)) return false;
