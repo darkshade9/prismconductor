@@ -609,6 +609,54 @@ func mirrorPlanArtifacts(repoPath, worktreeDir string, num, rev int) error {
 	return nil
 }
 
+// SpawnArchitectAnswer spawns a short-lived architect worker that answers a
+// single mid-run question (issue #211). The worker is pointed at the question
+// file on disk; it should write answers/<id>.json and exit within timeout.
+// The caller is responsible for releasing the pool slot on error.
+//
+// A synthesized prompt instructs the architect to read the question JSON,
+// produce a single JSON answer file, and exit — no worktree, no branch
+// operations. The worker runs in ws.RepoPath so that relative
+// .prismconductor/ paths resolve correctly.
+//
+// Uses issue.Number=0 to bypass the duplicate-spawn guard: the implementer's
+// session for the same issue is already live (paused_for_question), and the
+// guard would otherwise reject a second ModeExecute spawn for that issue.
+// Architect sessions are transient and do not need issue-level tracking.
+func (m *Manager) SpawnArchitectAnswer(ws types.Workspace, _ types.Issue, questionID string, pool types.Pool) (*types.Session, error) {
+	// Synthesize a stub issue with Number=0 so the duplicate-spawn guard is
+	// skipped — see the guard in spawnWithDir for why 0 bypasses it.
+	archIssue := types.Issue{WorkspaceID: ws.ID, Number: 0}
+	prompt := architectAnswerPrompt(ws.RepoPath, questionID)
+	args, _, err := m.providerArgs(pool, prompt)
+	if err != nil {
+		return nil, err
+	}
+	return m.spawnWithDir(ws, archIssue, types.ModeExecute, args, prompt, "", "", pool, "")
+}
+
+// architectAnswerPrompt builds the prompt sent to a role=architect worker.
+// The worker must read the question JSON, decide on an answer, write the
+// answer file, and exit immediately — no other tool calls allowed.
+func architectAnswerPrompt(repoPath, questionID string) string {
+	qPath := filepath.Join(repoPath, ".prismconductor", "questions", questionID+".json")
+	aPath := filepath.Join(repoPath, ".prismconductor", "answers", questionID+".json")
+	return fmt.Sprintf(`You are a senior software architect providing a one-shot answer to a technical question from an implementer agent.
+
+Read the question at: %s
+
+Then write your answer to: %s
+
+Answer format (JSON):
+{"question_id": %q, "answer": "<your answer>"}
+
+Rules:
+- For single_choice or yes_no: answer MUST be one of the provided option strings verbatim.
+- For free_text: answer is a concise recommendation (1-3 sentences).
+- Do NOT ask follow-up questions. Do NOT use any tools other than Read and Write.
+- Write the answer file, then stop immediately.`, qPath, aPath, questionID)
+}
+
 // SpawnRaw runs a non-skill command via subprocess (used by the day-1 demo:
 // `claude --version`). Always takes the subprocess strategy — there's no pool
 // to dispatch on.

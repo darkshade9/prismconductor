@@ -28,13 +28,14 @@ import { EventsOn } from "../../wailsjs/runtime/runtime";
 import { main, types, workerpool } from "../../wailsjs/go/models";
 import { PoolEditModal } from "./PoolEditModal";
 
-type Role = "plan" | "work" | "orchestrator";
+type Role = "plan" | "work" | "orchestrator" | "architect";
 
-const ROLE_ORDER: Role[] = ["orchestrator", "plan", "work"];
+const ROLE_ORDER: Role[] = ["orchestrator", "plan", "work", "architect"];
 const ROLE_LABEL: Record<Role, string> = {
   orchestrator: "Orchestrator",
   plan: "Plan pools",
   work: "Work pools",
+  architect: "Architect pools",
 };
 
 export function PoolsPanel() {
@@ -95,6 +96,7 @@ export function PoolsPanel() {
     orchestrator: [],
     plan: [],
     work: [],
+    architect: [],
   };
   for (const row of pools) grouped[poolRole(row.pool)].push(row);
 

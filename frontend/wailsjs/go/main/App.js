@@ -246,6 +246,10 @@ export function ListLabels(arg1) {
   return window['go']['main']['App']['ListLabels'](arg1);
 }
 
+export function ListMidRunQuestionsLog(arg1, arg2) {
+  return window['go']['main']['App']['ListMidRunQuestionsLog'](arg1, arg2);
+}
+
 export function ListPRComments(arg1, arg2) {
   return window['go']['main']['App']['ListPRComments'](arg1, arg2);
 }

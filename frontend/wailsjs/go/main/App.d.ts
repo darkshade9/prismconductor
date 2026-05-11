@@ -135,6 +135,8 @@ export function ListIssues(arg1:string):Promise<Array<types.Issue>>;
 
 export function ListLabels(arg1:string):Promise<Array<types.Label>>;
 
+export function ListMidRunQuestionsLog(arg1:string,arg2:number):Promise<Array<main.QuestionLogEntry>>;
+
 export function ListPRComments(arg1:string,arg2:number):Promise<Array<types.PRComment>>;
 
 export function ListPendingPlans():Promise<Array<store.PendingPlan>>;
