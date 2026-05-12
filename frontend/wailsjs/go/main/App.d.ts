@@ -5,6 +5,7 @@ import {main} from '../models';
 import {diagnose} from '../models';
 import {wailsbus} from '../models';
 import {issueview} from '../models';
+import {llm} from '../models';
 import {retry} from '../models';
 import {githubauth} from '../models';
 import {github} from '../models';
@@ -84,6 +85,8 @@ export function GetIssueView(arg1:string,arg2:number):Promise<issueview.IssueVie
 export function GetLabelFilter(arg1:string):Promise<main.LabelFilterState>;
 
 export function GetMidRunQuestion(arg1:string,arg2:number,arg3:string):Promise<types.Question>;
+
+export function GetModelHint(arg1:string,arg2:string):Promise<llm.ModelHint>;
 
 export function GetNotifyPrefs():Promise<main.NotifyPrefs>;
 

@@ -1,14 +1,132 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   CreatePool,
+  GetModelHint,
   ListProviderEntities,
   ListWorkspaces,
   SavePool,
 } from "../../wailsjs/go/main/App";
-import { main, types } from "../../wailsjs/go/models";
+import { main, llm, types } from "../../wailsjs/go/models";
 import { noAutoCorrect } from "../lib/inputs";
 import { ModelSelect } from "./ModelSelect";
 import { useModelsStore } from "../stores/modelsStore";
+
+type Fit = "excellent" | "good" | "fair" | "poor" | "unsuitable" | "";
+
+function fitForRole(hint: llm.ModelHint | null, role: string): Fit {
+  if (!hint) return "";
+  switch (role) {
+    case "plan": return (hint.plan_fit as Fit) || "";
+    case "work": return (hint.work_fit as Fit) || "";
+    case "orchestrator": return (hint.orch_fit as Fit) || "";
+    case "architect": return (hint.architect_fit as Fit) || "";
+    default: return (hint.work_fit as Fit) || "";
+  }
+}
+
+function fmtCtx(n: number): string {
+  if (!n) return "—";
+  if (n >= 1000000) return `${(n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1)}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
+}
+
+function ModelCapabilityBadge({
+  hint,
+  role,
+}: {
+  hint: llm.ModelHint | null;
+  role: string;
+}) {
+  const fit = fitForRole(hint, role);
+
+  if (!hint) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[10px] italic text-slate-500"
+        title="No capability data for this model. It may work but is unverified."
+      >
+        ? unknown model
+      </span>
+    );
+  }
+
+  const toolLabel =
+    hint.tool_support === "full"
+      ? "Tools: full"
+      : hint.tool_support === "partial"
+      ? "Tools: partial"
+      : "Tools: none";
+
+  const tooltip = [
+    `Fit for ${role}: ${fit || "unknown"}`,
+    toolLabel,
+    hint.context_window ? `Context: ${fmtCtx(hint.context_window)} tokens` : null,
+    hint.cost_tier ? `Cost tier: ${hint.cost_tier}` : null,
+    hint.notes || null,
+    `Source: ${hint.source || "bundled"}`,
+    hint.updated_at ? `Updated: ${hint.updated_at}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  switch (fit) {
+    case "excellent":
+      return (
+        <span
+          className="inline-flex items-center gap-1 text-[10px] text-emerald-400"
+          title={tooltip}
+        >
+          ✓ Excellent for {role}
+        </span>
+      );
+    case "good":
+      return (
+        <span
+          className="inline-flex items-center gap-1 text-[10px] text-teal-400"
+          title={tooltip}
+        >
+          ✓ Good for {role}
+        </span>
+      );
+    case "fair":
+      return (
+        <span
+          className="inline-flex items-center gap-1 text-[10px] text-slate-400"
+          title={tooltip}
+        >
+          ◦ Fair for {role}
+        </span>
+      );
+    case "poor":
+      return (
+        <span
+          className="inline-flex items-center gap-1 text-[10px] text-amber-400"
+          title={tooltip}
+        >
+          ⚠ Poor fit for {role}
+        </span>
+      );
+    case "unsuitable":
+      return (
+        <span
+          className="inline-flex items-center gap-1 text-[10px] text-rose-400 line-through"
+          title={tooltip}
+        >
+          ✗ Unsuitable for {role}
+        </span>
+      );
+    default:
+      return (
+        <span
+          className="inline-flex items-center gap-1 text-[10px] italic text-slate-500"
+          title={tooltip}
+        >
+          ? unknown fit for {role}
+        </span>
+      );
+  }
+}
 
 type Role = "plan" | "work" | "orchestrator" | "architect";
 type Scope = "shared" | "workspace";
@@ -96,6 +214,7 @@ export function PoolEditModal({
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [saveErr, setSaveErr] = useState<string>("");
+  const [modelHint, setModelHint] = useState<llm.ModelHint | null>(null);
 
   const providerInfo = useMemo(
     () => providers.find((p) => p.kind === providerKind),
@@ -156,6 +275,17 @@ export function PoolEditModal({
     if (!providerInfo) return;
     fetchModels(providerKind, resolvedEndpoint, apiKey).catch(() => {});
   }, [providerKind]);
+
+  // Fetch model capability hint whenever provider or model changes.
+  useEffect(() => {
+    if (!model || !providerKind) {
+      setModelHint(null);
+      return;
+    }
+    GetModelHint(providerKind, model)
+      .then((h) => setModelHint(h ?? null))
+      .catch(() => setModelHint(null));
+  }, [providerKind, model]);
 
   async function onEndpointBlur() {
     if (!providerInfo) return;
@@ -374,6 +504,11 @@ export function PoolEditModal({
               value={model}
               onChange={setModel}
             />
+            {model && (
+              <div className="mt-1">
+                <ModelCapabilityBadge hint={modelHint} role={role} />
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
