@@ -2,8 +2,9 @@ import { useEffect, useState, useCallback } from "react";
 import { GetEventBusDebugEmits, ReplayEventBusEmit } from "../../wailsjs/go/main/App";
 import { wailsbus } from "../../wailsjs/go/models";
 import type { EventRecord } from "../lib/eventBus";
+import { getDriftBuffer, type ReconcilerDriftEntry } from "../stores/reconciler";
 
-type View = "receives" | "sends";
+type View = "receives" | "sends" | "reconciler";
 
 function fmtTime(ts: number | string): string {
   const d = typeof ts === "number" ? new Date(ts) : new Date(ts);
@@ -58,15 +59,39 @@ function RowSend({ rec, onReplay }: { rec: wailsbus.EmitRecord; onReplay: (name:
   );
 }
 
+function RowDrift({ entry }: { entry: ReconcilerDriftEntry }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-b border-slate-800 text-[11px]">
+      <button
+        className="w-full text-left flex items-center gap-2 px-2 py-1 hover:bg-slate-800/50"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="text-slate-500 font-mono shrink-0">{fmtTime(entry.ts)}</span>
+        <span className="text-violet-400 font-mono">#{entry.issueNumber}</span>
+        <span className="text-slate-400 truncate">{entry.missedFields.join(", ")}</span>
+        <span className="text-slate-600 ml-auto">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <pre className="px-4 py-2 text-slate-300 overflow-x-auto bg-slate-950/40 text-[10px]">
+          {JSON.stringify(entry, null, 2)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 export function EventDiagnostics() {
   const [view, setView] = useState<View>("receives");
   const [filter, setFilter] = useState("");
   const [receives, setReceives] = useState<EventRecord[]>([]);
   const [sends, setSends] = useState<wailsbus.EmitRecord[]>([]);
+  const [drifts, setDrifts] = useState<ReconcilerDriftEntry[]>([]);
   const [replayStatus, setReplayStatus] = useState("");
 
   const refresh = useCallback(() => {
     setReceives(window.__pcEventBuffer?.receives ?? []);
+    setDrifts(getDriftBuffer());
     GetEventBusDebugEmits()
       .then((r) => setSends(r ?? []))
       .catch(() => {});
@@ -97,6 +122,10 @@ export function EventDiagnostics() {
     ? sends.filter((s) => s.name.includes(filter))
     : sends;
 
+  const filteredDrifts = filter
+    ? drifts.filter((d) => String(d.issueNumber).includes(filter) || d.missedFields.some((f) => f.includes(filter)))
+    : drifts;
+
   // Compute names present in sends but not in receives for the last 500 events,
   // to highlight potential send-without-receive mismatches.
   const receivedNames = new Set(receives.map((r) => r.name));
@@ -110,6 +139,14 @@ export function EventDiagnostics() {
         <span className="text-emerald-500">{receives.length} received</span>
         <span className="text-slate-600">·</span>
         <span className="text-sky-500">{sends.length} sent</span>
+        {drifts.length > 0 && (
+          <>
+            <span className="text-slate-600">·</span>
+            <span className="text-violet-400" title="Reconciler-detected drift corrections">
+              {drifts.length} drift{drifts.length !== 1 ? "s" : ""}
+            </span>
+          </>
+        )}
         {orphanSends.size > 0 && (
           <>
             <span className="text-slate-600">·</span>
@@ -149,6 +186,15 @@ export function EventDiagnostics() {
           >
             Sent ({sends.length})
           </button>
+          <button
+            onClick={() => setView("reconciler")}
+            className={
+              "px-2 py-1 rounded " +
+              (view === "reconciler" ? "bg-violet-900/40 text-violet-300 border border-violet-800" : "text-slate-400 hover:text-slate-200")
+            }
+          >
+            Reconciler drift ({drifts.length})
+          </button>
         </div>
         <input
           value={filter}
@@ -174,6 +220,11 @@ export function EventDiagnostics() {
           filteredSends.length === 0
             ? <div className="px-3 py-4 text-xs text-slate-500 text-center">No sends yet{filter ? " matching filter" : ""}</div>
             : filteredSends.map((s, i) => <RowSend key={i} rec={s} onReplay={handleReplay} />)
+        )}
+        {view === "reconciler" && (
+          filteredDrifts.length === 0
+            ? <div className="px-3 py-4 text-xs text-slate-500 text-center">No drift detected yet{filter ? " matching filter" : ""}</div>
+            : filteredDrifts.map((d, i) => <RowDrift key={i} entry={d} />)
         )}
       </div>
     </div>

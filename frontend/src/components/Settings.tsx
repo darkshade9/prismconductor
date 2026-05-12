@@ -10,6 +10,64 @@ import { CollectionsPanel } from "./CollectionsPanel";
 import { EventDiagnostics } from "./EventDiagnostics";
 import { useSettingsStore } from "../stores/useSettingsStore";
 
+function AdvancedPanel({
+  showDiagnostics,
+  setShowDiagnostics,
+}: {
+  showDiagnostics: boolean;
+  setShowDiagnostics: (v: boolean) => void;
+}) {
+  const reconcilerEnabled = useSettingsStore((s) => s.reconcilerEnabled);
+  const setReconcilerEnabled = useSettingsStore((s) => s.setReconcilerEnabled);
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="text-slate-300 text-sm font-medium mb-1">Diagnostics</div>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={showDiagnostics}
+            onChange={(e) => setShowDiagnostics(e.target.checked)}
+            className="accent-sky-500"
+          />
+          <span className="text-slate-400 text-sm">
+            Show Diagnostics tab
+          </span>
+        </label>
+        <p className="text-slate-500 text-xs mt-1">
+          Exposes the Event Diagnostics panel for on-device debugging. Persists across restarts.
+          You can also unlock it for the current session with{" "}
+          <kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-300">
+            {typeof navigator !== "undefined" && /Mac|Macintosh/.test(navigator.platform || navigator.userAgent)
+              ? "⌘⌥D"
+              : "Ctrl+Alt+D"}
+          </kbd>.
+        </p>
+      </div>
+      <div>
+        <div className="text-slate-300 text-sm font-medium mb-1">IssueView reconciler</div>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={reconcilerEnabled}
+            onChange={(e) => setReconcilerEnabled(e.target.checked)}
+            className="accent-sky-500"
+          />
+          <span className="text-slate-400 text-sm">
+            Enable convergence reconciler
+          </span>
+        </label>
+        <p className="text-slate-500 text-xs mt-1">
+          Periodically checks visible cards against the backend and silently corrects any state
+          that was missed due to a dropped event bus delivery. Corrections are logged in the
+          Diagnostics → Reconciler drift tab. Disable if you observe unexpected refreshes.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 type Tab = "workspaces" | "collections" | "providers" | "pools" | "skills" | "notify" | "appearance" | "logs" | "advanced" | "diagnostics";
 
 export function Settings({
@@ -74,31 +132,10 @@ export function Settings({
             {tab === "appearance" && <AppearancePanel />}
             {tab === "logs" && <LogsPanel />}
             {tab === "advanced" && (
-              <div className="space-y-4">
-                <div>
-                  <div className="text-slate-300 text-sm font-medium mb-1">Diagnostics</div>
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={showDiagnostics}
-                      onChange={(e) => setShowDiagnostics(e.target.checked)}
-                      className="accent-sky-500"
-                    />
-                    <span className="text-slate-400 text-sm">
-                      Show Diagnostics tab
-                    </span>
-                  </label>
-                  <p className="text-slate-500 text-xs mt-1">
-                    Exposes the Event Diagnostics panel for on-device debugging. Persists across restarts.
-                    You can also unlock it for the current session with{" "}
-                    <kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-300">
-                      {typeof navigator !== "undefined" && /Mac|Macintosh/.test(navigator.platform || navigator.userAgent)
-                        ? "⌘⌥D"
-                        : "Ctrl+Alt+D"}
-                    </kbd>.
-                  </p>
-                </div>
-              </div>
+              <AdvancedPanel
+                showDiagnostics={showDiagnostics}
+                setShowDiagnostics={setShowDiagnostics}
+              />
             )}
             {tab === "diagnostics" && diagnosticsVisible && <EventDiagnostics />}
           </div>
