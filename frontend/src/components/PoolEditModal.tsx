@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CreatePool,
   GetModelHint,
@@ -10,19 +10,9 @@ import { main, llm, types } from "../../wailsjs/go/models";
 import { noAutoCorrect } from "../lib/inputs";
 import { ModelSelect } from "./ModelSelect";
 import { useModelsStore } from "../stores/modelsStore";
+import { costRank, fitForRole, meetsThreshold } from "./fitGlyph";
 
 type Fit = "excellent" | "good" | "fair" | "poor" | "unsuitable" | "";
-
-function fitForRole(hint: llm.ModelHint | null, role: string): Fit {
-  if (!hint) return "";
-  switch (role) {
-    case "plan": return (hint.plan_fit as Fit) || "";
-    case "work": return (hint.work_fit as Fit) || "";
-    case "orchestrator": return (hint.orch_fit as Fit) || "";
-    case "architect": return (hint.architect_fit as Fit) || "";
-    default: return (hint.work_fit as Fit) || "";
-  }
-}
 
 function fmtCtx(n: number): string {
   if (!n) return "—";
@@ -191,6 +181,7 @@ export function PoolEditModal({
   const [endpoint, setEndpoint] = useState<string>(initial?.endpoint ?? "");
   const [apiKey, setApiKey] = useState<string>(initial?.api_key ?? "");
   const [model, setModel] = useState<string>(initial?.model ?? "");
+  const userEditedModel = useRef(false);
   const [capacity, setCapacity] = useState<number>(initial?.capacity ?? 1);
   const [enabled, setEnabled] = useState<boolean>(initial?.enabled ?? true);
   const [temperatureStr, setTemperatureStr] = useState<string>(
@@ -286,6 +277,39 @@ export function PoolEditModal({
       .then((h) => setModelHint(h ?? null))
       .catch(() => setModelHint(null));
   }, [providerKind, model]);
+
+  // On add-mode with a role set, auto-select the cheapest suitable model once
+  // the model list loads. Never clobbers a user-typed value.
+  useEffect(() => {
+    if (initial) return;
+    if (userEditedModel.current) return;
+    const models = modelEntry?.models ?? [];
+    if (models.length === 0) return;
+
+    let canceled = false;
+    Promise.all(
+      models.map((m) =>
+        GetModelHint(providerKind, m)
+          .then((h) => ({ model: m, hint: h ?? null }))
+          .catch(() => ({ model: m, hint: null as llm.ModelHint | null })),
+      ),
+    ).then((entries) => {
+      if (canceled || userEditedModel.current) return;
+      const candidates = entries.filter(({ hint }) => {
+        if (!hint) return false;
+        const fit = fitForRole(hint, role);
+        if (role === "orchestrator") {
+          return meetsThreshold(fit, role) && hint.tool_support === "full";
+        }
+        return meetsThreshold(fit, role);
+      });
+      candidates.sort((a, b) => costRank(a.hint?.cost_tier ?? "") - costRank(b.hint?.cost_tier ?? ""));
+      if (candidates.length > 0 && !userEditedModel.current) {
+        setModel(candidates[0].model);
+      }
+    });
+    return () => { canceled = true; };
+  }, [providerKind, modelEntry?.models, role, initial]);
 
   async function onEndpointBlur() {
     if (!providerInfo) return;
@@ -502,7 +526,7 @@ export function PoolEditModal({
               endpoint={resolvedEndpoint}
               apiKey={apiKey}
               value={model}
-              onChange={setModel}
+              onChange={(v) => { userEditedModel.current = true; setModel(v); }}
             />
             {model && (
               <div className="mt-1">
