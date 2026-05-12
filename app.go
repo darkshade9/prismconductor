@@ -3676,6 +3676,13 @@ func (a *App) GetMidRunQuestion(workspaceID string, issueNumber int, questionID 
 	return q, nil
 }
 
+// GetModelHint returns the merged capability hint for a given provider and modelID.
+// Bundled entries always override the external snapshot. Returns nil when the model
+// is unknown — the UI treats nil as "unknown" and shows a neutral badge.
+func (a *App) GetModelHint(provider, modelID string) *llm.ModelHint {
+	return llm.LookupHint(provider, modelID)
+}
+
 // QuestionLogEntry is one row in the questions log surfaced to the UI
 // (issue #211). Combines the question definition with its answer (if already
 // answered) and metadata about who or what answered it.

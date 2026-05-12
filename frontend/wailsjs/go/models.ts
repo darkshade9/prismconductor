@@ -1056,6 +1056,45 @@ export namespace issueview {
 
 }
 
+export namespace llm {
+	
+	export class ModelHint {
+	    provider: string;
+	    model_id: string;
+	    plan_fit: string;
+	    work_fit: string;
+	    orch_fit: string;
+	    architect_fit: string;
+	    tool_support: string;
+	    context_window: number;
+	    cost_tier: string;
+	    notes: string;
+	    updated_at: string;
+	    source: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelHint(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.provider = source["provider"];
+	        this.model_id = source["model_id"];
+	        this.plan_fit = source["plan_fit"];
+	        this.work_fit = source["work_fit"];
+	        this.orch_fit = source["orch_fit"];
+	        this.architect_fit = source["architect_fit"];
+	        this.tool_support = source["tool_support"];
+	        this.context_window = source["context_window"];
+	        this.cost_tier = source["cost_tier"];
+	        this.notes = source["notes"];
+	        this.updated_at = source["updated_at"];
+	        this.source = source["source"];
+	    }
+	}
+
+}
+
 export namespace logbuffer {
 	
 	export class Entry {

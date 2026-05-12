@@ -15,6 +15,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  GetModelHint,
   ListPools,
   ListProviders,
   ListWorkspaces,
@@ -25,8 +26,76 @@ import {
   PoolSpendThisWeek,
 } from "../../wailsjs/go/main/App";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
-import { main, types, workerpool } from "../../wailsjs/go/models";
+import { main, llm, types, workerpool } from "../../wailsjs/go/models";
 import { PoolEditModal } from "./PoolEditModal";
+
+type Fit = "excellent" | "good" | "fair" | "poor" | "unsuitable" | "";
+
+function fitForRole(hint: llm.ModelHint | null | undefined, role: string): Fit {
+  if (!hint) return "";
+  switch (role) {
+    case "plan": return (hint.plan_fit as Fit) || "";
+    case "work": return (hint.work_fit as Fit) || "";
+    case "orchestrator": return (hint.orch_fit as Fit) || "";
+    case "architect": return (hint.architect_fit as Fit) || "";
+    default: return (hint.work_fit as Fit) || "";
+  }
+}
+
+function CapabilityDot({
+  hint,
+  role,
+}: {
+  hint: llm.ModelHint | null | undefined;
+  role: string;
+}) {
+  const fit = fitForRole(hint, role);
+
+  if (!hint || fit === "") {
+    return (
+      <span
+        className="inline-block w-2 h-2 rounded-full bg-slate-600"
+        title="No capability data for this model"
+      />
+    );
+  }
+
+  const toolLabel =
+    hint.tool_support === "full"
+      ? "Tools: full"
+      : hint.tool_support === "partial"
+      ? "Tools: partial ⚠"
+      : "Tools: none ✗";
+
+  const tooltip = [
+    `Fit for ${role}: ${fit}`,
+    toolLabel,
+    hint.context_window
+      ? `Context: ${hint.context_window >= 1000000 ? `${hint.context_window / 1000000}M` : `${Math.round(hint.context_window / 1000)}k`} tokens`
+      : null,
+    hint.cost_tier ? `Cost: ${hint.cost_tier}` : null,
+    hint.notes || null,
+    `Source: ${hint.source || "bundled"}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const colorClass =
+    fit === "excellent" || fit === "good"
+      ? "bg-emerald-500"
+      : fit === "fair"
+      ? "bg-amber-400"
+      : fit === "poor"
+      ? "bg-orange-500"
+      : "bg-rose-600";
+
+  return (
+    <span
+      className={`inline-block w-2 h-2 rounded-full ${colorClass} shrink-0`}
+      title={tooltip}
+    />
+  );
+}
 
 type Role = "plan" | "work" | "orchestrator" | "architect";
 
@@ -47,6 +116,7 @@ export function PoolsPanel() {
   const [deleteErr, setDeleteErr] = useState<Record<string, string>>({});
   const [spendToday, setSpendToday] = useState<Record<string, number>>({});
   const [spendWeek, setSpendWeek] = useState<Record<string, number>>({});
+  const [poolHints, setPoolHints] = useState<Record<string, llm.ModelHint | null>>({});
 
   async function refresh() {
     try {
@@ -63,6 +133,17 @@ export function PoolsPanel() {
         ]);
         setSpendToday(Object.fromEntries(todayResults));
         setSpendWeek(Object.fromEntries(weekResults));
+      }
+      // Fetch model capability hints for every pool.
+      if ((ps ?? []).length > 0) {
+        const hintResults = await Promise.all(
+          (ps ?? []).map((r) =>
+            GetModelHint(r.pool.provider, r.pool.model)
+              .then((h) => [r.pool.id, h ?? null] as const)
+              .catch(() => [r.pool.id, null] as const),
+          ),
+        );
+        setPoolHints(Object.fromEntries(hintResults));
       }
     } catch (err) {
       console.error("PoolsPanel refresh", err);
@@ -214,6 +295,7 @@ export function PoolsPanel() {
                       deleteErr={deleteErr[row.pool.id]}
                       spendToday={spendToday[row.pool.id] ?? 0}
                       spendWeek={spendWeek[row.pool.id] ?? 0}
+                      modelHint={poolHints[row.pool.id]}
                       onToggleEnabled={onToggleEnabled}
                       onEdit={() => setEditing(row.pool)}
                       onRemove={() => onRemove(row.pool)}
@@ -235,6 +317,7 @@ export function PoolsPanel() {
                     dragHandle={null}
                     spendToday={spendToday[row.pool.id] ?? 0}
                     spendWeek={spendWeek[row.pool.id] ?? 0}
+                    modelHint={poolHints[row.pool.id]}
                     onToggleEnabled={onToggleEnabled}
                     onEdit={() => setEditing(row.pool)}
                     onRemove={() => onRemove(row.pool)}
@@ -315,6 +398,7 @@ function SortablePoolRow({
   deleteErr,
   spendToday,
   spendWeek,
+  modelHint,
   onToggleEnabled,
   onEdit,
   onRemove,
@@ -327,6 +411,7 @@ function SortablePoolRow({
   deleteErr?: string;
   spendToday: number;
   spendWeek: number;
+  modelHint?: llm.ModelHint | null;
   onToggleEnabled: (p: types.Pool, next: boolean) => void;
   onEdit: () => void;
   onRemove: () => void;
@@ -377,6 +462,7 @@ function SortablePoolRow({
         preferenceHint={hint}
         spendToday={spendToday}
         spendWeek={spendWeek}
+        modelHint={modelHint}
         onToggleEnabled={onToggleEnabled}
         onEdit={onEdit}
         onRemove={onRemove}
@@ -408,6 +494,7 @@ function PoolRow({
   preferenceHint,
   spendToday,
   spendWeek,
+  modelHint,
   onToggleEnabled,
   onEdit,
   onRemove,
@@ -421,6 +508,7 @@ function PoolRow({
   preferenceHint?: React.ReactNode;
   spendToday: number;
   spendWeek: number;
+  modelHint?: llm.ModelHint | null;
   onToggleEnabled: (p: types.Pool, next: boolean) => void;
   onEdit: () => void;
   onRemove: () => void;
@@ -439,9 +527,10 @@ function PoolRow({
             {poolScopeBadge(row.pool, workspaceByID)}
             {preferenceHint}
           </div>
-          <div className="text-slate-500 text-xs">
-            {row.pool.model || "—"}
-            {row.pool.endpoint && ` · ${row.pool.endpoint}`}
+          <div className="text-slate-500 text-xs flex items-center gap-1.5">
+            <CapabilityDot hint={modelHint} role={role} />
+            <span>{row.pool.model || "—"}</span>
+            {row.pool.endpoint && <span>· {row.pool.endpoint}</span>}
           </div>
         </div>
         {role !== "orchestrator" && (

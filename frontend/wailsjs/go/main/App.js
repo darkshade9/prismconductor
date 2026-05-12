@@ -146,6 +146,10 @@ export function GetMidRunQuestion(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetMidRunQuestion'](arg1, arg2, arg3);
 }
 
+export function GetModelHint(arg1, arg2) {
+  return window['go']['main']['App']['GetModelHint'](arg1, arg2);
+}
+
 export function GetNotifyPrefs() {
   return window['go']['main']['App']['GetNotifyPrefs']();
 }
