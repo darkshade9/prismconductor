@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { DiscoverWorkspaceSkills, ListPools, UpdateWorkspace } from "../../wailsjs/go/main/App";
-import { types, workerpool } from "../../wailsjs/go/models";
+import { DiscoverWorkspaceSkills, GetModelHint, ListPools, UpdateWorkspace } from "../../wailsjs/go/main/App";
+import { llm, types, workerpool } from "../../wailsjs/go/models";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { SkillDropdown } from "./SkillDropdown";
 import { noAutoCorrect } from "../lib/inputs";
+import { fitOptionSuffix } from "./fitGlyph";
 
 type SkillMode = "bundled" | "hybrid" | "native";
 const MODES: SkillMode[] = ["bundled", "hybrid", "native"];
@@ -124,12 +125,14 @@ export function SkillProfileEditor({ workspace }: { workspace: types.Workspace }
           label="Plan pool"
           value={sp.preferred_plan_pool_id ?? ""}
           pools={planPools}
+          role="plan"
           onChange={(v) => update({ preferred_plan_pool_id: v })}
         />
         <PoolPicker
           label="Work pool"
           value={sp.preferred_work_pool_id ?? ""}
           pools={workPools}
+          role="work"
           onChange={(v) => update({ preferred_work_pool_id: v })}
         />
       </div>
@@ -209,13 +212,27 @@ function PoolPicker({
   label,
   value,
   pools,
+  role,
   onChange,
 }: {
   label: string;
   value: string;
   pools: workerpool.PoolStatus[];
+  role: string;
   onChange: (v: string) => void;
 }) {
+  const [hints, setHints] = useState<Record<string, llm.ModelHint | null>>({});
+
+  useEffect(() => {
+    pools.forEach((row) => {
+      const { provider, model, id } = row.pool;
+      if (!provider || !model) return;
+      GetModelHint(provider, model)
+        .then((h) => setHints((prev) => ({ ...prev, [id]: h ?? null })))
+        .catch(() => setHints((prev) => ({ ...prev, [row.pool.id]: null })));
+    });
+  }, [pools]);
+
   return (
     <label className="block">
       <div className="text-xs text-slate-500 mb-1">{label}</div>
@@ -225,11 +242,15 @@ function PoolPicker({
         className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 text-xs"
       >
         <option value="">(any compatible)</option>
-        {pools.map((row) => (
-          <option key={row.pool.id} value={row.pool.id}>
-            {row.pool.name} · {row.pool.provider}
-          </option>
-        ))}
+        {pools.map((row) => {
+          const hint = hints[row.pool.id] ?? null;
+          const suffix = fitOptionSuffix(hint, role);
+          return (
+            <option key={row.pool.id} value={row.pool.id}>
+              {row.pool.name} · {row.pool.provider}{suffix}
+            </option>
+          );
+        })}
       </select>
     </label>
   );
