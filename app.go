@@ -494,6 +494,9 @@ func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionSta
 		return
 	}
 
+	// Issue #293: write a skill_outcomes row on every terminal state transition.
+	a.recordSkillOutcome(sess)
+
 	// Issue #211: when an execute session pauses for a peer-agent question,
 	// try to auto-route it to an architect pool before surfacing to the user.
 	if sess.State == types.StatePausedForQuestion && sess.PendingQuestionID != "" {
@@ -600,6 +603,59 @@ func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionSta
 			"action":       "focus_card",
 		})
 	}
+}
+
+// recordSkillOutcome writes a skill_outcomes row for a terminal session
+// transition (§15.12). Idempotent via upsert on session_id.
+func (a *App) recordSkillOutcome(sess types.Session) {
+	if a.store == nil {
+		return
+	}
+	outcome := terminalStateToOutcome(sess.State)
+	if outcome == "" {
+		return
+	}
+	var durMs int64
+	if sess.EndedAt != nil {
+		durMs = sess.EndedAt.Sub(sess.StartedAt).Milliseconds()
+	}
+	skillHash := sess.SkillHash
+	if skillHash == "" {
+		skillHash = "fallback:harness"
+	}
+	o := types.SkillOutcome{
+		SessionID:      sess.ID,
+		WorkspaceID:    sess.WorkspaceID,
+		IssueNumber:    sess.IssueNumber,
+		SkillPath:      sess.SkillPath,
+		SkillHash:      skillHash,
+		Mode:           string(sess.Mode),
+		Outcome:        outcome,
+		BlockedReason:  sess.BlockedReason,
+		CostCents:      sess.EstimatedCostCents,
+		DurationMs:     durMs,
+		TranscriptPath: sess.Transcript,
+		CapturedAt:     time.Now().Unix(),
+	}
+	if err := a.store.RecordSkillOutcome(o); err != nil {
+		log.Printf("RecordSkillOutcome session %s: %v", sess.ID, err)
+	}
+}
+
+// terminalStateToOutcome maps a terminal session state to the outcome string
+// stored in skill_outcomes. Returns "" for non-terminal states.
+func terminalStateToOutcome(state types.SessionState) string {
+	switch state {
+	case types.StateCompleted:
+		return "success"
+	case types.StateFailed:
+		return "failed"
+	case types.StateBlocked:
+		return "blocked"
+	case types.StateNeedsPR:
+		return "needs_pr"
+	}
+	return ""
 }
 
 // notificationsSuppressed returns true when notifications are currently muted

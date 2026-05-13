@@ -71,7 +71,7 @@ func spawnHarnessSession(t *testing.T, behavior string) (sess *types.Session, m 
 	pool := types.Pool{ID: "pool-h", Provider: controlledProviderKind}
 
 	var err error
-	sess, err = m.spawnWithDir(ws, issue, types.ModePlan, nil, "test prompt", "", "", pool, "")
+	sess, err = m.spawnWithDir(ws, issue, types.ModePlan, nil, "test prompt", "", "", pool, "", "", "fallback:harness")
 	if err != nil {
 		t.Fatalf("spawnWithDir: %v", err)
 	}

@@ -36,3 +36,4 @@ Intended for support engineers and power users diagnosing UI/backend state drift
 ## Verification skills
 
 - **`/bug-hunter-state`** — scans the conductor's persistent state (SQLite DB, `workspaces.json`, transcripts dir, live process table) for 12 known broken-state patterns and writes a timestamped `{findings}` JSON + Markdown report to `.prismconductor/bug-hunter/`. Read-only; never mutates state. Invoke on demand or schedule with `/loop 24h /bug-hunter-state`. Reports land in `.prismconductor/bug-hunter/<RFC3339>.{json,md}`; `latest.json` always points to the most recent run.
+- **`/conductor-skill-curator`** — reads the `skill_outcomes` log for a named skill (e.g. `--skill bundled:conductor-plan`), detects repeated failure patterns, and proposes targeted markdown edits. Read-only; never mutates skill files. Reports land in `.prismconductor/skill-curator/<RFC3339>.{json,md}`; `latest.json` always points to the most recent run. See §15.12.

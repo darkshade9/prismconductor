@@ -680,6 +680,13 @@ type Session struct {
 	// RetryOfSessionID is the ID of the session whose transient failure triggered
 	// this session. Empty for first-attempt sessions (#221).
 	RetryOfSessionID string `json:"retry_of_session_id,omitempty"`
+
+	// Issue #293: skill identity captured at spawn time for outcome logging.
+	// SkillPath is "bundled:<name>", an absolute repo path, or "" (harness fallback).
+	// SkillHash is sha256 hex of the skill markdown at spawn time, or "fallback:harness".
+	// Both omitempty so old session JSON deserializes cleanly.
+	SkillPath string `json:"skill_path,omitempty"`
+	SkillHash string `json:"skill_hash,omitempty"`
 }
 
 // MidRunAnswer is the §6.4-shaped answer payload for a mid-run question

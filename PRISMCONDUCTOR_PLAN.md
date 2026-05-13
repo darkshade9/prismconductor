@@ -1276,3 +1276,58 @@ Before Phase 7 starts, resolve:
 ---
 
 **End of plan. Hand this to an agent. Build Phase 1 first. Ship it before touching Phase 2.**
+
+---
+
+## §15.12 Skill Outcome Log + Curator (issue #293, phase A)
+
+### Overview
+
+PrismConductor's bundled skills are static markdown files. When a skill produces bad plans or repeated failures, the user must notice the pattern manually and hand-edit the skill. §15.12 adds the foundation for self-improving skills: a per-session outcome log and a manual curator skill that analyses it.
+
+### Data contract: `skill_outcomes` table
+
+Written once per session at terminal state transition. `session_id` is the PK — upserts are safe.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `session_id` | TEXT PK | matches `sessions.id` |
+| `workspace_id` | TEXT | |
+| `issue_number` | INTEGER | |
+| `skill_path` | TEXT | `"bundled:<name>"` \| absolute path \| `""` |
+| `skill_hash` | TEXT | sha256 hex at spawn time, or `"fallback:harness"` |
+| `mode` | TEXT | `"plan"` \| `"execute"` |
+| `outcome` | TEXT | `"success"` \| `"failed"` \| `"blocked"` \| `"needs_pr"` |
+| `blocked_reason` | TEXT | from `session.BlockedReason`; `""` on success |
+| `user_action` | TEXT | `""` in phase A; filled by phase B Approve/Reject hooks |
+| `cost_cents` | REAL | `session.EstimatedCostCents` |
+| `duration_ms` | INTEGER | `EndedAt - StartedAt` |
+| `transcript_path` | TEXT | absolute path to the session transcript log |
+| `captured_at` | INTEGER | Unix epoch seconds |
+
+**Key design invariant:** `skill_hash` is computed from the skill markdown **at spawn time** and stored on `Session.SkillHash`. Re-hashing at session end would capture any curator-edits made between spawn and completion, making A/B comparisons meaningless. The `Session.SkillPath` and `Session.SkillHash` fields are `omitempty` so old session JSON deserialises cleanly.
+
+### Outcome derivation
+
+| Terminal `sess.State` | `outcome` |
+|----------------------|-----------|
+| `completed` | `success` |
+| `failed` | `failed` |
+| `blocked` | `blocked` |
+| `needs_pr` | `needs_pr` |
+
+`user_rejected` / `force_replanned` / `approved` / `refined` user actions are phase B (require PlanModal hooks). Phase A leaves `user_action` empty.
+
+### Skill hash
+
+`internal/skills/versioning.go::HashSkillMarkdown(content []byte) string` — SHA-256 hex of the raw skill markdown bytes. Called by `internal/session/manager.go::loadSkillMarkdown` which now returns `(content, path, hash)`.
+
+### Curator skill
+
+`internal/skills/bundle/skills/conductor-skill-curator.md` — bundled, read-only. Inputs: `--skill <path>`, `--window-days <N=30>`. Reads `conductor.db` via `sqlite3` CLI (same pattern as `bug-hunter-state`). Writes findings to `.prismconductor/skill-curator/<RFC3339>.{json,md}` + `latest.json`. Proposes `{old_text, new_text}` patches per detected failure pattern; never applies them.
+
+### Phase B / C / D (deferred)
+
+- **Phase B** — Skill Curator review modal + `ApplySkillEdit` Wails method writing per-workspace `.prismconductor/skills/<name>.md` overrides.
+- **Phase C** — Skill versioning + A/B variant routing in `SpawnPlan`/`SpawnExecute`. `skill_hash` already recorded, making the comparison query straightforward.
+- **Phase D** — Periodic `/loop` cron integration. Depends on a separate in-app scheduler (PrismConductor has no native cron today).

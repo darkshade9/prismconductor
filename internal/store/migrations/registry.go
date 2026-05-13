@@ -119,6 +119,30 @@ CREATE TABLE IF NOT EXISTS pool_daily_usage (
 );
 CREATE INDEX IF NOT EXISTS idx_pdu_pool_date ON pool_daily_usage (pool_id, date);`,
 	},
+	{
+		ID:          "20260513_01_add_skill_outcomes",
+		Description: "issue #293: per-session skill outcome log for self-improving skills (phase A)",
+		SQL: `
+CREATE TABLE IF NOT EXISTS skill_outcomes (
+    session_id      TEXT    PRIMARY KEY,
+    workspace_id    TEXT    NOT NULL,
+    issue_number    INTEGER NOT NULL,
+    skill_path      TEXT    NOT NULL,
+    skill_hash      TEXT    NOT NULL,
+    mode            TEXT    NOT NULL,
+    outcome         TEXT    NOT NULL,
+    blocked_reason  TEXT    NOT NULL DEFAULT '',
+    user_action     TEXT    NOT NULL DEFAULT '',
+    cost_cents      REAL    NOT NULL DEFAULT 0,
+    duration_ms     INTEGER NOT NULL DEFAULT 0,
+    transcript_path TEXT    NOT NULL DEFAULT '',
+    captured_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_skill_outcomes_skill_time
+    ON skill_outcomes(skill_path, captured_at);
+CREATE INDEX IF NOT EXISTS idx_skill_outcomes_workspace
+    ON skill_outcomes(workspace_id, captured_at);`,
+	},
 }
 
 // All returns every known migration in application order.
