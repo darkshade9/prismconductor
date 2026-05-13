@@ -17,6 +17,7 @@ import { ContinueModal } from "./ContinueModal";
 import { PRCommentReviewModal } from "./PRCommentReviewModal";
 import { AgentActivityStrip } from "./AgentActivityStrip";
 import { DiagnosticPopover } from "./DiagnosticPopover";
+import { SessionLedger } from "./SessionLedger";
 import { cn } from "../lib/cn";
 import { CopyMenu, CopyAction, toQuotedBlock } from "./CopyMenu";
 import { useGlowColorsStore, type GlowState } from "../stores/useGlowColorsStore";
@@ -213,6 +214,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, o
   const [prCommentOpen, setPrCommentOpen] = useState(false);
   const [cardMenu, setCardMenu] = useState<{ x: number; y: number; actions: CopyAction[] } | null>(null);
   const [diagAnchor, setDiagAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [ledgerAnchor, setLedgerAnchor] = useState<{ x: number; y: number } | null>(null);
 
   function openCardMenu(e: React.MouseEvent, actions: CopyAction[]) {
     e.preventDefault();
@@ -370,11 +372,21 @@ export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, o
       )}
       <div className="flex justify-end items-center gap-2 mt-0.5">
         {(issue.cost_usd ?? 0) > 0 && (
-          <CostChip
-            costUSD={issue.cost_usd!}
-            inputTokens={view?.last_session?.input_tokens ?? null}
-            outputTokens={view?.last_session?.output_tokens ?? null}
-          />
+          <button
+            type="button"
+            className="cursor-pointer focus:outline-none"
+            onClick={(e) => {
+              e.stopPropagation();
+              setLedgerAnchor({ x: e.clientX, y: e.clientY });
+            }}
+            aria-label="View session ledger"
+          >
+            <CostChip
+              costUSD={issue.cost_usd!}
+              inputTokens={view?.last_session?.input_tokens ?? null}
+              outputTokens={view?.last_session?.output_tokens ?? null}
+            />
+          </button>
         )}
         <WorkTimerChip
           baseSecs={issue.work_seconds ?? 0}
@@ -425,6 +437,14 @@ export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, o
           issueNumber={issue.number}
           anchor={diagAnchor}
           onClose={() => setDiagAnchor(null)}
+        />
+      )}
+      {ledgerAnchor && (
+        <SessionLedger
+          workspaceID={issue.workspace_id}
+          issueNumber={issue.number}
+          anchor={ledgerAnchor}
+          onClose={() => setLedgerAnchor(null)}
         />
       )}
     </div>

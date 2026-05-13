@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -3471,6 +3473,73 @@ func (a *App) ListIssueViews(workspaceID string) ([]issueview.IssueView, error) 
 		return nil, fmt.Errorf("assembler unavailable")
 	}
 	return a.assembler.ListForWorkspace(workspaceID)
+}
+
+// GetSessionLedger returns the per-session cost/time ledger for a card (issue #298).
+// Rows are ordered newest-first. Pool model/provider reflect current pool config
+// (resolve-on-read; no schema migration needed). Capped at 1000 rows server-side.
+func (a *App) GetSessionLedger(workspaceID string, issueNumber int) ([]types.SessionLedgerRow, error) {
+	if a.assembler == nil {
+		return nil, fmt.Errorf("assembler unavailable")
+	}
+	return a.assembler.BuildSessionLedger(workspaceID, issueNumber)
+}
+
+// ExportSessionLedgerCSV opens a native Save As dialog, then writes the
+// session ledger as CSV to the chosen path (issue #298).
+func (a *App) ExportSessionLedgerCSV(workspaceID string, issueNumber int) error {
+	if a.assembler == nil {
+		return fmt.Errorf("assembler unavailable")
+	}
+	rows, err := a.assembler.BuildSessionLedger(workspaceID, issueNumber)
+	if err != nil {
+		return err
+	}
+	path, err := wruntime.SaveFileDialog(a.ctx, wruntime.SaveDialogOptions{
+		Title:           "Export session ledger",
+		DefaultFilename: fmt.Sprintf("ledger-issue-%d.csv", issueNumber),
+		Filters: []wruntime.FileFilter{
+			{DisplayName: "CSV files (*.csv)", Pattern: "*.csv"},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if path == "" {
+		return nil // user cancelled
+	}
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	_ = w.Write([]string{"session_id", "role", "pool_name", "provider", "model",
+		"started_at", "duration_s", "cost_usd", "input_tokens", "output_tokens", "outcome", "failure_cause"})
+	for _, r := range rows {
+		fc := ""
+		if r.FailureCause != nil {
+			fc = r.FailureCause.Reason
+			if fc == "" {
+				fc = r.FailureCause.Kind
+			}
+		}
+		_ = w.Write([]string{
+			r.SessionID,
+			r.Role,
+			r.PoolName,
+			r.Provider,
+			r.Model,
+			r.StartedAt.UTC().Format(time.RFC3339),
+			strconv.FormatFloat(r.DurationS, 'f', 2, 64),
+			strconv.FormatFloat(r.CostUSD, 'f', 6, 64),
+			strconv.FormatInt(r.InputTokens, 10),
+			strconv.FormatInt(r.OutputTokens, 10),
+			r.Outcome,
+			fc,
+		})
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return err
+	}
+	return os.WriteFile(path, buf.Bytes(), 0o644)
 }
 
 // LatestPlan returns the highest-revision plan for an issue.
