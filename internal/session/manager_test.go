@@ -224,7 +224,7 @@ func TestSpawnWritesToTranscriptFile(t *testing.T) {
 	issue := types.Issue{Number: 1, WorkspaceID: ws.ID}
 	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute,
 		[]string{"/bin/sh", "-c", "echo hello-from-worker; echo Work complete."},
-		"", "", "", types.Pool{}, "")
+		"", "", "", types.Pool{}, "", "", "fallback:harness")
 	if err != nil {
 		t.Fatalf("spawnWithDir: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestSpawnRefusesDuplicateForSameIssueAndMode(t *testing.T) {
 	// test window, so its session stays registered in m.sessions.
 	first, err := m.spawnWithDir(ws, issue, types.ModePlan,
 		[]string{"/bin/sh", "-c", "sleep 5"},
-		"", "", "", types.Pool{}, "")
+		"", "", "", types.Pool{}, "", "", "fallback:harness")
 	if err != nil {
 		t.Fatalf("first spawn: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestSpawnRefusesDuplicateForSameIssueAndMode(t *testing.T) {
 	// Second spawn for the SAME (workspace, issue, mode) must be refused.
 	_, err = m.spawnWithDir(ws, issue, types.ModePlan,
 		[]string{"/bin/sh", "-c", "echo should-not-run; echo Work complete."},
-		"", "", "", types.Pool{}, "")
+		"", "", "", types.Pool{}, "", "", "fallback:harness")
 	if !errors.Is(err, ErrDuplicateSpawn) {
 		t.Fatalf("second spawn for same (ws, issue, mode) returned err=%v, want ErrDuplicateSpawn", err)
 	}
@@ -348,7 +348,7 @@ func TestSpawnAllowsDifferentModeForSameIssue(t *testing.T) {
 
 	planSess, err := m.spawnWithDir(ws, issue, types.ModePlan,
 		[]string{"/bin/sh", "-c", "sleep 5"},
-		"", "", "", types.Pool{}, "")
+		"", "", "", types.Pool{}, "", "", "fallback:harness")
 	if err != nil {
 		t.Fatalf("plan spawn: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestSpawnAllowsDifferentModeForSameIssue(t *testing.T) {
 
 	execSess, err := m.spawnWithDir(ws, issue, types.ModeExecute,
 		[]string{"/bin/sh", "-c", "sleep 5"},
-		"", "", "", types.Pool{}, "")
+		"", "", "", types.Pool{}, "", "", "fallback:harness")
 	if err != nil {
 		t.Fatalf("execute spawn for same issue but different mode unexpectedly refused: %v", err)
 	}
@@ -380,7 +380,7 @@ func TestSpawnPersistsPoolID(t *testing.T) {
 
 	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute,
 		[]string{"/bin/sh", "-c", "echo Work complete."},
-		"", "", "", pool, "")
+		"", "", "", pool, "", "", "fallback:harness")
 	if err != nil {
 		t.Fatalf("spawnWithDir: %v", err)
 	}
@@ -504,7 +504,7 @@ func TestTailAndParseAutoKillLandsOnCompleted(t *testing.T) {
 	// Spawn a long-running execute session so tailAndParse is live.
 	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute,
 		[]string{"/bin/sh", "-c", "echo PR_OPENED: https://github.com/o/r/pull/1; sleep 10"},
-		"", "", "", types.Pool{}, "")
+		"", "", "", types.Pool{}, "", "", "fallback:harness")
 	if err != nil {
 		t.Fatalf("spawnWithDir: %v", err)
 	}
@@ -737,7 +737,7 @@ func TestKillSubprocessLandsInFailedState(t *testing.T) {
 	// A long-running subprocess that will not exit on its own.
 	sess, err := m.spawnWithDir(ws, issue, types.ModePlan,
 		[]string{"/bin/sh", "-c", "sleep 60"},
-		"", "", "", types.Pool{}, "")
+		"", "", "", types.Pool{}, "", "", "fallback:harness")
 	if err != nil {
 		t.Fatalf("spawnWithDir: %v", err)
 	}

@@ -385,6 +385,70 @@ func TestHandleSessionStateChange_RollsBackToReviewWhenPROpen(t *testing.T) {
 	}
 }
 
+// Issue #293: a terminal execute session must write a skill_outcomes row.
+func TestHandleSessionStateChange_WritesSkillOutcomeOnFailed(t *testing.T) {
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	const wsID = "ws1"
+	const issueNum = 55
+	if _, err := s.SaveIssue(types.Issue{
+		WorkspaceID: wsID,
+		Number:      issueNum,
+		Title:       "outcome test issue",
+		State:       "open",
+		Column:      types.ColInProgress,
+	}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+
+	now := time.Now()
+	ended := now.Add(30 * time.Second)
+	failedSess := types.Session{
+		ID:               "sess-outcome-test",
+		WorkspaceID:      wsID,
+		IssueNumber:      issueNum,
+		Mode:             types.ModeExecute,
+		State:            types.StateFailed,
+		StartedAt:        now,
+		EndedAt:          &ended,
+		BlockedReason:    "build failed",
+		SkillPath:        "bundled:conductor-execute",
+		SkillHash:        "deadbeef1234",
+		EstimatedCostCents: 2.5,
+	}
+
+	a := &App{store: s, bus: eventbus.New()}
+	a.handleSessionStateChange(failedSess, types.StateRunning)
+
+	rows, err := s.ListSkillOutcomes("bundled:conductor-execute", now.Unix()-1, 10)
+	if err != nil {
+		t.Fatalf("ListSkillOutcomes: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 skill_outcomes row, got %d", len(rows))
+	}
+	got := rows[0]
+	if got.SessionID != "sess-outcome-test" {
+		t.Errorf("session_id = %q", got.SessionID)
+	}
+	if got.Outcome != "failed" {
+		t.Errorf("outcome = %q, want %q", got.Outcome, "failed")
+	}
+	if got.SkillHash != "deadbeef1234" {
+		t.Errorf("skill_hash = %q", got.SkillHash)
+	}
+	if got.BlockedReason != "build failed" {
+		t.Errorf("blocked_reason = %q", got.BlockedReason)
+	}
+	if got.DurationMs != 30000 {
+		t.Errorf("duration_ms = %d, want 30000", got.DurationMs)
+	}
+}
+
 // Issue #247: when an execute session fails with NO open PR, the card must
 // NOT be rolled back to REVIEW (preserve existing behaviour).
 func TestHandleSessionStateChange_NoRollbackWhenNoPR(t *testing.T) {

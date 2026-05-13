@@ -23,31 +23,34 @@ import (
 	"prismconductor/internal/harness"
 	"prismconductor/internal/llm"
 	"prismconductor/internal/remoteworker"
+	"prismconductor/internal/skills"
 	"prismconductor/internal/skills/bundle"
 	"prismconductor/internal/types"
 )
 
 // loadSkillMarkdown reads the skill markdown for the given stage from the
-// workspace's PerStage configuration. Returns empty string (not an error) when
-// no per-stage skill is configured — the harness falls through to its legacy
-// mode logic.
-func loadSkillMarkdown(ws types.Workspace, stage types.ConductorStage) string {
+// workspace's PerStage configuration. Returns (content, skillPath, skillHash).
+// When no per-stage skill is configured or the file cannot be read, content is
+// "" and skillPath is "" and skillHash is "fallback:harness" — the harness
+// falls through to its legacy mode logic.
+func loadSkillMarkdown(ws types.Workspace, stage types.ConductorStage) (content, skillPath, skillHash string) {
 	ref, ok := ws.SkillProfile.SkillForStage(stage)
 	if !ok {
-		return ""
+		return "", "", "fallback:harness"
 	}
 	switch ref.Source {
 	case "bundled":
 		name := strings.TrimPrefix(ref.Path, "bundled:")
 		if b, err := fs.ReadFile(bundle.FS, "skills/"+name+".md"); err == nil {
-			return string(b)
+			path := "bundled:" + name
+			return string(b), path, skills.HashSkillMarkdown(b)
 		}
 	case "repo":
 		if b, err := os.ReadFile(ref.Path); err == nil {
-			return string(b)
+			return string(b), ref.Path, skills.HashSkillMarkdown(b)
 		}
 	}
-	return ""
+	return "", "", "fallback:harness"
 }
 
 // LineHandler receives each PTY output line as it arrives.
@@ -348,8 +351,8 @@ func (m *Manager) SpawnPlan(ws types.Workspace, issue types.Issue, pool types.Po
 	if err != nil {
 		return nil, err
 	}
-	skillMarkdown := loadSkillMarkdown(ws, types.StagePlan)
-	return m.spawn(ws, issue, types.ModePlan, args, prompt, pool, skillMarkdown)
+	skillMarkdown, skillPath, skillHash := loadSkillMarkdown(ws, types.StagePlan)
+	return m.spawn(ws, issue, types.ModePlan, args, prompt, pool, skillMarkdown, skillPath, skillHash)
 }
 
 // writeIssuePayload writes the issue body to .prismconductor/issue-<N>.md so
@@ -429,8 +432,8 @@ func (m *Manager) SpawnExecute(ws types.Workspace, issue types.Issue, plan types
 		_ = pcgit.Remove(ws.RepoPath, worktreeDir)
 		return nil, err
 	}
-	skillMarkdown := loadSkillMarkdown(ws, types.StageExecute)
-	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool, skillMarkdown)
+	skillMarkdown, skillPath, skillHash := loadSkillMarkdown(ws, types.StageExecute)
+	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool, skillMarkdown, skillPath, skillHash)
 	if err != nil {
 		_ = pcgit.Remove(ws.RepoPath, worktreeDir)
 		return nil, err
@@ -464,8 +467,8 @@ func (m *Manager) SpawnExecuteResume(ws types.Workspace, issue types.Issue, plan
 	if err != nil {
 		return nil, err
 	}
-	skillMarkdown := loadSkillMarkdown(ws, types.StageContinue)
-	return m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool, skillMarkdown)
+	skillMarkdown, skillPath, skillHash := loadSkillMarkdown(ws, types.StageContinue)
+	return m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool, skillMarkdown, skillPath, skillHash)
 }
 
 // SpawnExecuteContinue re-enters an execute worker on the existing feature
@@ -497,8 +500,8 @@ func (m *Manager) SpawnExecuteContinue(ws types.Workspace, issue types.Issue, pl
 	if err != nil {
 		return nil, err
 	}
-	skillMarkdown := loadSkillMarkdown(ws, types.StageContinue)
-	return m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool, skillMarkdown)
+	skillMarkdown, skillPath, skillHash := loadSkillMarkdown(ws, types.StageContinue)
+	return m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool, skillMarkdown, skillPath, skillHash)
 }
 
 // mirrorContinueNote copies .prismconductor/notes/<num>.txt from the main
@@ -635,7 +638,7 @@ func (m *Manager) SpawnArchitectAnswer(ws types.Workspace, _ types.Issue, questi
 	if err != nil {
 		return nil, err
 	}
-	return m.spawnWithDir(ws, archIssue, types.ModeExecute, args, prompt, "", "", pool, "")
+	return m.spawnWithDir(ws, archIssue, types.ModeExecute, args, prompt, "", "", pool, "", "", "fallback:harness")
 }
 
 // architectAnswerPrompt builds the prompt sent to a role=architect worker.
@@ -666,11 +669,11 @@ Rules:
 func (m *Manager) SpawnRaw(ws types.Workspace, name string, args []string) (*types.Session, error) {
 	demoIssue := types.Issue{Number: 0, WorkspaceID: ws.ID}
 	full := append([]string{name}, args...)
-	return m.spawn(ws, demoIssue, types.ModePlan, full, "", types.Pool{}, "")
+	return m.spawn(ws, demoIssue, types.ModePlan, full, "", types.Pool{}, "", "", "fallback:harness")
 }
 
-func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, prompt string, pool types.Pool, skillMarkdown string) (*types.Session, error) {
-	return m.spawnWithDir(ws, issue, mode, argv, prompt, "", "", pool, skillMarkdown)
+func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, prompt string, pool types.Pool, skillMarkdown, skillPath, skillHash string) (*types.Session, error) {
+	return m.spawnWithDir(ws, issue, mode, argv, prompt, "", "", pool, skillMarkdown, skillPath, skillHash)
 }
 
 // spawnWithDir is the canonical spawn path. When worktreeDir is non-empty the
@@ -690,7 +693,7 @@ func (m *Manager) spawn(ws types.Workspace, issue types.Issue, mode types.Sessio
 // goroutine drives the agent loop and writes synthesized stream-json into
 // the transcript file. tailAndParse + StreamParser see identical input
 // shape regardless of strategy.
-func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, prompt, worktreeDir, branch string, pool types.Pool, skillMarkdown string) (*types.Session, error) {
+func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types.SessionMode, argv []string, prompt, worktreeDir, branch string, pool types.Pool, skillMarkdown, skillPath, skillHash string) (*types.Session, error) {
 	if len(argv) == 0 && prompt == "" {
 		return nil, fmt.Errorf("empty command")
 	}
@@ -770,6 +773,8 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 		StartedAt:   time.Now(),
 		PoolID:      pool.ID,
 		Branch:      branch,
+		SkillPath:   skillPath,
+		SkillHash:   skillHash,
 	}
 	sess.Transcript = transcriptPath
 
@@ -909,6 +914,7 @@ func (m *Manager) spawnRemote(ws types.Workspace, issue types.Issue, plan types.
 		State:       types.StateRunning,
 		StartedAt:   time.Now(),
 		PoolID:      pool.ID,
+		SkillHash:   "fallback:harness",
 	}
 	sess.Transcript = transcriptPath
 
