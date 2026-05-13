@@ -162,6 +162,18 @@ export function GetPoolUsage() {
   return window['go']['main']['App']['GetPoolUsage']();
 }
 
+export function GetPoolCostProjection(arg1) {
+  return window['go']['main']['App']['GetPoolCostProjection'](arg1);
+}
+
+export function GetWorkspaceCostProjection(arg1) {
+  return window['go']['main']['App']['GetWorkspaceCostProjection'](arg1);
+}
+
+export function GetGlobalCostProjection() {
+  return window['go']['main']['App']['GetGlobalCostProjection']();
+}
+
 export function GetRepoDefaultBranch(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetRepoDefaultBranch'](arg1, arg2, arg3);
 }

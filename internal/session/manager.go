@@ -70,6 +70,8 @@ type Persister interface {
 	// UpdateSessionDiagnostics persists exit diagnostics captured after the
 	// subprocess exits (#194).
 	UpdateSessionDiagnostics(id string, exitCode *int, signal string, waitMs int64, lastStderr string) error
+	// UpsertPoolDailyUsage adds session spend to the pool's daily aggregate (#283).
+	UpsertPoolDailyUsage(poolID, date string, sessions int, tokens int64, cents float64) error
 	// CollectionForWorkspace returns the collection the workspace belongs to, if any (#209).
 	CollectionForWorkspace(workspaceID string) (types.Collection, bool, error)
 	// RelatedRepoPaths returns RepoPath values of other enabled collection members (#209).
@@ -1189,6 +1191,10 @@ func (m *Manager) tailAndParse(ctx context.Context, rs *runtimeSession) {
 		rs.sess.OutputTokens = outputTok
 		rs.sess.EstimatedCostCents = costCents
 		_ = m.store.UpdateSessionUsage(rs.sess, rs.transcriptPath)
+		if rs.sess.PoolID != "" {
+			date := time.Now().UTC().Format("2006-01-02")
+			_ = m.store.UpsertPoolDailyUsage(rs.sess.PoolID, date, 1, inputTok+outputTok, costCents)
+		}
 		// Persist exit diagnostics for failed execute sessions (#194).
 		if rs.sess.Mode == types.ModeExecute &&
 			(rs.sess.State == types.StateFailed || rs.sess.State == types.StateBlocked) {

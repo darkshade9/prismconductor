@@ -1210,15 +1210,45 @@ export namespace main {
 	export class GoalSpendResult {
 	    total_usd: number;
 	    run_count: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new GoalSpendResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.total_usd = source["total_usd"];
 	        this.run_count = source["run_count"];
+	    }
+	}
+	export class PoolCostProjection {
+	    pool_id: string;
+	    pool_name: string;
+	    provider: string;
+	    last_7d_usd: number;
+	    last_30d_usd: number;
+	    projected_month_usd: number;
+	    sessions_30d: number;
+	    avg_per_session_usd: number;
+	    free_tier: boolean;
+	    days_with_data: number;
+
+	    static createFrom(source: any = {}) {
+	        return new PoolCostProjection(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pool_id = source["pool_id"];
+	        this.pool_name = source["pool_name"];
+	        this.provider = source["provider"];
+	        this.last_7d_usd = source["last_7d_usd"];
+	        this.last_30d_usd = source["last_30d_usd"];
+	        this.projected_month_usd = source["projected_month_usd"];
+	        this.sessions_30d = source["sessions_30d"];
+	        this.avg_per_session_usd = source["avg_per_session_usd"];
+	        this.free_tier = source["free_tier"];
+	        this.days_with_data = source["days_with_data"];
 	    }
 	}
 	export class LabelFilterState {

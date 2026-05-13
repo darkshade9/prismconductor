@@ -16,6 +16,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   GetModelHint,
+  GetPoolCostProjection,
   ListPools,
   ListProviderEntities,
   ListProviders,
@@ -121,6 +122,7 @@ export function PoolsPanel() {
   const [spendToday, setSpendToday] = useState<Record<string, number>>({});
   const [spendWeek, setSpendWeek] = useState<Record<string, number>>({});
   const [poolHints, setPoolHints] = useState<Record<string, llm.ModelHint | null>>({});
+  const [projections, setProjections] = useState<Record<string, main.PoolCostProjection>>({});
 
   async function refresh() {
     try {
@@ -138,6 +140,21 @@ export function PoolsPanel() {
         ]);
         setSpendToday(Object.fromEntries(todayResults));
         setSpendWeek(Object.fromEntries(weekResults));
+      }
+      // Fetch cost projections for each pool.
+      if (ids.length > 0) {
+        const projResults = await Promise.all(
+          ids.map((id) =>
+            GetPoolCostProjection(id)
+              .then((p) => [id, p] as const)
+              .catch(() => [id, null] as const),
+          ),
+        );
+        const proj: Record<string, main.PoolCostProjection> = {};
+        for (const [id, p] of projResults) {
+          if (p) proj[id] = p;
+        }
+        setProjections(proj);
       }
       // Fetch model capability hints for every pool.
       if ((ps ?? []).length > 0) {
@@ -321,6 +338,7 @@ export function PoolsPanel() {
                       deleteErr={deleteErr[row.pool.id]}
                       spendToday={spendToday[row.pool.id] ?? 0}
                       spendWeek={spendWeek[row.pool.id] ?? 0}
+                      projection={projections[row.pool.id] ?? null}
                       modelHint={poolHints[row.pool.id]}
                       onToggleEnabled={onToggleEnabled}
                       onEdit={() => setEditing(row.pool)}
@@ -343,6 +361,7 @@ export function PoolsPanel() {
                     dragHandle={null}
                     spendToday={spendToday[row.pool.id] ?? 0}
                     spendWeek={spendWeek[row.pool.id] ?? 0}
+                    projection={projections[row.pool.id] ?? null}
                     modelHint={poolHints[row.pool.id]}
                     onToggleEnabled={onToggleEnabled}
                     onEdit={() => setEditing(row.pool)}
@@ -437,6 +456,7 @@ function SortablePoolRow({
   deleteErr,
   spendToday,
   spendWeek,
+  projection,
   modelHint,
   onToggleEnabled,
   onEdit,
@@ -450,6 +470,7 @@ function SortablePoolRow({
   deleteErr?: string;
   spendToday: number;
   spendWeek: number;
+  projection: main.PoolCostProjection | null;
   modelHint?: llm.ModelHint | null;
   onToggleEnabled: (p: types.Pool, next: boolean) => void;
   onEdit: () => void;
@@ -501,6 +522,7 @@ function SortablePoolRow({
         preferenceHint={hint}
         spendToday={spendToday}
         spendWeek={spendWeek}
+        projection={projection}
         modelHint={modelHint}
         onToggleEnabled={onToggleEnabled}
         onEdit={onEdit}
@@ -523,6 +545,13 @@ function poolScopeBadge(pool: types.Pool, workspaceByID: Map<string, types.Works
   );
 }
 
+function projectionColorClass(projectedUSD: number, freeTier: boolean): string {
+  if (freeTier) return "text-emerald-400";
+  if (projectedUSD < 50) return "text-emerald-400";
+  if (projectedUSD < 200) return "text-amber-400";
+  return "text-rose-400";
+}
+
 function PoolRow({
   row,
   role,
@@ -533,6 +562,7 @@ function PoolRow({
   preferenceHint,
   spendToday,
   spendWeek,
+  projection,
   modelHint,
   onToggleEnabled,
   onEdit,
@@ -547,6 +577,7 @@ function PoolRow({
   preferenceHint?: React.ReactNode;
   spendToday: number;
   spendWeek: number;
+  projection: main.PoolCostProjection | null;
   modelHint?: llm.ModelHint | null;
   onToggleEnabled: (p: types.Pool, next: boolean) => void;
   onEdit: () => void;
@@ -572,6 +603,22 @@ function PoolRow({
             {row.pool.endpoint && <span>· {row.pool.endpoint}</span>}
           </div>
         </div>
+        {projection && (
+          <div
+            className={`text-[10px] font-mono tabular-nums ${projectionColorClass(projection.projected_month_usd, projection.free_tier)}`}
+            title={
+              projection.free_tier
+                ? "Free tier pool — no per-token billing"
+                : `Last 7d: $${projection.last_7d_usd.toFixed(2)} · Last 30d: $${projection.last_30d_usd.toFixed(2)} · ${projection.sessions_30d} sessions`
+            }
+          >
+            {projection.free_tier
+              ? "$0/mo (free)"
+              : projection.days_with_data === 0
+              ? "no data"
+              : `~$${projection.projected_month_usd.toFixed(0)}/mo`}
+          </div>
+        )}
         {role !== "orchestrator" && (
           <div className="font-mono text-slate-300 text-xs">
             {row.active}/{row.pool.capacity}
