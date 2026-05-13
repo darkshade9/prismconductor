@@ -94,6 +94,12 @@ export function GetPollInterval():Promise<number>;
 
 export function GetPoolUsage():Promise<Array<types.PoolUsage>>;
 
+export function GetPoolCostProjection(arg1:string):Promise<main.PoolCostProjection>;
+
+export function GetWorkspaceCostProjection(arg1:string):Promise<Array<main.PoolCostProjection>>;
+
+export function GetGlobalCostProjection():Promise<main.PoolCostProjection>;
+
 export function GetRepoDefaultBranch(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function GetRetryQueue(arg1:string):Promise<Array<retry.PendingRetry>>;

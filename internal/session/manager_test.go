@@ -145,6 +145,9 @@ func (p *fakePersister) UpdateSessionUsage(_ *types.Session, _ string) error  { 
 func (p *fakePersister) UpdateSessionDiagnostics(_ string, _ *int, _ string, _ int64, _ string) error {
 	return nil
 }
+func (p *fakePersister) UpsertPoolDailyUsage(_ string, _ string, _ int, _ int64, _ float64) error {
+	return nil
+}
 func (p *fakePersister) CollectionForWorkspace(_ string) (types.Collection, bool, error) {
 	return types.Collection{}, false, nil
 }

@@ -7,8 +7,10 @@ import { NotifyPanel } from "./NotifyPanel";
 import { LogsPanel } from "./LogsPanel";
 import { AppearancePanel } from "./AppearancePanel";
 import { CollectionsPanel } from "./CollectionsPanel";
+import { SpendingPanel } from "./SpendingPanel";
 import { EventDiagnostics } from "./EventDiagnostics";
 import { useSettingsStore } from "../stores/useSettingsStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 
 function AdvancedPanel({
   showDiagnostics,
@@ -68,7 +70,7 @@ function AdvancedPanel({
   );
 }
 
-type Tab = "workspaces" | "collections" | "providers" | "pools" | "skills" | "notify" | "appearance" | "logs" | "advanced" | "diagnostics";
+type Tab = "workspaces" | "collections" | "providers" | "pools" | "spending" | "skills" | "notify" | "appearance" | "logs" | "advanced" | "diagnostics";
 
 export function Settings({
   open,
@@ -80,6 +82,7 @@ export function Settings({
   initialTab?: Tab;
 }) {
   const [tab, setTab] = useState<Tab>(initialTab ?? "workspaces");
+  const selectedWorkspaceID = useWorkspaceStore((s) => s.selectedID);
   const showDiagnostics = useSettingsStore((s) => s.showDiagnostics);
   const diagnosticsUnlocked = useSettingsStore((s) => s.diagnosticsUnlocked);
   const setShowDiagnostics = useSettingsStore((s) => s.setShowDiagnostics);
@@ -102,6 +105,7 @@ export function Settings({
                 ["collections", "Collections"],
                 ["providers", "Providers"],
                 ["pools", "Pools"],
+                ["spending", "Spending"],
                 ["skills", "Bundled skills"],
                 ["notify", "Notifications"],
                 ["appearance", "Appearance"],
@@ -127,6 +131,7 @@ export function Settings({
             {tab === "collections" && <CollectionsPanel />}
             {tab === "providers" && <ProvidersPanel />}
             {tab === "pools" && <PoolsPanel />}
+            {tab === "spending" && <SpendingPanel workspaceID={selectedWorkspaceID ?? ""} />}
             {tab === "skills" && <BundledSkillsViewer />}
             {tab === "notify" && <NotifyPanel />}
             {tab === "appearance" && <AppearancePanel />}

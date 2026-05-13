@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { noAutoCorrect } from "../lib/inputs";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AddIssueDep, ApprovePlan, LatestPlan, ListCollections, ListIssues, PlanCostEstimate, RejectPlan, RemoveIssueDep, SetIssueLabels, SubmitAnswers, WriteAnswersOnly } from "../../wailsjs/go/main/App";
+import { AddIssueDep, ApprovePlan, GetGlobalCostProjection, LatestPlan, ListCollections, ListIssues, PlanCostEstimate, RejectPlan, RemoveIssueDep, SetIssueLabels, SubmitAnswers, WriteAnswersOnly } from "../../wailsjs/go/main/App";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 import { main, types } from "../../wailsjs/go/models";
 import { useIssueStore } from "../stores/issueStore";
@@ -50,6 +50,7 @@ export function PlanModal({
   const labelsCache = useLabelsStore((s) => (issue ? s.byWorkspace[issue.workspace_id] ?? EMPTY_LABELS : EMPTY_LABELS));
   const [plan, setPlan] = useState<types.Plan | null>(null);
   const [costEstimate, setCostEstimate] = useState<main.CostEstimate | null>(null);
+  const [globalProjection, setGlobalProjection] = useState<main.PoolCostProjection | null>(null);
   const [answers, setAnswers] = useState<AnswerState>(emptyAnswers());
   const [refineText, setRefineText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -80,6 +81,7 @@ export function PlanModal({
     setAnswers(emptyAnswers());
     setRefineText("");
     setCostEstimate(null);
+    setGlobalProjection(null);
     LatestPlan(issue.workspace_id, issue.number)
       .then((p) => {
         setPlan(p ?? null);
@@ -92,6 +94,9 @@ export function PlanModal({
     PlanCostEstimate(issue.workspace_id, issue.number)
       .then((est) => setCostEstimate(est ?? null))
       .catch(() => { /* non-fatal — cost estimate is best-effort */ });
+    GetGlobalCostProjection()
+      .then((p) => setGlobalProjection(p ?? null))
+      .catch(() => { /* non-fatal */ });
     refreshLabels(issue.workspace_id);
   }, [open, issue?.workspace_id, issue?.number, refreshLabels]);
 
@@ -247,9 +252,19 @@ export function PlanModal({
                   : `No rate configured for model "${costEstimate.model || "(unknown)"}". Add rates in Settings to see cost estimates.`
               }
             >
-              {costEstimate.has_rate
-                ? `~$${costEstimate.cost_usd.toFixed(4)} est.`
-                : "cost: —"}
+              {costEstimate.has_rate ? (
+                <>
+                  <span>~${costEstimate.cost_usd.toFixed(4)} est.</span>
+                  {globalProjection && globalProjection.days_with_data > 0 && (
+                    <span
+                      className="ml-2 text-slate-500"
+                      title={`30-day rolling total: $${globalProjection.last_30d_usd.toFixed(2)} · Straight-line projected month: ~$${globalProjection.projected_month_usd.toFixed(0)}`}
+                    >
+                      · this month: ${globalProjection.last_30d_usd.toFixed(2)} of ~${globalProjection.projected_month_usd.toFixed(0)} proj
+                    </span>
+                  )}
+                </>
+              ) : "cost: —"}
             </span>
           )}
         </div>

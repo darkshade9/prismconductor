@@ -66,3 +66,17 @@ func EstimateCostUSD(tokens int64, rates ModelRates) float64 {
 	raw := float64(tokens) * rates.InputPerMillion / 1_000_000
 	return math.Round(raw*10000) / 10000
 }
+
+// IsFreeTierProvider reports whether the provider runs locally or without
+// per-token billing. Ollama, LMStudio, and Codex (ChatGPT subscription CLI)
+// never accrue per-token API costs. LiteLLM is a proxy that may front a paid
+// backend, so it is not marked free here — actual spend will be $0 if the
+// backend charges nothing. Gemini has both free and paid tiers; we leave it
+// unmarked so that users who exceed the free quota see projected costs.
+func IsFreeTierProvider(provider string) bool {
+	switch provider {
+	case "ollama", "lmstudio", "codex":
+		return true
+	}
+	return false
+}

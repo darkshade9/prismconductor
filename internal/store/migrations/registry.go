@@ -105,6 +105,20 @@ CREATE TABLE IF NOT EXISTS providers (
 			return nil
 		},
 	},
+	{
+		ID:          "20260513_00_add_pool_daily_usage",
+		Description: "issue #283: per-pool daily usage aggregates for cost projection",
+		SQL: `
+CREATE TABLE IF NOT EXISTS pool_daily_usage (
+    pool_id  TEXT NOT NULL,
+    date     TEXT NOT NULL,
+    sessions INTEGER NOT NULL DEFAULT 0,
+    tokens   INTEGER NOT NULL DEFAULT 0,
+    cents    REAL    NOT NULL DEFAULT 0,
+    PRIMARY KEY (pool_id, date)
+);
+CREATE INDEX IF NOT EXISTS idx_pdu_pool_date ON pool_daily_usage (pool_id, date);`,
+	},
 }
 
 // All returns every known migration in application order.

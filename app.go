@@ -4970,6 +4970,113 @@ func (a *App) GoalSpendToday(goalID string) GoalSpendResult {
 	return GoalSpendResult{TotalUSD: cents / 100, RunCount: count}
 }
 
+// PoolCostProjection holds cost projection data for one pool (issue #283).
+type PoolCostProjection struct {
+	PoolID            string  `json:"pool_id"`
+	PoolName          string  `json:"pool_name"`
+	Provider          string  `json:"provider"`
+	Last7DaysUSD      float64 `json:"last_7d_usd"`
+	Last30DaysUSD     float64 `json:"last_30d_usd"`
+	ProjectedMonthUSD float64 `json:"projected_month_usd"`
+	Sessions30Days    int     `json:"sessions_30d"`
+	AvgPerSessionUSD  float64 `json:"avg_per_session_usd"`
+	FreeTier          bool    `json:"free_tier"`
+	DaysWithData      int     `json:"days_with_data"`
+}
+
+// projectedMonth computes a straight-line monthly projection from 30d data.
+// When fewer days have data, we scale up proportionally to 30 days.
+func projectedMonth(cents30d float64, daysWithData int) float64 {
+	if daysWithData <= 0 {
+		return 0
+	}
+	if daysWithData >= 30 {
+		return cents30d / 100
+	}
+	return (cents30d / float64(daysWithData)) * 30 / 100
+}
+
+// GetPoolCostProjection returns a cost projection for a single pool (#283).
+func (a *App) GetPoolCostProjection(poolID string) (PoolCostProjection, error) {
+	if a.store == nil {
+		return PoolCostProjection{}, nil
+	}
+	pool, err := a.store.GetPool(poolID)
+	if err != nil {
+		return PoolCostProjection{}, err
+	}
+	c7, c30, sess30, days, err := a.store.PoolProjectionData(poolID)
+	if err != nil {
+		return PoolCostProjection{}, err
+	}
+	var avgPerSession float64
+	if sess30 > 0 {
+		avgPerSession = (c30 / 100) / float64(sess30)
+	}
+	free := llm.IsFreeTierProvider(string(pool.Provider))
+	return PoolCostProjection{
+		PoolID:            poolID,
+		PoolName:          pool.Name,
+		Provider:          string(pool.Provider),
+		Last7DaysUSD:      c7 / 100,
+		Last30DaysUSD:     c30 / 100,
+		ProjectedMonthUSD: projectedMonth(c30, days),
+		Sessions30Days:    sess30,
+		AvgPerSessionUSD:  avgPerSession,
+		FreeTier:          free,
+		DaysWithData:      days,
+	}, nil
+}
+
+// GetWorkspaceCostProjection returns cost projections for all pools (issue #283).
+// workspaceID is accepted for API symmetry but projections span all pools since
+// pool spend is not workspace-scoped in the session table.
+func (a *App) GetWorkspaceCostProjection(workspaceID string) ([]PoolCostProjection, error) {
+	if a.store == nil {
+		return nil, nil
+	}
+	pools, err := a.store.ListPools()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PoolCostProjection, 0, len(pools))
+	for _, p := range pools {
+		proj, err := a.GetPoolCostProjection(p.ID)
+		if err != nil {
+			log.Printf("GetWorkspaceCostProjection pool %s: %v", p.ID, err)
+			continue
+		}
+		out = append(out, proj)
+	}
+	return out, nil
+}
+
+// GetGlobalCostProjection returns an aggregated cost projection across all
+// pools combined (issue #283).
+func (a *App) GetGlobalCostProjection() (PoolCostProjection, error) {
+	if a.store == nil {
+		return PoolCostProjection{}, nil
+	}
+	c7, c30, sess30, days, err := a.store.GlobalProjectionData()
+	if err != nil {
+		return PoolCostProjection{}, err
+	}
+	var avgPerSession float64
+	if sess30 > 0 {
+		avgPerSession = (c30 / 100) / float64(sess30)
+	}
+	return PoolCostProjection{
+		PoolID:            "global",
+		PoolName:          "All pools",
+		Last7DaysUSD:      c7 / 100,
+		Last30DaysUSD:     c30 / 100,
+		ProjectedMonthUSD: projectedMonth(c30, days),
+		Sessions30Days:    sess30,
+		AvgPerSessionUSD:  avgPerSession,
+		DaysWithData:      days,
+	}, nil
+}
+
 // SpawnEstimate holds a pre-flight cost estimate for a plan-approve spawn.
 type SpawnEstimate struct {
 	Tokens    int64   `json:"tokens"`
