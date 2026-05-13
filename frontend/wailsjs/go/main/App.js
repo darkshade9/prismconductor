@@ -30,6 +30,10 @@ export function AddWorkspaceToCollection(arg1, arg2) {
   return window['go']['main']['App']['AddWorkspaceToCollection'](arg1, arg2);
 }
 
+export function ApproveFanoutProposal(arg1) {
+  return window['go']['main']['App']['ApproveFanoutProposal'](arg1);
+}
+
 export function ApprovePlan(arg1, arg2, arg3) {
   return window['go']['main']['App']['ApprovePlan'](arg1, arg2, arg3);
 }
@@ -108,6 +112,10 @@ export function DiagnoseIssue(arg1, arg2) {
 
 export function DiscoverWorkspaceSkills(arg1) {
   return window['go']['main']['App']['DiscoverWorkspaceSkills'](arg1);
+}
+
+export function DismissFanoutProposal(arg1) {
+  return window['go']['main']['App']['DismissFanoutProposal'](arg1);
 }
 
 export function EstimateSpawnCost(arg1, arg2, arg3) {
@@ -260,6 +268,10 @@ export function ListBundledSkills() {
 
 export function ListCollections() {
   return window['go']['main']['App']['ListCollections']();
+}
+
+export function ListFanoutProposals(arg1, arg2) {
+  return window['go']['main']['App']['ListFanoutProposals'](arg1, arg2);
 }
 
 export function ListGoals() {
@@ -532,6 +544,10 @@ export function TestGitHubPAT(arg1, arg2, arg3) {
 
 export function TestJiraConnection(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['TestJiraConnection'](arg1, arg2, arg3, arg4);
+}
+
+export function TriggerFanoutAnalysis(arg1, arg2) {
+  return window['go']['main']['App']['TriggerFanoutAnalysis'](arg1, arg2);
 }
 
 export function UnarchiveAll(arg1) {

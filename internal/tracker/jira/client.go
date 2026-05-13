@@ -203,6 +203,11 @@ func (c *Client) SetIssueLabels(ctx context.Context, ws types.Workspace, ref tra
 	return c.put(ctx, fmt.Sprintf("/rest/api/3/issue/%s", ref.Identifier), body)
 }
 
+// CreateIssue is not yet supported by the Jira tracker in v1.
+func (c *Client) CreateIssue(_ context.Context, _ types.Workspace, _, _ string, _ []string) (int, string, error) {
+	return 0, "", tracker.ErrCreateIssueUnsupported
+}
+
 // --------------------------------------------------------------------------
 // Low-level helpers
 // --------------------------------------------------------------------------

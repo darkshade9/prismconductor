@@ -103,6 +103,13 @@ func (a *Adapter) SetIssueLabels(ctx context.Context, ws types.Workspace, ref tr
 	return a.client.SetIssueLabels(ctx, ws, num, labels)
 }
 
+func (a *Adapter) CreateIssue(ctx context.Context, ws types.Workspace, title, body string, labels []string) (int, string, error) {
+	if a.client == nil {
+		return 0, "", fmt.Errorf("github tracker: client unavailable")
+	}
+	return a.client.CreateIssue(ctx, ws, title, body, labels)
+}
+
 // issueNumberFromRef parses the issue number from a GitHub IssueRef identifier.
 // GitHub identifiers have the form "owner/repo#42".
 func issueNumberFromRef(ref tracker.IssueRef) (int, error) {

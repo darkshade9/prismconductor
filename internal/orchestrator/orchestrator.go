@@ -297,6 +297,11 @@ func pickNextUnblocked(candidates []types.Issue, all []types.Issue, xdepStore Cr
 				continue
 			}
 		}
+		// Fan-out external dep gate (issue #297): an issue filed by the fan-out
+		// flow holds at TODO until the source PR merges (Resolved=true).
+		if c.DependsOnExternal != nil && !c.DependsOnExternal.Resolved {
+			continue
+		}
 		return c
 	}
 	return nil

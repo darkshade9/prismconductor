@@ -250,6 +250,7 @@ func (a *App) startup(ctx context.Context) {
 	a.mgr.SetOnPlanReady(a.handlePlanReady)
 	a.mgr.SetOnPROpened(a.handlePROpened)
 	a.mgr.SetOnNeedsPR(a.handleNeedsPR)
+	a.mgr.SetOnFanoutWritten(a.handleFanoutWritten)
 	a.mgr.SetOnActivity(func(act types.SessionActivity) {
 		wailsbus.EmitEvent(a.ctx, "session.activity", act)
 	})
@@ -5608,4 +5609,163 @@ func (a *App) ReplayEventBusEmit(name string) error {
 		return fmt.Errorf("no buffered event with name %q", name)
 	}
 	return nil
+}
+
+// --- Fan-out (issue #297) ---
+
+// TriggerFanoutAnalysis spawns a conductor-fanout analysis worker for a REVIEW
+// card with an open PR. The worker fetches the PR diff, analyzes surface-area
+// changes, greps sibling repos for callers, and emits proposals.
+// Returns the spawned session ID so the UI can track progress.
+func (a *App) TriggerFanoutAnalysis(workspaceID string, issueNumber int) (string, error) {
+	if a.store == nil {
+		return "", fmt.Errorf("store unavailable")
+	}
+	issue, err := a.store.LoadIssue(workspaceID, issueNumber)
+	if err != nil {
+		return "", fmt.Errorf("load issue: %w", err)
+	}
+	if issue.PRNumber == nil || *issue.PRNumber == 0 {
+		return "", fmt.Errorf("issue #%d has no associated PR — trigger fanout only for REVIEW cards with a PR", issueNumber)
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return "", fmt.Errorf("workspace %q not found", workspaceID)
+	}
+	poolID, ok := a.poolReg.AcquireForWork(ws)
+	if !ok {
+		return "", fmt.Errorf("no available work pool — add or enable a pool in Settings")
+	}
+	var poolObj types.Pool
+	if pools, err := a.store.ListPools(); err == nil {
+		for _, p := range pools {
+			if p.ID == poolID {
+				poolObj = p
+				break
+			}
+		}
+	}
+	sess, err := a.mgr.SpawnFanout(ws, issueNumber, *issue.PRNumber, poolObj)
+	if err != nil {
+		a.poolReg.ReleaseByPool(poolID)
+		return "", fmt.Errorf("spawn fanout: %w", err)
+	}
+	return sess.ID, nil
+}
+
+// ListFanoutProposals returns all fan-out proposals for the given source issue.
+func (a *App) ListFanoutProposals(workspaceID string, issueNumber int) ([]types.FanoutProposal, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store unavailable")
+	}
+	return a.store.ListFanoutProposals(workspaceID, issueNumber)
+}
+
+// ApproveFanoutProposal files the proposed issue on the target workspace's
+// GitHub repo, records the filed issue number, and sets DependsOnExternal on
+// the new issue so the orchestrator gates it until the source PR merges.
+func (a *App) ApproveFanoutProposal(proposalID string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	p, err := a.store.GetFanoutProposal(proposalID)
+	if err != nil {
+		return fmt.Errorf("load proposal: %w", err)
+	}
+	if p.Status == types.FanoutStatusApproved {
+		return nil // idempotent
+	}
+	targetWS, ok := a.wsReg.Get(p.TargetWorkspaceID)
+	if !ok {
+		return fmt.Errorf("target workspace %q not found", p.TargetWorkspaceID)
+	}
+	ghClient, err := pcgithub.New()
+	if err != nil {
+		return fmt.Errorf("github client: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	num, url, err := ghClient.CreateIssue(ctx, targetWS, p.Title, p.Body, p.Labels)
+	if err != nil {
+		return fmt.Errorf("create issue: %w", err)
+	}
+	if err := a.store.ApproveFanoutProposal(proposalID, num, url); err != nil {
+		return fmt.Errorf("record approval: %w", err)
+	}
+	// Create a local issue row in the target workspace with DependsOnExternal set.
+	dep := &types.ExternalDep{
+		SourceWorkspaceID: p.SourceWorkspaceID,
+		SourceIssueNumber: p.SourceIssueNumber,
+		SourcePRNumber:    p.SourcePRNumber,
+	}
+	iss := types.Issue{
+		Number:            num,
+		WorkspaceID:       p.TargetWorkspaceID,
+		Title:             p.Title,
+		Body:              p.Body,
+		Labels:            p.Labels,
+		State:             "open",
+		URL:               url,
+		UpdatedAt:         time.Now(),
+		Column:            types.ColTodo,
+		DependsOnExternal: dep,
+	}
+	if _, err := a.store.SaveIssue(iss); err != nil {
+		log.Printf("fanout: save filed issue %s#%d: %v", p.TargetWorkspaceID, num, err)
+	}
+	wailsbus.EmitEvent(a.ctx, "fanout.proposal_approved", map[string]any{
+		"proposal_id":   proposalID,
+		"filed_number":  num,
+		"filed_url":     url,
+		"target_ws":     p.TargetWorkspaceID,
+	})
+	return nil
+}
+
+// DismissFanoutProposal marks the proposal as dismissed without filing an issue.
+func (a *App) DismissFanoutProposal(proposalID string) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	return a.store.DismissFanoutProposal(proposalID)
+}
+
+// handleFanoutWritten is the session-manager callback for FANOUT_WRITTEN:
+// sentinels. Reads the JSON analysis file and saves proposals to the DB.
+func (a *App) handleFanoutWritten(sess types.Session, path string) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		log.Printf("fanout: read output %s: %v", path, err)
+		return
+	}
+	var analysis struct {
+		Proposals []types.FanoutProposal `json:"proposals"`
+	}
+	if err := json.Unmarshal(raw, &analysis); err != nil {
+		log.Printf("fanout: parse output %s: %v", path, err)
+		return
+	}
+	if a.store == nil {
+		return
+	}
+	for i := range analysis.Proposals {
+		p := &analysis.Proposals[i]
+		if p.ID == "" {
+			p.ID = uuid.New().String()
+		}
+		if p.Status == "" {
+			p.Status = types.FanoutStatusPending
+		}
+		if p.CreatedAt.IsZero() {
+			p.CreatedAt = time.Now()
+		}
+		if err := a.store.SaveFanoutProposal(*p); err != nil {
+			log.Printf("fanout: save proposal: %v", err)
+		}
+	}
+	wailsbus.EmitEvent(a.ctx, "fanout.proposals_ready", map[string]any{
+		"session_id":    sess.ID,
+		"workspace_id":  sess.WorkspaceID,
+		"count":         len(analysis.Proposals),
+	})
 }

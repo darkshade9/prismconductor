@@ -112,6 +112,12 @@ func (s *Store) SaveIssue(iss types.Issue) (bool, error) {
 			if prev.WaitingForDep != nil {
 				iss.WaitingForDep = prev.WaitingForDep
 			}
+			// Preserve DependsOnExternal: set by the fan-out flow when a sibling
+			// issue is filed; cleared by the poller on source PR merge (#297).
+			// The GitHub poll never knows about this field; always carry it forward.
+			if prev.DependsOnExternal != nil {
+				iss.DependsOnExternal = prev.DependsOnExternal
+			}
 			// Preserve FailureReason: set by the conductor on execute failure;
 			// the GitHub poll has no opinion on it (#194).
 			if prev.FailureReason != "" {
@@ -168,17 +174,24 @@ func (s *Store) SaveIssue(iss types.Issue) (bool, error) {
 			trackerRefJSON = string(rb)
 		}
 	}
+	var externalDepJSON any
+	if iss.DependsOnExternal != nil {
+		if rb, jerr := json.Marshal(iss.DependsOnExternal); jerr == nil {
+			externalDepJSON = string(rb)
+		}
+	}
 	if _, err := s.DB.Exec(`
-INSERT INTO issues (workspace_id, number, column_name, manual_order, json, archived_at, closed_at, tracker_ref)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO issues (workspace_id, number, column_name, manual_order, json, archived_at, closed_at, tracker_ref, depends_on_external)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(workspace_id, number) DO UPDATE SET
-    column_name = excluded.column_name,
-    manual_order = excluded.manual_order,
-    json = excluded.json,
-    archived_at = excluded.archived_at,
-    closed_at = excluded.closed_at,
-    tracker_ref = COALESCE(excluded.tracker_ref, issues.tracker_ref)`,
-		iss.WorkspaceID, iss.Number, string(col), manualOrder, string(b), newArchivedAt, newClosedAt, trackerRefJSON); err != nil {
+    column_name        = excluded.column_name,
+    manual_order       = excluded.manual_order,
+    json               = excluded.json,
+    archived_at        = excluded.archived_at,
+    closed_at          = excluded.closed_at,
+    tracker_ref        = COALESCE(excluded.tracker_ref, issues.tracker_ref),
+    depends_on_external = COALESCE(excluded.depends_on_external, issues.depends_on_external)`,
+		iss.WorkspaceID, iss.Number, string(col), manualOrder, string(b), newArchivedAt, newClosedAt, trackerRefJSON, externalDepJSON); err != nil {
 		return false, err
 	}
 	return unarchived, nil

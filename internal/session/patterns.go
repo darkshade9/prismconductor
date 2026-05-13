@@ -13,6 +13,10 @@ const (
 	// but the work itself succeeded. The conductor routes these to REVIEW with
 	// a "manual push needed" badge instead of a generic BLOCKED state (#157).
 	PatternNeedsPR = "NEEDS_PR:"
+	// PatternFanoutWritten is emitted by the conductor-fanout skill when it has
+	// finished writing its analysis JSON. The handler reads the JSON and saves
+	// fan-out proposals to the DB (issue #297).
+	PatternFanoutWritten = "FANOUT_WRITTEN: "
 )
 
 // NeedsPRSignals is the list of push/signing failure substrings that, when

@@ -164,6 +164,44 @@ CREATE INDEX IF NOT EXISTS idx_skill_outcomes_workspace
 			return nil
 		},
 	},
+	{
+		ID:          "20260513_03_add_external_deps_and_fanout",
+		Description: "issue #297: fan-out cross-repo proposals — depends_on_external column on issues + fanout_proposals table",
+		SQL: `
+CREATE TABLE IF NOT EXISTS fanout_proposals (
+    id                  TEXT    PRIMARY KEY,
+    source_workspace_id TEXT    NOT NULL,
+    source_issue_number INTEGER NOT NULL,
+    source_pr_number    INTEGER NOT NULL,
+    target_workspace_id TEXT    NOT NULL,
+    title               TEXT    NOT NULL,
+    body                TEXT    NOT NULL DEFAULT '',
+    labels              TEXT    NOT NULL DEFAULT '[]',
+    status              TEXT    NOT NULL DEFAULT 'pending',
+    filed_issue_number  INTEGER,
+    filed_issue_url     TEXT    NOT NULL DEFAULT '',
+    created_at          INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fanout_source
+    ON fanout_proposals (source_workspace_id, source_issue_number);
+CREATE INDEX IF NOT EXISTS idx_fanout_target
+    ON fanout_proposals (target_workspace_id, status);`,
+		Up: func(tx *sql.Tx) error {
+			// Add depends_on_external to issues (guard: table may not exist yet).
+			var tblCount int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='issues'`).Scan(&tblCount); err != nil {
+				return err
+			}
+			if tblCount == 0 {
+				return nil
+			}
+			_, err := tx.Exec(`ALTER TABLE issues ADD COLUMN depends_on_external TEXT`)
+			if err != nil && !isAlreadyExists(err) {
+				return err
+			}
+			return nil
+		},
+	},
 }
 
 // All returns every known migration in application order.

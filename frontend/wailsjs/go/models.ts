@@ -1627,6 +1627,24 @@ export namespace types {
 	        this.shell = source["shell"];
 	    }
 	}
+	export class ExternalDep {
+	    source_workspace_id: string;
+	    source_issue_number: number;
+	    source_pr_number: number;
+	    resolved?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExternalDep(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.source_workspace_id = source["source_workspace_id"];
+	        this.source_issue_number = source["source_issue_number"];
+	        this.source_pr_number = source["source_pr_number"];
+	        this.resolved = source["resolved"];
+	    }
+	}
 	export class FailureCause {
 	    kind: string;
 	    reason?: string;
@@ -1646,6 +1664,59 @@ export namespace types {
 	        this.exit_code = source["exit_code"];
 	        this.signal = source["signal"];
 	        this.retry_after = this.convertValues(source["retry_after"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class FanoutProposal {
+	    id: string;
+	    source_workspace_id: string;
+	    source_issue_number: number;
+	    source_pr_number: number;
+	    target_workspace_id: string;
+	    title: string;
+	    body: string;
+	    labels?: string[];
+	    status: string;
+	    filed_issue_number?: number;
+	    filed_issue_url?: string;
+	    // Go type: time
+	    created_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new FanoutProposal(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.source_workspace_id = source["source_workspace_id"];
+	        this.source_issue_number = source["source_issue_number"];
+	        this.source_pr_number = source["source_pr_number"];
+	        this.target_workspace_id = source["target_workspace_id"];
+	        this.title = source["title"];
+	        this.body = source["body"];
+	        this.labels = source["labels"];
+	        this.status = source["status"];
+	        this.filed_issue_number = source["filed_issue_number"];
+	        this.filed_issue_url = source["filed_issue_url"];
+	        this.created_at = this.convertValues(source["created_at"], null);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1925,6 +1996,7 @@ export namespace types {
 	    needs_pr_info?: NeedsPRInfo;
 	    failure_reason?: string;
 	    tracker_ref?: TrackerRef;
+	    depends_on_external?: ExternalDep;
 	
 	    static createFrom(source: any = {}) {
 	        return new Issue(source);
@@ -1965,6 +2037,7 @@ export namespace types {
 	        this.needs_pr_info = this.convertValues(source["needs_pr_info"], NeedsPRInfo);
 	        this.failure_reason = source["failure_reason"];
 	        this.tracker_ref = this.convertValues(source["tracker_ref"], TrackerRef);
+	        this.depends_on_external = this.convertValues(source["depends_on_external"], ExternalDep);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

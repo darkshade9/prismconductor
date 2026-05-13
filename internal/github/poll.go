@@ -28,6 +28,10 @@ type Store interface {
 	// SetIssueWaitingForDep writes or clears the waiting_for_dep field
 	// on an issue JSON blob (issue #210).
 	SetIssueWaitingForDep(workspaceID string, issueNumber int, dep *types.IssueDep) error
+	// ClearExternalDep resolves DependsOnExternal on any issues that depend on
+	// the given (sourceWorkspaceID, sourcePRNumber) pair (issue #297). Called on
+	// PR-merged detection so gated sibling issues become eligible for auto-pull.
+	ClearExternalDep(sourceWorkspaceID string, sourcePRNumber int) error
 }
 
 // WorkspaceSource lets the poller pick up newly-added workspaces between ticks.
@@ -368,6 +372,10 @@ func (p *Poller) pollOne(ctx context.Context, ws types.Workspace) error {
 				continue
 			}
 			p.publishPR(eventbus.EvtPRMerged, ws, iss)
+			// Clear fan-out external deps gated on this PR (#297).
+			if err := p.Store.ClearExternalDep(ws.ID, *iss.PRNumber); err != nil {
+				log.Printf("clear external dep %s#%d: %v", ws.ID, *iss.PRNumber, err)
+			}
 			// Clear caches on merge — no longer relevant.
 			cacheKey := ws.ID + "#" + strconv.Itoa(*iss.PRNumber)
 			p.checkStateCache.Delete(cacheKey)

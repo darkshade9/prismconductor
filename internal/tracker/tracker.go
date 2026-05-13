@@ -4,6 +4,7 @@ package tracker
 
 import (
 	"context"
+	"fmt"
 
 	"prismconductor/internal/types"
 )
@@ -69,4 +70,13 @@ type Tracker interface {
 	// SetIssueLabels replaces the label set on an issue. No-op for trackers
 	// that do not support labels.
 	SetIssueLabels(ctx context.Context, ws types.Workspace, ref IssueRef, labels []string) error
+
+	// CreateIssue files a new issue in the workspace's tracker and returns the
+	// created issue number and URL. Interim: only GitHub is implemented in v1;
+	// other backends may return ErrCreateIssueUnsupported.
+	CreateIssue(ctx context.Context, ws types.Workspace, title, body string, labels []string) (number int, url string, err error)
 }
+
+// ErrCreateIssueUnsupported is returned by tracker backends that do not yet
+// support programmatic issue creation (e.g. Jira v1).
+var ErrCreateIssueUnsupported = fmt.Errorf("tracker does not support CreateIssue in v1")
