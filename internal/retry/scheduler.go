@@ -79,6 +79,14 @@ func (s *Scheduler) Schedule(ws types.Workspace, sess types.Session, cause *type
 	}
 
 	delay := backoffWithJitter(nextAttempt, policy)
+	// For quota-exhaustion failures, anchor the delay to the provider's reset
+	// time if it is later than the computed exponential backoff. This avoids
+	// burning retry attempts on calls we know will fail until the quota resets.
+	if cause != nil && cause.RetryAfter != nil {
+		if untilReset := time.Until(*cause.RetryAfter); untilReset > delay {
+			delay = untilReset
+		}
+	}
 	if delay > types.GlobalRetryMaxWindow {
 		s.bus.Publish(eventbus.EvtRetryExhausted, eventbus.RetryExhausted{
 			WorkspaceID: ws.ID,

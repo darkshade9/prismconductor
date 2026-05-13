@@ -29,6 +29,10 @@ type Provider interface {
 	DisplayName() string
 	DefaultEndpoint() string
 	NeedsAPIKey() bool
+	// APIKeyHelpURL returns a URL where the user can obtain an API key for this
+	// provider, or "" if no help link is available. Used by the frontend's
+	// ProviderEditModal to render a "Get your API key →" link.
+	APIKeyHelpURL() string
 
 	// CanSpawn reports whether the session manager can spawn a worker for
 	// this provider — either via SpawnArgs (subprocess strategy) or via

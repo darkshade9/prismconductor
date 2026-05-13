@@ -29,6 +29,7 @@ func (controlledProvider) Kind() types.Provider    { return controlledProviderKi
 func (controlledProvider) DisplayName() string     { return "fake-harness-test" }
 func (controlledProvider) DefaultEndpoint() string { return "" }
 func (controlledProvider) NeedsAPIKey() bool       { return false }
+func (controlledProvider) APIKeyHelpURL() string   { return "" }
 func (controlledProvider) CanSpawn() bool          { return true }
 func (controlledProvider) ListModels(context.Context, types.Pool) ([]string, error) {
 	return nil, llm.ErrNotSupported

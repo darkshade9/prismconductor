@@ -26,6 +26,7 @@ func (litellmProvider) Kind() types.Provider    { return types.ProviderLiteLLM }
 func (litellmProvider) DisplayName() string     { return "LiteLLM" }
 func (litellmProvider) DefaultEndpoint() string { return defaultLiteLLMEndpoint }
 func (litellmProvider) NeedsAPIKey() bool       { return true }
+func (litellmProvider) APIKeyHelpURL() string   { return "" }
 func (litellmProvider) CanSpawn() bool          { return true }
 
 // ListModels prefers /model/info (LiteLLM-native — exposes alias names), falls

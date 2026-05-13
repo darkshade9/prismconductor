@@ -49,6 +49,26 @@ func TestLookupHint_Unknown(t *testing.T) {
 	}
 }
 
+func TestGeminiFlashLiteInBundledMatrix(t *testing.T) {
+	resetIndexes()
+	h := LookupHint("gemini", "gemini-2.5-flash-lite")
+	if h == nil {
+		t.Fatal("gemini-2.5-flash-lite missing from bundled capability matrix")
+	}
+	if h.Source != "bundled" {
+		t.Errorf("source = %q, want bundled", h.Source)
+	}
+	if h.ToolSupport != ToolPartial {
+		t.Errorf("tool_support = %q, want partial", h.ToolSupport)
+	}
+	if h.CostTier != CostLow {
+		t.Errorf("cost_tier = %q, want low", h.CostTier)
+	}
+	if h.OrchFit != FitPoor {
+		t.Errorf("orch_fit = %q, want poor (limits agentic use)", h.OrchFit)
+	}
+}
+
 func TestLookupHint_CaseInsensitive(t *testing.T) {
 	resetIndexes()
 	h := LookupHint("CLAUDE", "Claude-Opus-4-7")

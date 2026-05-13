@@ -24,6 +24,7 @@ func (ollamaProvider) Kind() types.Provider    { return types.ProviderOllama }
 func (ollamaProvider) DisplayName() string     { return "Ollama" }
 func (ollamaProvider) DefaultEndpoint() string { return defaultOllamaEndpoint }
 func (ollamaProvider) NeedsAPIKey() bool       { return true }
+func (ollamaProvider) APIKeyHelpURL() string   { return "" }
 func (ollamaProvider) CanSpawn() bool          { return true }
 
 // ListModels parses Ollama's /api/tags. Bearer auth is forwarded so a tunneled

@@ -3,6 +3,7 @@ import {
   DeleteProviderEntity,
   ListProviderEntities,
   ListProviders,
+  ProbeProviderModels,
   SaveProviderEntity,
 } from "../../wailsjs/go/main/App";
 import { main, types } from "../../wailsjs/go/models";
@@ -112,26 +113,44 @@ export function ProvidersPanel() {
   );
 }
 
-function ProviderEditModal({
+export function ProviderEditModal({
   driverKinds,
   initial,
+  initialKind,
   onClose,
   onSaved,
 }: {
   driverKinds: main.ProviderInfo[];
   initial: types.ProviderEntity | null;
+  initialKind?: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const fallbackKind = driverKinds[0]?.kind ?? "claude";
+  const fallbackKind = initialKind ?? driverKinds[0]?.kind ?? "claude";
   const [kind, setKind] = useState<string>(initial?.kind ?? fallbackKind);
   const [name, setName] = useState<string>(initial?.name ?? "");
   const [endpoint, setEndpoint] = useState<string>(initial?.endpoint ?? "");
   const [apiKey, setApiKey] = useState<string>(initial?.api_key ?? "");
   const [busy, setBusy] = useState(false);
   const [saveErr, setSaveErr] = useState<string>("");
+  const [testStatus, setTestStatus] = useState<"idle" | "testing" | "ok" | "err">("idle");
+  const [testMsg, setTestMsg] = useState<string>("");
 
   const driver = driverKinds.find((d) => d.kind === kind);
+  const showEndpoint = !!driver?.default_endpoint;
+
+  async function onTest() {
+    setTestStatus("testing");
+    setTestMsg("");
+    try {
+      const models = await ProbeProviderModels(kind as any, endpoint.trim(), apiKey);
+      setTestStatus("ok");
+      setTestMsg(`Connected — ${models.length} model(s) available`);
+    } catch (err: any) {
+      setTestStatus("err");
+      setTestMsg(String(err?.message ?? err ?? "connection failed"));
+    }
+  }
 
   async function onSave() {
     setBusy(true);
@@ -170,7 +189,7 @@ function ProviderEditModal({
             <div className="text-xs text-slate-500 mb-1">Kind</div>
             <select
               value={kind}
-              onChange={(e) => setKind(e.target.value)}
+              onChange={(e) => { setKind(e.target.value); setTestStatus("idle"); setTestMsg(""); }}
               className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
             >
               {driverKinds.map((d) => (
@@ -188,14 +207,14 @@ function ProviderEditModal({
             </div>
           )}
 
-          {driver && kind !== "claude" && kind !== "codex" && (
+          {showEndpoint && (
             <div>
               <div className="text-xs text-slate-500 mb-1">Endpoint URL</div>
               <input
                 {...noAutoCorrect}
                 value={endpoint}
                 onChange={(e) => setEndpoint(e.target.value)}
-                placeholder={driver.default_endpoint}
+                placeholder={driver!.default_endpoint}
                 className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono text-xs"
               />
             </div>
@@ -203,7 +222,19 @@ function ProviderEditModal({
 
           {driver?.needs_api_key && (
             <div>
-              <div className="text-xs text-slate-500 mb-1">API key (optional)</div>
+              <div className="text-xs text-slate-500 mb-1 flex items-center gap-2">
+                API key (optional)
+                {driver.api_key_help_url && (
+                  <a
+                    href={driver.api_key_help_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-blue-400 hover:text-blue-300"
+                  >
+                    Get your API key →
+                  </a>
+                )}
+              </div>
               <input
                 {...noAutoCorrect}
                 type="password"
@@ -226,6 +257,12 @@ function ProviderEditModal({
             />
           </div>
 
+          {testStatus === "ok" && (
+            <div className="text-xs text-emerald-400">{testMsg}</div>
+          )}
+          {testStatus === "err" && (
+            <div className="text-xs text-rose-300">{testMsg}</div>
+          )}
           {saveErr && <div className="text-xs text-rose-300">{saveErr}</div>}
         </div>
 
@@ -235,6 +272,13 @@ function ProviderEditModal({
             className="text-xs px-3 py-1 text-slate-400 hover:text-slate-200"
           >
             Cancel
+          </button>
+          <button
+            onClick={onTest}
+            disabled={testStatus === "testing"}
+            className="text-xs px-3 py-1 border border-slate-700 text-slate-300 hover:text-slate-100 rounded disabled:opacity-50"
+          >
+            {testStatus === "testing" ? "Testing…" : "Test connection"}
           </button>
           <button
             onClick={onSave}
