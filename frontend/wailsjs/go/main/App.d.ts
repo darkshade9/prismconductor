@@ -20,9 +20,9 @@ export function ActivateGoal(arg1:string):Promise<void>;
 
 export function AddIssueDep(arg1:string,arg2:number,arg3:types.IssueDep):Promise<void>;
 
-export function AddManualIssue(arg1:string,arg2:number,arg3:string,arg4:string,arg5:Array<string>,arg6:string):Promise<types.Issue>;
-
 export function AddJiraWorkspace(arg1:main.JiraWorkspaceForm):Promise<void>;
+
+export function AddManualIssue(arg1:string,arg2:number,arg3:string,arg4:string,arg5:Array<string>,arg6:string):Promise<types.Issue>;
 
 export function AddWorkspace(arg1:types.Workspace):Promise<void>;
 
@@ -70,6 +70,8 @@ export function DiscoverWorkspaceSkills(arg1:string):Promise<Array<types.SkillRe
 
 export function EstimateSpawnCost(arg1:string,arg2:number,arg3:string):Promise<main.SpawnEstimate>;
 
+export function ExportSessionLedgerCSV(arg1:string,arg2:number):Promise<void>;
+
 export function FetchIssueDetail(arg1:string,arg2:number):Promise<types.Issue>;
 
 export function FetchPRChecks(arg1:string,arg2:number):Promise<string>;
@@ -103,6 +105,8 @@ export function GetPoolUsage():Promise<Array<types.PoolUsage>>;
 export function GetRepoDefaultBranch(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function GetRetryQueue(arg1:string):Promise<Array<retry.PendingRetry>>;
+
+export function GetSessionLedger(arg1:string,arg2:number):Promise<Array<types.SessionLedgerRow>>;
 
 export function GetWorkspaceCostProjection(arg1:string):Promise<Array<main.PoolCostProjection>>;
 

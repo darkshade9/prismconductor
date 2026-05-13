@@ -830,6 +830,28 @@ type Collection struct {
 // workspace is already a member of any collection (v1 single-membership rule).
 var ErrAlreadyInCollection = errors.New("workspace already belongs to a collection")
 
+// --- Session Ledger (issue #298) ---
+
+// SessionLedgerRow is one entry in the per-issue session ledger. Derived at
+// read time by BuildSessionLedger in the issueview assembler; no DB migration
+// required. Model/provider reflect the pool's current configuration — pools
+// edited after a session ran will show their new values here (resolve-on-read).
+type SessionLedgerRow struct {
+	SessionID    string        `json:"session_id"`
+	Role         string        `json:"role"`          // "plan", "execute", "pipeline:<step>"
+	PoolID       string        `json:"pool_id"`
+	PoolName     string        `json:"pool_name"`     // "(pool deleted)" if lookup fails
+	Provider     string        `json:"provider"`
+	Model        string        `json:"model"`
+	StartedAt    time.Time     `json:"started_at"`
+	DurationS    float64       `json:"duration_s"`    // 0 if session never ended
+	CostUSD      float64       `json:"cost_usd"`
+	InputTokens  int64         `json:"input_tokens"`
+	OutputTokens int64         `json:"output_tokens"`
+	Outcome      string        `json:"outcome"`       // mirrors SessionState values
+	FailureCause *FailureCause `json:"failure_cause,omitempty"`
+}
+
 // --- Pool usage / rate limits (issue #52) ---
 
 // PoolUsage is a last-seen snapshot of rate-limit consumption for one

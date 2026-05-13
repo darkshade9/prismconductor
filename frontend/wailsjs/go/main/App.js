@@ -14,12 +14,12 @@ export function AddIssueDep(arg1, arg2, arg3) {
   return window['go']['main']['App']['AddIssueDep'](arg1, arg2, arg3);
 }
 
-export function AddManualIssue(arg1, arg2, arg3, arg4, arg5, arg6) {
-  return window['go']['main']['App']['AddManualIssue'](arg1, arg2, arg3, arg4, arg5, arg6);
-}
-
 export function AddJiraWorkspace(arg1) {
   return window['go']['main']['App']['AddJiraWorkspace'](arg1);
+}
+
+export function AddManualIssue(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['AddManualIssue'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function AddWorkspace(arg1) {
@@ -114,6 +114,10 @@ export function EstimateSpawnCost(arg1, arg2, arg3) {
   return window['go']['main']['App']['EstimateSpawnCost'](arg1, arg2, arg3);
 }
 
+export function ExportSessionLedgerCSV(arg1, arg2) {
+  return window['go']['main']['App']['ExportSessionLedgerCSV'](arg1, arg2);
+}
+
 export function FetchIssueDetail(arg1, arg2) {
   return window['go']['main']['App']['FetchIssueDetail'](arg1, arg2);
 }
@@ -180,6 +184,10 @@ export function GetRepoDefaultBranch(arg1, arg2, arg3) {
 
 export function GetRetryQueue(arg1) {
   return window['go']['main']['App']['GetRetryQueue'](arg1);
+}
+
+export function GetSessionLedger(arg1, arg2) {
+  return window['go']['main']['App']['GetSessionLedger'](arg1, arg2);
 }
 
 export function GetWorkspaceCostProjection(arg1) {

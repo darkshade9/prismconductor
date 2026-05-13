@@ -551,6 +551,68 @@ func (a *Assembler) SetSelfHealAttempts(workspaceID string, issueNumber, attempt
 	}
 }
 
+// BuildSessionLedger returns a per-session ledger for the given issue, ordered
+// newest-first. Pool lookup is resolve-on-read: deleted pools produce "(pool deleted)".
+// Capped at 1000 rows to prevent pathological returns.
+func (a *Assembler) BuildSessionLedger(workspaceID string, issueNumber int) ([]types.SessionLedgerRow, error) {
+	sessions, err := a.store.ListSessionsForIssue(workspaceID, issueNumber)
+	if err != nil {
+		return nil, err
+	}
+	const maxRows = 1000
+	if len(sessions) > maxRows {
+		sessions = sessions[:maxRows]
+	}
+
+	out := make([]types.SessionLedgerRow, 0, len(sessions))
+	poolCache := map[string]types.Pool{}
+	for _, sess := range sessions {
+		row := types.SessionLedgerRow{
+			SessionID:    sess.ID,
+			Role:         deriveRole(sess),
+			PoolID:       sess.PoolID,
+			InputTokens:  sess.InputTokens,
+			OutputTokens: sess.OutputTokens,
+			CostUSD:      sess.EstimatedCostCents / 100.0,
+			StartedAt:    sess.StartedAt,
+			Outcome:      string(sess.State),
+			FailureCause: sess.FailureCause,
+		}
+		if sess.EndedAt != nil {
+			row.DurationS = sess.EndedAt.Sub(sess.StartedAt).Seconds()
+		}
+		if sess.PoolID != "" {
+			pool, ok := poolCache[sess.PoolID]
+			if !ok {
+				if p, err := a.store.GetPool(sess.PoolID); err == nil {
+					pool = p
+					poolCache[sess.PoolID] = p
+				}
+			}
+			if pool.ID != "" {
+				row.PoolName = pool.Name
+				row.Provider = string(pool.Provider)
+				row.Model = pool.Model
+			} else {
+				row.PoolName = "(pool deleted)"
+			}
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+// deriveRole maps a session to a human-readable role string.
+func deriveRole(sess types.Session) string {
+	if sess.PipelineStepName != "" {
+		return "pipeline:" + sess.PipelineStepName
+	}
+	if sess.Mode == types.ModePlan {
+		return "plan"
+	}
+	return "execute"
+}
+
 // ListForWorkspace assembles an IssueView for every non-archived issue in the workspace.
 func (a *Assembler) ListForWorkspace(workspaceID string) ([]IssueView, error) {
 	issues, err := a.store.ListIssues(workspaceID)
