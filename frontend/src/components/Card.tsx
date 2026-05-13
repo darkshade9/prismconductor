@@ -15,6 +15,7 @@ import { LabelManagePopover } from "./LabelManagePopover";
 import { MidRunQuestionModal } from "./MidRunQuestionModal";
 import { ContinueModal } from "./ContinueModal";
 import { PRCommentReviewModal } from "./PRCommentReviewModal";
+import { FanoutReviewModal } from "./FanoutReviewModal";
 import { AgentActivityStrip } from "./AgentActivityStrip";
 import { DiagnosticPopover } from "./DiagnosticPopover";
 import { SessionLedger } from "./SessionLedger";
@@ -212,6 +213,7 @@ export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, o
   const [midRunOpen, setMidRunOpen] = useState(false);
   const [continueOpen, setContinueOpen] = useState(false);
   const [prCommentOpen, setPrCommentOpen] = useState(false);
+  const [fanoutOpen, setFanoutOpen] = useState(false);
   const [cardMenu, setCardMenu] = useState<{ x: number; y: number; actions: CopyAction[] } | null>(null);
   const [diagAnchor, setDiagAnchor] = useState<{ x: number; y: number } | null>(null);
   const [ledgerAnchor, setLedgerAnchor] = useState<{ x: number; y: number } | null>(null);
@@ -321,6 +323,20 @@ export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, o
               New Comment ({view!.unread_comment_count})
             </button>
           )}
+          {issue.column === "review" && issue.pr_number != null && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setFanoutOpen(true);
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-700/40 text-indigo-200 border border-indigo-700 hover:bg-indigo-700/60 whitespace-nowrap"
+              title="Analyze cross-repo impact — propose follow-up issues for sibling repos"
+            >
+              Fan-out
+            </button>
+          )}
         </span>
       </div>
       <div
@@ -421,6 +437,14 @@ export function Card({ issue, workspaceColor, workspaceLabel, relatedSiblings, o
           workspaceID={issue.workspace_id}
           issueNumber={issue.number}
           autoContinue={true}
+        />
+      )}
+      {issue.column === "review" && issue.pr_number != null && (
+        <FanoutReviewModal
+          open={fanoutOpen}
+          onClose={() => setFanoutOpen(false)}
+          workspaceID={issue.workspace_id}
+          issueNumber={issue.number}
         />
       )}
       {cardMenu && (

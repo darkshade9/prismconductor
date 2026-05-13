@@ -110,17 +110,23 @@ type ActivityHandler func(types.SessionActivity)
 // Implementations should be non-blocking.
 type RateLimitHandler func([]types.PoolUsage)
 
+// FanoutWrittenHandler is fired when the conductor-fanout skill emits the
+// FANOUT_WRITTEN sentinel. The path argument is the absolute path of the
+// JSON file containing the fan-out analysis (issue #297).
+type FanoutWrittenHandler func(sess types.Session, path string)
+
 type Manager struct {
 	bus            *eventbus.Bus
 	emit           LineHandler
 	transcriptDir  string
 	store          Persister
-	onStateChange  StateChangeHandler
-	onPlanReady    PlanReadyHandler
-	onPROpened     PROpenedHandler
-	onNeedsPR      NeedsPRHandler
-	onActivity     ActivityHandler
-	onRateLimit    RateLimitHandler
+	onStateChange    StateChangeHandler
+	onPlanReady      PlanReadyHandler
+	onPROpened       PROpenedHandler
+	onNeedsPR        NeedsPRHandler
+	onActivity       ActivityHandler
+	onRateLimit      RateLimitHandler
+	onFanoutWritten  FanoutWrittenHandler
 	providers      *llm.Registry
 	poolReg        PoolRehydrator
 
@@ -325,6 +331,10 @@ func (m *Manager) SetOnActivity(h ActivityHandler) { m.onActivity = h }
 // SetOnRateLimit registers a handler called when a Claude session emits a
 // rate_limit_event in its stream JSON.
 func (m *Manager) SetOnRateLimit(h RateLimitHandler) { m.onRateLimit = h }
+
+// SetOnFanoutWritten registers a handler called when the conductor-fanout skill
+// emits FANOUT_WRITTEN: <path> (issue #297).
+func (m *Manager) SetOnFanoutWritten(h FanoutWrittenHandler) { m.onFanoutWritten = h }
 
 // SetProviders wires the LLM provider registry. Required before SpawnPlan /
 // SpawnExecute since those resolve the per-pool argv via prov.SpawnArgs.
@@ -679,6 +689,54 @@ Rules:
 - For free_text: answer is a concise recommendation (1-3 sentences).
 - Do NOT ask follow-up questions. Do NOT use any tools other than Read and Write.
 - Write the answer file, then stop immediately.`, qPath, aPath, questionID)
+}
+
+// SpawnFanout launches a conductor-fanout analysis worker. The worker runs in
+// ws.RepoPath (no worktree) and is expected to print FANOUT_WRITTEN: <path>
+// before Work complete. Uses issue.Number=0 so the duplicate-spawn guard is
+// bypassed — multiple fanout analyses for different PRs may run concurrently.
+// pool must be a work-role pool (issue #297).
+func (m *Manager) SpawnFanout(ws types.Workspace, issueNumber, prNumber int, pool types.Pool) (*types.Session, error) {
+	fanoutIssue := types.Issue{Number: 0, WorkspaceID: ws.ID}
+	outputPath := filepath.Join(ws.RepoPath, ".prismconductor", "fanout",
+		fmt.Sprintf("%s-%d-pr%d.json", ws.ID, issueNumber, prNumber))
+	skillContent, skillPath, skillHash := fanoutSkillContent(ws.RepoPath)
+	prompt := fanoutPrompt(ws.RepoPath, issueNumber, prNumber, outputPath)
+	args, _, err := m.providerArgs(pool, prompt)
+	if err != nil {
+		return nil, err
+	}
+	return m.spawnWithDir(ws, fanoutIssue, types.ModeExecute, args, prompt, "", "", pool, skillContent, skillPath, skillHash)
+}
+
+// fanoutSkillContent reads the bundled conductor-fanout skill, falling back to
+// an empty string (the prompt alone is sufficient for basic analysis).
+func fanoutSkillContent(repoPath string) (content, skillPath, skillHash string) {
+	b, err := fs.ReadFile(bundle.FS, "skills/conductor-fanout.md")
+	if err == nil {
+		return string(b), "bundled:conductor-fanout", skills.HashSkillMarkdown(b)
+	}
+	// Fallback: look for a repo-local copy.
+	local := filepath.Join(repoPath, ".prismconductor", "skills", "conductor-fanout.md")
+	if b, err := os.ReadFile(local); err == nil {
+		return string(b), local, skills.HashSkillMarkdown(b)
+	}
+	return "", "", "fallback:harness"
+}
+
+// fanoutPrompt builds the one-shot prompt sent to the fanout worker.
+func fanoutPrompt(repoPath string, issueNumber, prNumber int, outputPath string) string {
+	return fmt.Sprintf(`You are the conductor-fanout analysis worker.
+
+Source repository: %s
+Source issue: #%d
+Source PR: #%d
+Output path: %s
+
+Follow the conductor-fanout skill instructions exactly.
+Write the analysis JSON to the output path, then print:
+FANOUT_WRITTEN: %s
+Work complete.`, repoPath, issueNumber, prNumber, outputPath, outputPath)
 }
 
 // SpawnRaw runs a non-skill command via subprocess (used by the day-1 demo:
@@ -1439,6 +1497,16 @@ func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 			log.Printf("PR_OPENED sentinel with empty URL on session %s", rs.sess.ID)
 		} else if m.onPROpened != nil {
 			m.onPROpened(*rs.sess, url)
+		}
+	case sentinelAtLineStart(line, PatternFanoutWritten):
+		// Fan-out analysis ready (#297). No state mutation — worker continues
+		// to PatternComplete. The handler reads the JSON and saves proposals.
+		idx := strings.Index(line, PatternFanoutWritten)
+		path := strings.TrimSpace(line[idx+len(PatternFanoutWritten):])
+		if path == "" {
+			log.Printf("FANOUT_WRITTEN sentinel with empty path on session %s", rs.sess.ID)
+		} else if m.onFanoutWritten != nil {
+			m.onFanoutWritten(*rs.sess, path)
 		}
 	case sentinelAtLineStart(line, PatternComplete):
 		rs.sess.State = types.StateCompleted

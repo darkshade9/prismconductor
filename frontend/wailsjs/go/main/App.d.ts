@@ -28,6 +28,8 @@ export function AddWorkspace(arg1:types.Workspace):Promise<void>;
 
 export function AddWorkspaceToCollection(arg1:string,arg2:string):Promise<void>;
 
+export function ApproveFanoutProposal(arg1:string):Promise<void>;
+
 export function ApprovePlan(arg1:string,arg2:number,arg3:number):Promise<void>;
 
 export function ArchiveDone(arg1:string):Promise<number>;
@@ -67,6 +69,8 @@ export function DeployRemoteWorker(arg1:string,arg2:string,arg3:string):Promise<
 export function DiagnoseIssue(arg1:string,arg2:number):Promise<diagnose.IssueDiagnosis>;
 
 export function DiscoverWorkspaceSkills(arg1:string):Promise<Array<types.SkillRef>>;
+
+export function DismissFanoutProposal(arg1:string):Promise<void>;
 
 export function EstimateSpawnCost(arg1:string,arg2:number,arg3:string):Promise<main.SpawnEstimate>;
 
@@ -143,6 +147,8 @@ export function ListAvailableSkills(arg1:string):Promise<Array<types.SkillRef>>;
 export function ListBundledSkills():Promise<Array<main.BundledSkill>>;
 
 export function ListCollections():Promise<Array<types.Collection>>;
+
+export function ListFanoutProposals(arg1:string,arg2:number):Promise<Array<types.FanoutProposal>>;
 
 export function ListGoals():Promise<Array<types.Goal>>;
 
@@ -279,6 +285,8 @@ export function TestCloudflareToken(arg1:string):Promise<main.CFTokenResult>;
 export function TestGitHubPAT(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function TestJiraConnection(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
+export function TriggerFanoutAnalysis(arg1:string,arg2:number):Promise<string>;
 
 export function UnarchiveAll(arg1:string):Promise<void>;
 

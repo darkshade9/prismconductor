@@ -36,6 +36,9 @@ func (f *fakeTracker) ListLabels(context.Context, types.Workspace) ([]string, er
 func (f *fakeTracker) SetIssueLabels(context.Context, types.Workspace, tracker.IssueRef, []string) error {
 	return nil
 }
+func (f *fakeTracker) CreateIssue(context.Context, types.Workspace, string, string, []string) (int, string, error) {
+	return 0, "", tracker.ErrCreateIssueUnsupported
+}
 
 func TestRegistry_RegisterAndGet(t *testing.T) {
 	// Use a unique kind so parallel tests don't conflict.
