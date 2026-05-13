@@ -31,14 +31,7 @@ function ModelCapabilityBadge({
   const fit = fitForRole(hint, role);
 
   if (!hint) {
-    return (
-      <span
-        className="inline-flex items-center gap-1 text-[10px] italic text-slate-500"
-        title="No capability data for this model. It may work but is unverified."
-      >
-        ? unknown model
-      </span>
-    );
+    return null;
   }
 
   const toolLabel =
@@ -107,14 +100,7 @@ function ModelCapabilityBadge({
         </span>
       );
     default:
-      return (
-        <span
-          className="inline-flex items-center gap-1 text-[10px] italic text-slate-500"
-          title={tooltip}
-        >
-          ? unknown fit for {role}
-        </span>
-      );
+      return null;
   }
 }
 
@@ -206,6 +192,7 @@ export function PoolEditModal({
   const [busy, setBusy] = useState(false);
   const [saveErr, setSaveErr] = useState<string>("");
   const [modelHint, setModelHint] = useState<llm.ModelHint | null>(null);
+  const [modelHints, setModelHints] = useState<Record<string, llm.ModelHint | null>>({});
 
   const providerInfo = useMemo(
     () => providers.find((p) => p.kind === providerKind),
@@ -278,13 +265,15 @@ export function PoolEditModal({
       .catch(() => setModelHint(null));
   }, [providerKind, model]);
 
-  // On add-mode with a role set, auto-select the cheapest suitable model once
-  // the model list loads. Never clobbers a user-typed value.
+  // Fetch hints for all models (both add and edit mode) to populate the
+  // dropdown labels and sort order. Auto-select the cheapest suitable model
+  // in add mode only, and only when the user has not already typed a value.
   useEffect(() => {
-    if (initial) return;
-    if (userEditedModel.current) return;
     const models = modelEntry?.models ?? [];
-    if (models.length === 0) return;
+    if (models.length === 0) {
+      setModelHints({});
+      return;
+    }
 
     let canceled = false;
     Promise.all(
@@ -294,7 +283,12 @@ export function PoolEditModal({
           .catch(() => ({ model: m, hint: null as llm.ModelHint | null })),
       ),
     ).then((entries) => {
-      if (canceled || userEditedModel.current) return;
+      if (canceled) return;
+      const hintsMap: Record<string, llm.ModelHint | null> = {};
+      entries.forEach(({ model: m, hint: h }) => { hintsMap[m] = h; });
+      setModelHints(hintsMap);
+
+      if (initial || userEditedModel.current) return;
       const candidates = entries.filter(({ hint }) => {
         if (!hint) return false;
         const fit = fitForRole(hint, role);
@@ -527,6 +521,8 @@ export function PoolEditModal({
               apiKey={apiKey}
               value={model}
               onChange={(v) => { userEditedModel.current = true; setModel(v); }}
+              role={role}
+              hints={modelHints}
             />
             {model && (
               <div className="mt-1">
