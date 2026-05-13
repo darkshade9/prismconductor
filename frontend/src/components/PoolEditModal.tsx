@@ -267,6 +267,13 @@ export function PoolEditModal({
     fetchModels(providerKind, resolvedEndpoint, apiKey).catch(() => {});
   }, [providerKind]);
 
+  // Codex pools default to capacity 1 (subscription limits are per-account).
+  useEffect(() => {
+    if (providerKind === "codex" && !initial) {
+      setCapacity(1);
+    }
+  }, [providerKind]);
+
   // Fetch model capability hint whenever provider or model changes.
   useEffect(() => {
     if (!model || !providerKind) {
@@ -491,7 +498,15 @@ export function PoolEditModal({
             </select>
           </div>
 
-          {providerInfo && providerKind !== "claude" && (
+          {providerKind === "codex" && (
+            <div className="text-xs text-amber-300/80 bg-amber-950/30 border border-amber-900/40 rounded px-2 py-1.5">
+              Codex uses a local CLI and browser OAuth — no endpoint or API key needed.
+              Run <code className="font-mono">codex login</code> before adding this provider.
+              Pool capacity defaults to 1 (subscription limits are per-account).
+            </div>
+          )}
+
+          {providerInfo && providerKind !== "claude" && providerKind !== "codex" && (
             <div>
               <div className="text-xs text-slate-500 mb-1">Endpoint URL</div>
               <input

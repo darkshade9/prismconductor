@@ -181,7 +181,14 @@ function ProviderEditModal({
             </select>
           </div>
 
-          {driver && kind !== "claude" && (
+          {kind === "codex" && (
+            <div className="text-xs text-amber-300/80 bg-amber-950/30 border border-amber-900/40 rounded px-2 py-1.5">
+              Codex uses a local CLI and browser OAuth — no endpoint or API key needed.
+              Run <code className="font-mono">codex login</code> before adding this provider.
+            </div>
+          )}
+
+          {driver && kind !== "claude" && kind !== "codex" && (
             <div>
               <div className="text-xs text-slate-500 mb-1">Endpoint URL</div>
               <input

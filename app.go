@@ -154,6 +154,7 @@ func (a *App) startup(ctx context.Context) {
 		llm.NewLMStudioProvider(),
 		llm.NewOllamaProvider(),
 		llm.NewGeminiProvider(),
+		llm.NewCodexProvider(),
 	)
 	a.poolReg = workerpool.NewRegistry(a.providers.CanSpawn)
 	a.orch = orchestrator.New(a.bus, a.resolveOrchestratorLLM)

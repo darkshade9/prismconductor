@@ -193,7 +193,8 @@ type runtimeSession struct {
 
 	// Issue #101: pool model name captured at spawn time so ResolveUsage can
 	// look up per-token rates when computing estimated cost for harness sessions.
-	poolModel string
+	poolModel    string
+	poolProvider types.Provider
 	// harnessInputTokens / harnessOutputTokens accumulate token counts from
 	// the harness OnTurnUsage callback. Zero for subprocess (Claude) sessions
 	// where CostData from the stream parser is authoritative.
@@ -782,6 +783,7 @@ func (m *Manager) spawnWithDir(ws types.Workspace, issue types.Issue, mode types
 		poolID:         pool.ID,
 		poolName:       pool.Name,
 		poolModel:      pool.Model,
+		poolProvider:   pool.Provider,
 		lastLineAt:     time.Now(),
 	}
 
@@ -948,6 +950,7 @@ func (m *Manager) spawnRemote(ws types.Workspace, issue types.Issue, plan types.
 		poolID:         pool.ID,
 		poolName:       pool.Name,
 		poolModel:      pool.Model,
+		poolProvider:   pool.Provider,
 		lastLineAt:     time.Now(),
 	}
 
@@ -1439,9 +1442,22 @@ func (m *Manager) matchPatterns(rs *runtimeSession, line string) {
 				reason = reason[:500]
 			}
 			rs.sess.BlockedReason = reason
+			// For codex pools, inspect the reason for subscription-quota errors
+			// and stamp a structured FailureCause with kind="subscription_quota"
+			// so the UI can surface a friendlier message (issue #281).
+			causeKind := "blocked"
+			if rs.poolProvider == types.ProviderCodex {
+				if isQuota, resetAt := ParseCodexQuotaError(reason); isQuota {
+					causeKind = "subscription_quota"
+					if resetAt != "" && !strings.Contains(reason, "resets at") {
+						reason = reason + "; resets at " + resetAt
+						rs.sess.BlockedReason = reason
+					}
+				}
+			}
 			// Stamp FailureCause so the card always has a structured reason (#30).
 			rs.sess.FailureCause = &types.FailureCause{
-				Kind:   "blocked",
+				Kind:   causeKind,
 				Reason: reason,
 			}
 			// Re-save the full JSON so BlockedReason and FailureCause survive restart.
