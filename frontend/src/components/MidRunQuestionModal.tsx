@@ -81,7 +81,12 @@ export function MidRunQuestionModal({
   const isOrphan = !loading && error != null && question == null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+    <div
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]"
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
       <div className={`w-[600px] max-h-[80vh] bg-slate-900 border rounded-lg flex flex-col overflow-hidden ${isOrphan ? "border-red-700" : "border-amber-700"}`}>
         <div className={`flex items-center justify-between px-4 py-2 border-b border-slate-800 ${isOrphan ? "bg-red-950/30" : "bg-amber-950/30"}`}>
           <div className="text-slate-200">

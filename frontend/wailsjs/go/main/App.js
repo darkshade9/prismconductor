@@ -134,6 +134,10 @@ export function GetEventBusDebugEmits() {
   return window['go']['main']['App']['GetEventBusDebugEmits']();
 }
 
+export function GetGlobalCostProjection() {
+  return window['go']['main']['App']['GetGlobalCostProjection']();
+}
+
 export function GetIssueView(arg1, arg2) {
   return window['go']['main']['App']['GetIssueView'](arg1, arg2);
 }
@@ -158,20 +162,12 @@ export function GetPollInterval() {
   return window['go']['main']['App']['GetPollInterval']();
 }
 
-export function GetPoolUsage() {
-  return window['go']['main']['App']['GetPoolUsage']();
-}
-
 export function GetPoolCostProjection(arg1) {
   return window['go']['main']['App']['GetPoolCostProjection'](arg1);
 }
 
-export function GetWorkspaceCostProjection(arg1) {
-  return window['go']['main']['App']['GetWorkspaceCostProjection'](arg1);
-}
-
-export function GetGlobalCostProjection() {
-  return window['go']['main']['App']['GetGlobalCostProjection']();
+export function GetPoolUsage() {
+  return window['go']['main']['App']['GetPoolUsage']();
 }
 
 export function GetRepoDefaultBranch(arg1, arg2, arg3) {
@@ -180,6 +176,10 @@ export function GetRepoDefaultBranch(arg1, arg2, arg3) {
 
 export function GetRetryQueue(arg1) {
   return window['go']['main']['App']['GetRetryQueue'](arg1);
+}
+
+export function GetWorkspaceCostProjection(arg1) {
+  return window['go']['main']['App']['GetWorkspaceCostProjection'](arg1);
 }
 
 export function GitHubAuthStatus() {

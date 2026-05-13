@@ -80,6 +80,8 @@ export function GetAutoPullPaused():Promise<boolean>;
 
 export function GetEventBusDebugEmits():Promise<Array<wailsbus.EmitRecord>>;
 
+export function GetGlobalCostProjection():Promise<main.PoolCostProjection>;
+
 export function GetIssueView(arg1:string,arg2:number):Promise<issueview.IssueView>;
 
 export function GetLabelFilter(arg1:string):Promise<main.LabelFilterState>;
@@ -92,17 +94,15 @@ export function GetNotifyPrefs():Promise<main.NotifyPrefs>;
 
 export function GetPollInterval():Promise<number>;
 
-export function GetPoolUsage():Promise<Array<types.PoolUsage>>;
-
 export function GetPoolCostProjection(arg1:string):Promise<main.PoolCostProjection>;
 
-export function GetWorkspaceCostProjection(arg1:string):Promise<Array<main.PoolCostProjection>>;
-
-export function GetGlobalCostProjection():Promise<main.PoolCostProjection>;
+export function GetPoolUsage():Promise<Array<types.PoolUsage>>;
 
 export function GetRepoDefaultBranch(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function GetRetryQueue(arg1:string):Promise<Array<retry.PendingRetry>>;
+
+export function GetWorkspaceCostProjection(arg1:string):Promise<Array<main.PoolCostProjection>>;
 
 export function GitHubAuthStatus():Promise<githubauth.User>;
 
