@@ -22,6 +22,8 @@ export function AddIssueDep(arg1:string,arg2:number,arg3:types.IssueDep):Promise
 
 export function AddManualIssue(arg1:string,arg2:number,arg3:string,arg4:string,arg5:Array<string>,arg6:string):Promise<types.Issue>;
 
+export function AddJiraWorkspace(arg1:main.JiraWorkspaceForm):Promise<void>;
+
 export function AddWorkspace(arg1:types.Workspace):Promise<void>;
 
 export function AddWorkspaceToCollection(arg1:string,arg2:string):Promise<void>;
@@ -271,6 +273,8 @@ export function SubmitMidRunAnswer(arg1:string,arg2:number,arg3:types.MidRunAnsw
 export function TestCloudflareToken(arg1:string):Promise<main.CFTokenResult>;
 
 export function TestGitHubPAT(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function TestJiraConnection(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function UnarchiveAll(arg1:string):Promise<void>;
 

@@ -143,6 +143,27 @@ CREATE INDEX IF NOT EXISTS idx_skill_outcomes_skill_time
 CREATE INDEX IF NOT EXISTS idx_skill_outcomes_workspace
     ON skill_outcomes(workspace_id, captured_at);`,
 	},
+	{
+		ID:          "20260513_02_add_tracker_ref",
+		Description: "issue #289: tracker abstraction — add tracker_ref JSON column to issues for non-GitHub tracker identity",
+		Up: func(tx *sql.Tx) error {
+			// Guard: issues table is created by legacy migrate() on existing DBs.
+			// A bare test DB or a fresh install running migrations before the
+			// legacy schema is applied may not have it yet; skip in that case.
+			var tblCount int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='issues'`).Scan(&tblCount); err != nil {
+				return err
+			}
+			if tblCount == 0 {
+				return nil
+			}
+			_, err := tx.Exec(`ALTER TABLE issues ADD COLUMN tracker_ref TEXT`)
+			if err != nil && !isAlreadyExists(err) {
+				return err
+			}
+			return nil
+		},
+	},
 }
 
 // All returns every known migration in application order.

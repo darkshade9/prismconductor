@@ -18,6 +18,10 @@ export function AddManualIssue(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['AddManualIssue'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
+export function AddJiraWorkspace(arg1) {
+  return window['go']['main']['App']['AddJiraWorkspace'](arg1);
+}
+
 export function AddWorkspace(arg1) {
   return window['go']['main']['App']['AddWorkspace'](arg1);
 }
@@ -516,6 +520,10 @@ export function TestCloudflareToken(arg1) {
 
 export function TestGitHubPAT(arg1, arg2, arg3) {
   return window['go']['main']['App']['TestGitHubPAT'](arg1, arg2, arg3);
+}
+
+export function TestJiraConnection(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['TestJiraConnection'](arg1, arg2, arg3, arg4);
 }
 
 export function UnarchiveAll(arg1) {

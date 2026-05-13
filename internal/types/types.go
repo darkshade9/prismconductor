@@ -113,6 +113,15 @@ type Workspace struct {
 	// ComplexityScale selects the estimation vocabulary for this workspace's
 	// planner output. Empty means tshirt (default). See internal/complexity/scales.go.
 	ComplexityScale ComplexityScale `json:"complexity_scale,omitempty"`
+
+	// TrackerKind identifies the issue-tracker backend for this workspace.
+	// Empty / absent means "github" for backward compatibility (issue #289).
+	// Valid values: "github", "jira".
+	TrackerKind string `json:"tracker_kind,omitempty"`
+
+	// TrackerConfig holds tracker-specific configuration as a JSON blob.
+	// For kind="jira" this is jira.JiraConfig. Nil for GitHub workspaces.
+	TrackerConfig json.RawMessage `json:"tracker_config,omitempty"`
 }
 
 // WorkspacePipeline is the per-workspace pipeline configuration (issue #146).
@@ -475,6 +484,19 @@ type Issue struct {
 	// recent execute session failed. Set when an execute session reaches
 	// StateBlocked or StateFailed; cleared on ClearIssueFailure (#194).
 	FailureReason string `json:"failure_reason,omitempty"`
+
+	// TrackerRef holds the canonical tracker-agnostic reference for this issue
+	// (issue #289). Nil for legacy GitHub issues where the numeric Number field
+	// is sufficient; set by Jira / Linear / GitLab pollers.
+	TrackerRef *TrackerRef `json:"tracker_ref,omitempty"`
+}
+
+// TrackerRef is a canonical, tracker-agnostic identifier for a single issue.
+// For GitHub issues the Identifier is "owner/repo#<num>". For Jira it is the
+// issue key, e.g. "PROJ-123".
+type TrackerRef struct {
+	Kind       string `json:"kind"`       // "github" | "jira"
+	Identifier string `json:"identifier"` // human-readable key used in branch names
 }
 
 // NeedsPRInfo holds the context needed to display the NEEDS_PR badge and poll

@@ -1359,6 +1359,32 @@ export namespace main {
 	        this.keyring_unavailable = source["keyring_unavailable"];
 	    }
 	}
+	export class JiraWorkspaceForm {
+	    id: string;
+	    display_name: string;
+	    color: string;
+	    instance_url: string;
+	    email: string;
+	    api_token: string;
+	    project_key: string;
+	    jql: string;
+
+	    static createFrom(source: any = {}) {
+	        return new JiraWorkspaceForm(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.display_name = source["display_name"];
+	        this.color = source["color"];
+	        this.instance_url = source["instance_url"];
+	        this.email = source["email"];
+	        this.api_token = source["api_token"];
+	        this.project_key = source["project_key"];
+	        this.jql = source["jql"];
+	    }
+	}
 	export class RemoteWorkspaceForm {
 	    cf_token: string;
 	    github_pat: string;
@@ -1368,11 +1394,11 @@ export namespace main {
 	    github_repo: string;
 	    default_branch: string;
 	    color: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RemoteWorkspaceForm(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.cf_token = source["cf_token"];
@@ -1748,7 +1774,21 @@ export namespace types {
 	        this.commit_msg = source["commit_msg"];
 	    }
 	}
-	export class Question {
+	export class TrackerRef {
+	    kind: string;
+	    identifier: string;
+
+	    static createFrom(source: any = {}) {
+	        return new TrackerRef(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.identifier = source["identifier"];
+	    }
+	}
+		export class Question {
 	    id: string;
 	    type: string;
 	    prompt: string;
@@ -1884,11 +1924,12 @@ export namespace types {
 	    cost_usd?: number;
 	    needs_pr_info?: NeedsPRInfo;
 	    failure_reason?: string;
-	
+	    tracker_ref?: TrackerRef;
+
 	    static createFrom(source: any = {}) {
 	        return new Issue(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.number = source["number"];
@@ -1923,8 +1964,9 @@ export namespace types {
 	        this.cost_usd = source["cost_usd"];
 	        this.needs_pr_info = this.convertValues(source["needs_pr_info"], NeedsPRInfo);
 	        this.failure_reason = source["failure_reason"];
+	        this.tracker_ref = this.convertValues(source["tracker_ref"], TrackerRef);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2526,11 +2568,13 @@ export namespace types {
 	    provisioning_at?: any;
 	    retry_policy?: RetryPolicy;
 	    complexity_scale?: string;
-	
+	    tracker_kind?: string;
+	    tracker_config?: any;
+
 	    static createFrom(source: any = {}) {
 	        return new Workspace(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -2553,6 +2597,8 @@ export namespace types {
 	        this.provisioning_at = this.convertValues(source["provisioning_at"], null);
 	        this.retry_policy = this.convertValues(source["retry_policy"], RetryPolicy);
 	        this.complexity_scale = source["complexity_scale"];
+	        this.tracker_kind = source["tracker_kind"];
+	        this.tracker_config = source["tracker_config"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
