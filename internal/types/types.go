@@ -333,6 +333,12 @@ const (
 	// the native API can round-trip `thought_signature` for thinking-tier
 	// models. First trial of the any-llm-go integration.
 	ProviderGemini Provider = "gemini"
+	// ProviderCodex routes inference through the local `codex` CLI binary
+	// (OpenAI's agent CLI) using the same PTY subprocess pattern as Claude.
+	// Auth is managed by the codex CLI itself (browser OAuth against a
+	// ChatGPT subscription); no API key is stored in the conductor.
+	// Pool capacity defaults to 1 — subscription limits are per-account.
+	ProviderCodex Provider = "codex"
 )
 
 // --- Goal (§6.2) ---
