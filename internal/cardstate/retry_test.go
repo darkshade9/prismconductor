@@ -42,6 +42,10 @@ func TestIsRetryable(t *testing.T) {
 		{"blocked keyword case insensitive", &types.FailureCause{Kind: "blocked", Reason: "Network Error"}, true},
 		{"blocked lint error", &types.FailureCause{Kind: "blocked", Reason: "lint failed — go vet exited 1"}, false},
 		{"blocked malformed plan", &types.FailureCause{Kind: "blocked", Reason: "malformed plan JSON"}, false},
+
+		// quota_exceeded cases
+		{"quota_exceeded always retryable", &types.FailureCause{Kind: types.FailureKindQuotaExceeded}, true},
+		{"quota_exceeded with reason", &types.FailureCause{Kind: types.FailureKindQuotaExceeded, Reason: "gemini free-tier quota exhausted"}, true},
 	}
 
 	for _, tt := range tests {

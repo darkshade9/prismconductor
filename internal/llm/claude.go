@@ -32,6 +32,7 @@ func (claudeProvider) Kind() types.Provider    { return types.ProviderClaude }
 func (claudeProvider) DisplayName() string     { return "Claude" }
 func (claudeProvider) DefaultEndpoint() string { return "" }
 func (claudeProvider) NeedsAPIKey() bool       { return false }
+func (claudeProvider) APIKeyHelpURL() string   { return "" }
 func (claudeProvider) CanSpawn() bool          { return true }
 
 // Claude has no listing API; CLAUDE.md "Claude 4.X" family is the canonical

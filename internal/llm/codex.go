@@ -30,6 +30,7 @@ func NewCodexProvider() Provider {
 func (codexProvider) Kind() types.Provider    { return types.ProviderCodex }
 func (codexProvider) DisplayName() string     { return "Codex CLI" }
 func (codexProvider) DefaultEndpoint() string { return "" }
+func (codexProvider) APIKeyHelpURL() string   { return "" }
 func (codexProvider) NeedsAPIKey() bool       { return false }
 func (codexProvider) CanSpawn() bool          { return true }
 

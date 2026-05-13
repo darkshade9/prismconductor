@@ -566,6 +566,12 @@ const (
 	QuestionYesNo        QuestionType = "yes_no"
 )
 
+// FailureKindQuotaExceeded is the FailureCause.Kind value for provider
+// daily/monthly quota exhaustion (e.g. Gemini free-tier RESOURCE_EXHAUSTED).
+// The retry scheduler treats this as retryable with a long backoff anchored to
+// RetryAfter rather than exponential backoff.
+const FailureKindQuotaExceeded = "quota_exceeded"
+
 // FailureCause is a structured record of why a session reached a terminal
 // failed or blocked state. Captured at the moment the terminal sentinel is
 // written so that the UI can always surface a human-readable reason (#30).
@@ -574,11 +580,16 @@ type FailureCause struct {
 	//   "blocked"                  — worker emitted BLOCKED: sentinel
 	//   "exit_code"                — process exited with non-zero code
 	//   "signal"                   — process terminated by signal
+	//   "quota_exceeded"           — provider quota exhausted (see llm.QuotaExceededError)
 	//   "unknown_pre_card_state_v2" — legacy row backfilled at startup
 	Kind     string `json:"kind"`
 	Reason   string `json:"reason,omitempty"`
 	ExitCode int    `json:"exit_code,omitempty"`
 	Signal   string `json:"signal,omitempty"`
+	// RetryAfter, when non-nil, indicates the earliest time the scheduler
+	// should retry. Set for quota_exceeded failures when the provider
+	// advertises a reset time. Nil means use the standard backoff formula.
+	RetryAfter *time.Time `json:"retry_after,omitempty"`
 }
 
 // RetryPolicy configures the automatic-retry behaviour for execute sessions

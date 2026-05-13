@@ -2528,6 +2528,9 @@ type ProviderInfo struct {
 	DefaultEndpoint string         `json:"default_endpoint"`
 	NeedsAPIKey     bool           `json:"needs_api_key"`
 	CanSpawn        bool           `json:"can_spawn"`
+	// APIKeyHelpURL is the URL where users can obtain an API key for this
+	// provider. Empty string means no help link is available.
+	APIKeyHelpURL string `json:"api_key_help_url"`
 }
 
 // ListProviders returns one ProviderInfo per registered LLM driver.
@@ -2544,6 +2547,7 @@ func (a *App) ListProviders() []ProviderInfo {
 			DefaultEndpoint: p.DefaultEndpoint(),
 			NeedsAPIKey:     p.NeedsAPIKey(),
 			CanSpawn:        p.CanSpawn(),
+			APIKeyHelpURL:   p.APIKeyHelpURL(),
 		})
 	}
 	return out

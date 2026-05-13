@@ -29,6 +29,7 @@ func (fakeProvider) Kind() types.Provider                                { retur
 func (fakeProvider) DisplayName() string                                 { return "fake" }
 func (fakeProvider) DefaultEndpoint() string                             { return "" }
 func (fakeProvider) NeedsAPIKey() bool                                   { return false }
+func (fakeProvider) APIKeyHelpURL() string                               { return "" }
 func (fakeProvider) CanSpawn() bool                                      { return true }
 func (fakeProvider) ListModels(context.Context, types.Pool) ([]string, error) {
 	return nil, llm.ErrNotSupported

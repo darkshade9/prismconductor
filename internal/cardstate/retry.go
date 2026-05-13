@@ -62,6 +62,10 @@ func IsRetryable(cause *types.FailureCause) bool {
 			}
 		}
 		return false
+	case types.FailureKindQuotaExceeded:
+		// Provider quota exhaustion is always retryable; the scheduler uses
+		// RetryAfter to wait until reset time rather than exponential backoff.
+		return true
 	}
 	return false
 }

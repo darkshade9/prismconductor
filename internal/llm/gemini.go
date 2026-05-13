@@ -3,16 +3,53 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	anyllm "github.com/mozilla-ai/any-llm-go"
+	anyllmerrors "github.com/mozilla-ai/any-llm-go/errors"
 	anyllmproviders "github.com/mozilla-ai/any-llm-go/providers"
 	"github.com/mozilla-ai/any-llm-go/providers/gemini"
 
 	"prismconductor/internal/types"
 )
+
+// QuotaExceededError is returned when a Gemini API call fails with a
+// RESOURCE_EXHAUSTED / 429 response. The retry scheduler reads RetryAfter to
+// schedule the next attempt at quota-reset time rather than using exponential
+// backoff. RetryAfter is zero when the API does not advertise a reset time.
+type QuotaExceededError struct {
+	Provider   string
+	RetryAfter time.Time
+	Reason     string
+}
+
+func (e *QuotaExceededError) Error() string {
+	if !e.RetryAfter.IsZero() {
+		return fmt.Sprintf("%s quota exceeded; resets at %s", e.Provider, e.RetryAfter.UTC().Format(time.RFC3339))
+	}
+	return fmt.Sprintf("%s quota exceeded", e.Provider)
+}
+
+// wrapQuotaError converts any-llm-go rate-limit errors into QuotaExceededError.
+// Returns the original error unchanged for non-quota failures.
+func wrapQuotaError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, anyllmerrors.ErrRateLimit) {
+		return err
+	}
+	var rle *anyllmerrors.RateLimitError
+	qe := &QuotaExceededError{Provider: "gemini", Reason: err.Error()}
+	if errors.As(err, &rle) && rle.RetryAfter > 0 {
+		qe.RetryAfter = time.Now().Add(time.Duration(rle.RetryAfter) * time.Second)
+	}
+	return qe
+}
 
 // geminiProvider is the first any-llm-go-backed adapter (issue #68 / spike).
 // It satisfies our Provider interface by translating ChatRequest <-> any-llm-go's
@@ -36,6 +73,7 @@ func (geminiProvider) Kind() types.Provider    { return types.ProviderGemini }
 func (geminiProvider) DisplayName() string     { return "Gemini" }
 func (geminiProvider) DefaultEndpoint() string { return "" }
 func (geminiProvider) NeedsAPIKey() bool       { return true }
+func (geminiProvider) APIKeyHelpURL() string   { return "https://aistudio.google.com/apikey" }
 func (geminiProvider) CanSpawn() bool          { return true }
 
 // SpawnArgs returns ErrNotSupported so the session manager dispatches Gemini
@@ -104,7 +142,7 @@ func (g geminiProvider) ChatJSON(ctx context.Context, p types.Pool, system, user
 		},
 	})
 	if err != nil {
-		return "", err
+		return "", wrapQuotaError(err)
 	}
 	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("gemini: empty choices")
@@ -200,7 +238,7 @@ func (g geminiProvider) ToolChat(ctx context.Context, p types.Pool, req ChatRequ
 		ReasoningEffort: anyllm.ReasoningEffortAuto,
 	})
 	if err != nil {
-		return ChatResponse{}, err
+		return ChatResponse{}, wrapQuotaError(err)
 	}
 	if len(resp.Choices) == 0 {
 		return ChatResponse{}, fmt.Errorf("gemini: empty choices")

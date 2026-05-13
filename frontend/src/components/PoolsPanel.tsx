@@ -17,6 +17,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   GetModelHint,
   ListPools,
+  ListProviderEntities,
   ListProviders,
   ListWorkspaces,
   SavePool,
@@ -28,6 +29,7 @@ import {
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 import { main, llm, types, workerpool } from "../../wailsjs/go/models";
 import { PoolEditModal } from "./PoolEditModal";
+import { ProviderEditModal } from "./ProvidersPanel";
 
 type Fit = "excellent" | "good" | "fair" | "poor" | "unsuitable" | "";
 
@@ -110,9 +112,11 @@ const ROLE_LABEL: Record<Role, string> = {
 export function PoolsPanel() {
   const [pools, setPools] = useState<workerpool.PoolStatus[]>([]);
   const [providers, setProviders] = useState<main.ProviderInfo[]>([]);
+  const [providerEntities, setProviderEntities] = useState<types.ProviderEntity[]>([]);
   const [workspaces, setWorkspaces] = useState<types.Workspace[]>([]);
   const [editing, setEditing] = useState<types.Pool | null>(null);
   const [adding, setAdding] = useState(false);
+  const [addingGeminiProvider, setAddingGeminiProvider] = useState(false);
   const [deleteErr, setDeleteErr] = useState<Record<string, string>>({});
   const [spendToday, setSpendToday] = useState<Record<string, number>>({});
   const [spendWeek, setSpendWeek] = useState<Record<string, number>>({});
@@ -120,10 +124,11 @@ export function PoolsPanel() {
 
   async function refresh() {
     try {
-      const [ps, pv, ws] = await Promise.all([ListPools(), ListProviders(), ListWorkspaces()]);
+      const [ps, pv, ws, pe] = await Promise.all([ListPools(), ListProviders(), ListWorkspaces(), ListProviderEntities()]);
       setPools(ps ?? []);
       setProviders(pv ?? []);
       setWorkspaces(ws ?? []);
+      setProviderEntities(pe ?? []);
       // Fetch spend for each pool in parallel.
       const ids = (ps ?? []).map((r) => r.pool.id);
       if (ids.length > 0) {
@@ -250,9 +255,30 @@ export function PoolsPanel() {
         </div>
       )}
 
-      {pools.length === 0 && (
-        <div className="text-slate-500">No pools configured. Add one below.</div>
-      )}
+      {pools.length === 0 && (() => {
+        const hasGeminiEntity = providerEntities.some((e) => e.kind === "gemini");
+        const geminiDriver = providers.find((p) => p.kind === "gemini");
+        return (
+          <>
+            <div className="text-slate-500">No pools configured. Add one below.</div>
+            {geminiDriver && !hasGeminiEntity && (
+              <div className="rounded border border-blue-800 bg-blue-950/40 px-3 py-3 space-y-2">
+                <div className="text-blue-200 text-sm font-medium">$0/mo starter — no credit card needed</div>
+                <div className="text-blue-300 text-xs">
+                  Google Gemini's free tier includes 1500 Flash requests/day and 50 Pro requests/day.
+                  Add a Gemini provider to get a working plan + work pool for free.
+                </div>
+                <button
+                  onClick={() => setAddingGeminiProvider(true)}
+                  className="text-xs px-3 py-1 bg-blue-700 hover:bg-blue-600 text-white rounded"
+                >
+                  Add Gemini provider
+                </button>
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       {ROLE_ORDER.map((role) => {
         const rows = grouped[role];
@@ -360,6 +386,19 @@ export function PoolsPanel() {
           onSaved={async () => {
             setEditing(null);
             setAdding(false);
+            await refresh();
+          }}
+        />
+      )}
+
+      {addingGeminiProvider && (
+        <ProviderEditModal
+          driverKinds={providers}
+          initial={null}
+          initialKind="gemini"
+          onClose={() => setAddingGeminiProvider(false)}
+          onSaved={async () => {
+            setAddingGeminiProvider(false);
             await refresh();
           }}
         />

@@ -1257,11 +1257,12 @@ export namespace main {
 	    default_endpoint: string;
 	    needs_api_key: boolean;
 	    can_spawn: boolean;
-	
+	    api_key_help_url: string;
+
 	    static createFrom(source: any = {}) {
 	        return new ProviderInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.kind = source["kind"];
@@ -1269,6 +1270,7 @@ export namespace main {
 	        this.default_endpoint = source["default_endpoint"];
 	        this.needs_api_key = source["needs_api_key"];
 	        this.can_spawn = source["can_spawn"];
+	        this.api_key_help_url = source["api_key_help_url"];
 	    }
 	}
 	export class QuestionLogEntry {

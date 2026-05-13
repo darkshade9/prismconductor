@@ -25,6 +25,7 @@ func (lmstudioProvider) Kind() types.Provider    { return types.ProviderLMStudio
 func (lmstudioProvider) DisplayName() string     { return "LM Studio" }
 func (lmstudioProvider) DefaultEndpoint() string { return defaultLMStudioEndpoint }
 func (lmstudioProvider) NeedsAPIKey() bool       { return true }
+func (lmstudioProvider) APIKeyHelpURL() string   { return "" }
 func (lmstudioProvider) CanSpawn() bool          { return true }
 
 // ListModels prefers LM Studio's /api/v0/models (native — includes load state)

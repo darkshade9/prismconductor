@@ -44,6 +44,7 @@ func (openaiProvider) Kind() types.Provider    { return types.ProviderOpenAI }
 func (openaiProvider) DisplayName() string     { return "OpenAI" }
 func (openaiProvider) DefaultEndpoint() string { return defaultOpenAIEndpoint }
 func (openaiProvider) NeedsAPIKey() bool       { return true }
+func (openaiProvider) APIKeyHelpURL() string   { return "" }
 func (openaiProvider) CanSpawn() bool          { return true }
 
 func (o openaiProvider) ListModels(ctx context.Context, p types.Pool) ([]string, error) {

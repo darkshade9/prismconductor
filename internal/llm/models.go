@@ -169,6 +169,12 @@ var bundledHints = []ModelHint{
 		Notes: "Fast, cost-effective Gemini with 1M context; strong for work pools.", UpdatedAt: "2025-04-01", Source: "bundled",
 	},
 	{
+		Provider: "gemini", ModelID: "gemini-2.5-flash-lite",
+		PlanFit: FitFair, WorkFit: FitFair, OrchFit: FitPoor, ArchitectFit: FitFair,
+		ToolSupport: ToolPartial, ContextWindow: 1000000, CostTier: CostLow,
+		Notes: "Cheapest 2.5 variant; partial tool support limits agentic use.", UpdatedAt: "2026-05-13", Source: "bundled",
+	},
+	{
 		Provider: "gemini", ModelID: "gemini-2.0-flash",
 		PlanFit: FitGood, WorkFit: FitGood, OrchFit: FitFair, ArchitectFit: FitGood,
 		ToolSupport: ToolFull, ContextWindow: 1000000, CostTier: CostLow,
