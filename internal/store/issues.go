@@ -162,16 +162,23 @@ func (s *Store) SaveIssue(iss types.Issue) (bool, error) {
 	if existingOrder.Valid {
 		manualOrder = existingOrder.Int64
 	}
+	var trackerRefJSON any
+	if iss.TrackerRef != nil {
+		if rb, jerr := json.Marshal(iss.TrackerRef); jerr == nil {
+			trackerRefJSON = string(rb)
+		}
+	}
 	if _, err := s.DB.Exec(`
-INSERT INTO issues (workspace_id, number, column_name, manual_order, json, archived_at, closed_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO issues (workspace_id, number, column_name, manual_order, json, archived_at, closed_at, tracker_ref)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(workspace_id, number) DO UPDATE SET
     column_name = excluded.column_name,
     manual_order = excluded.manual_order,
     json = excluded.json,
     archived_at = excluded.archived_at,
-    closed_at = excluded.closed_at`,
-		iss.WorkspaceID, iss.Number, string(col), manualOrder, string(b), newArchivedAt, newClosedAt); err != nil {
+    closed_at = excluded.closed_at,
+    tracker_ref = COALESCE(excluded.tracker_ref, issues.tracker_ref)`,
+		iss.WorkspaceID, iss.Number, string(col), manualOrder, string(b), newArchivedAt, newClosedAt, trackerRefJSON); err != nil {
 		return false, err
 	}
 	return unarchived, nil

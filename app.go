@@ -48,6 +48,7 @@ import (
 	"prismconductor/internal/skills"
 	"prismconductor/internal/skills/bundle"
 	"prismconductor/internal/store"
+	pcjira "prismconductor/internal/tracker/jira"
 	"prismconductor/internal/types"
 	"prismconductor/internal/wailsbus"
 	"prismconductor/internal/workerpool"
@@ -65,10 +66,11 @@ type App struct {
 	providers *llm.Registry
 	orch      *orchestrator.Orchestrator
 	wsReg     *workspace.Registry
-	auth      *githubauth.Client
-	gh        *pcgithub.Client
-	poller    *pcgithub.Poller
-	logs      *logbuffer.Ring
+	auth        *githubauth.Client
+	gh          *pcgithub.Client
+	poller      *pcgithub.Poller
+	jiraPoller  *pcjira.Poller
+	logs        *logbuffer.Ring
 	cfgDir    string
 
 	answerWatcher *store.AnswerWatcher
@@ -477,6 +479,18 @@ func (a *App) startup(ctx context.Context) {
 			a.poller = pcgithub.NewPoller(a.bus, a.gh, a.store, a.wsReg, interval)
 			go a.poller.Run(a.ctx)
 		}
+	}
+
+	// Jira poller — shares the same interval as the GitHub poller.
+	if a.store != nil && a.wsReg != nil {
+		jiraInterval := 5 * time.Minute
+		if v, _ := a.store.GetSetting("poll_interval_seconds"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 30 {
+				jiraInterval = time.Duration(n) * time.Second
+			}
+		}
+		a.jiraPoller = pcjira.NewPoller(a.bus, a.store, a.wsReg, jiraInterval)
+		go a.jiraPoller.Run(a.ctx)
 	}
 }
 
@@ -975,6 +989,110 @@ func (a *App) AddWorkspace(ws types.Workspace) error {
 	}
 	if a.poller != nil {
 		go a.poller.FetchNow(a.ctx, ws)
+	}
+	if a.jiraPoller != nil {
+		go a.jiraPoller.FetchNow(a.ctx, ws)
+	}
+	return nil
+}
+
+// JiraWorkspaceForm is the payload sent by JiraWorkspaceSetup.
+type JiraWorkspaceForm struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Color       string `json:"color"`
+	InstanceURL string `json:"instance_url"`
+	Email       string `json:"email"`
+	APIToken    string `json:"api_token"`
+	ProjectKey  string `json:"project_key"`
+	JQL         string `json:"jql"`
+}
+
+// AddJiraWorkspace registers a new Jira-backed workspace. The API token is
+// stored in the OS keyring under "prismconductor/jira/<workspaceID>" and is
+// NOT persisted in TrackerConfig on disk.
+func (a *App) AddJiraWorkspace(form JiraWorkspaceForm) error {
+	if a.wsReg == nil {
+		return fmt.Errorf("workspace registry unavailable")
+	}
+	cfg := pcjira.JiraConfig{
+		InstanceURL: form.InstanceURL,
+		Email:       form.Email,
+		APIToken:    form.APIToken,
+		ProjectKey:  form.ProjectKey,
+		JQL:         form.JQL,
+	}
+	// Validate credentials before persisting.
+	client, err := pcjira.NewClient(cfg)
+	if err != nil {
+		return fmt.Errorf("invalid Jira config: %w", err)
+	}
+	if err := client.TestConnection(a.ctx); err != nil {
+		return fmt.Errorf("Jira connection failed: %w", err)
+	}
+	if err := client.TestProject(a.ctx); err != nil {
+		return fmt.Errorf("Jira project %q not found or not accessible: %w", form.ProjectKey, err)
+	}
+
+	// Store API token in the keyring; clear it from the persisted config.
+	ss := secretstore.NewKeychainStore()
+	tokenKey := "prismconductor/jira/" + form.ID
+	if err := ss.Set(tokenKey, form.APIToken); err != nil {
+		log.Printf("jira: keyring store failed (%v) — token will be persisted in config", err)
+		// If keyring fails, fall through and persist the token in TrackerConfig
+		// (less secure, but functional on systems without a keyring).
+	} else {
+		cfg.APIToken = "" // redacted; runtime loads from keyring
+	}
+
+	cfgBytes, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	ws := types.Workspace{
+		ID:            form.ID,
+		DisplayName:   form.DisplayName,
+		Color:         form.Color,
+		Enabled:       true,
+		TrackerKind:   "jira",
+		TrackerConfig: cfgBytes,
+		AgentEnv:      types.EnvSpec{Shell: "/bin/bash"},
+	}
+	if err := a.wsReg.Add(ws); err != nil {
+		return err
+	}
+	if a.bus != nil {
+		a.bus.Publish(eventbus.EvtWorkspaceAdded, map[string]any{
+			"workspace_id":   ws.ID,
+			"workspace_name": ws.DisplayName,
+		})
+	}
+	if a.jiraPoller != nil {
+		go a.jiraPoller.FetchNow(a.ctx, ws)
+	}
+	return nil
+}
+
+// TestJiraConnection verifies a Jira Cloud connection without persisting any
+// data. Returns nil on success, error message suitable for UI display on failure.
+func (a *App) TestJiraConnection(instanceURL, email, apiToken, projectKey string) error {
+	cfg := pcjira.JiraConfig{
+		InstanceURL: instanceURL,
+		Email:       email,
+		APIToken:    apiToken,
+		ProjectKey:  projectKey,
+	}
+	client, err := pcjira.NewClient(cfg)
+	if err != nil {
+		return err
+	}
+	if err := client.TestConnection(a.ctx); err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+	if projectKey != "" {
+		if err := client.TestProject(a.ctx); err != nil {
+			return fmt.Errorf("project %q not accessible: %w", projectKey, err)
+		}
 	}
 	return nil
 }

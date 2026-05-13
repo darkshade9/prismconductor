@@ -394,8 +394,7 @@ func (m *Manager) SpawnExecute(ws types.Workspace, issue types.Issue, plan types
 	if base == "" {
 		base = "main"
 	}
-	slug := branchSlug(issue.Title)
-	branch := fmt.Sprintf("feat/issue-%d-%s", issue.Number, slug)
+	branch := issueBranch(ws, issue)
 	worktreeDir := filepath.Join(ws.RepoPath, ".prismconductor", "worktrees",
 		fmt.Sprintf("%s-%d", ws.ID, issue.Number))
 
@@ -456,8 +455,7 @@ func (m *Manager) SpawnExecuteResume(ws types.Workspace, issue types.Issue, plan
 	if ws.ExecutionTarget == types.ExecutionTargetRemote {
 		return nil, ErrRemoteWorkspacePaused
 	}
-	slug := branchSlug(issue.Title)
-	branch := fmt.Sprintf("feat/issue-%d-%s", issue.Number, slug)
+	branch := issueBranch(ws, issue)
 	worktreeDir := filepath.Join(ws.RepoPath, ".prismconductor", "worktrees",
 		fmt.Sprintf("%s-%d", ws.ID, issue.Number))
 	if _, err := os.Stat(worktreeDir); err != nil {
@@ -477,8 +475,7 @@ func (m *Manager) SpawnExecuteResume(ws types.Workspace, issue types.Issue, plan
 // origin/<branch> (q2=A). The user's note must already be written to
 // .prismconductor/notes/<num>.txt in the main checkout before calling this.
 func (m *Manager) SpawnExecuteContinue(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool) (*types.Session, error) {
-	slug := branchSlug(issue.Title)
-	branch := fmt.Sprintf("feat/issue-%d-%s", issue.Number, slug)
+	branch := issueBranch(ws, issue)
 	worktreeDir := filepath.Join(ws.RepoPath, ".prismconductor", "worktrees",
 		fmt.Sprintf("%s-%d", ws.ID, issue.Number))
 
@@ -543,6 +540,27 @@ func executeContinuePrompt(ws types.Workspace, issue types.Issue, plan types.Pla
 	default:
 		return fmt.Sprintf("/conductor-continue --issue %d --repo %s --revision %d", issue.Number, ws.RepoPath, plan.Revision)
 	}
+}
+
+// issueBranch constructs the feature branch name for an issue. For GitHub
+// workspaces (or legacy workspaces with no TrackerKind set) the format is
+// "feat/issue-<num>-<slug>". For non-GitHub trackers the tracker identifier
+// is used instead: "feat/<identifier>-<slug>" (e.g. "feat/PROJ-123-my-title").
+// Q4 answer: yes, use tracker identifier for branch names on non-GitHub trackers.
+func issueBranch(ws types.Workspace, issue types.Issue) string {
+	slug := branchSlug(issue.Title)
+	if ws.TrackerKind != "" && ws.TrackerKind != "github" && issue.TrackerRef != nil && issue.TrackerRef.Identifier != "" {
+		// Use the tracker identifier directly (e.g. "PROJ-123") lowercased and
+		// sanitised for git branch syntax — replace spaces and slashes only.
+		id := strings.ToLower(strings.Map(func(r rune) rune {
+			if r == ' ' || r == '/' {
+				return '-'
+			}
+			return r
+		}, issue.TrackerRef.Identifier))
+		return fmt.Sprintf("feat/%s-%s", id, slug)
+	}
+	return fmt.Sprintf("feat/issue-%d-%s", issue.Number, slug)
 }
 
 // branchSlug derives a kebab-case branch suffix from an issue title, lowering
@@ -918,8 +936,7 @@ func (m *Manager) spawnRemote(ws types.Workspace, issue types.Issue, plan types.
 	}
 	sess.Transcript = transcriptPath
 
-	slug := branchSlug(issue.Title)
-	branch := fmt.Sprintf("feat/issue-%d-%s", issue.Number, slug)
+	branch := issueBranch(ws, issue)
 
 	params := remoteworker.SpawnParams{
 		WorkspaceID:   ws.ID,
