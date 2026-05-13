@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DiscoverWorkspaceSkills, GetModelHint, ListPools, UpdateWorkspace } from "../../wailsjs/go/main/App";
 import { llm, types, workerpool } from "../../wailsjs/go/models";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { SkillDropdown } from "./SkillDropdown";
 import { noAutoCorrect } from "../lib/inputs";
-import { fitOptionSuffix } from "./fitGlyph";
+import { costRank, fitForRole, fitOptionSuffix, fitRank } from "./fitGlyph";
 
 type SkillMode = "bundled" | "hybrid" | "native";
 const MODES: SkillMode[] = ["bundled", "hybrid", "native"];
@@ -233,6 +233,22 @@ function PoolPicker({
     });
   }, [pools]);
 
+  const sortedPools = useMemo(
+    () =>
+      [...pools].sort((a, b) => {
+        const hintA = hints[a.pool.id] ?? null;
+        const hintB = hints[b.pool.id] ?? null;
+        const rankDiff =
+          fitRank(fitForRole(hintB, role)) - fitRank(fitForRole(hintA, role));
+        if (rankDiff !== 0) return rankDiff;
+        const costDiff =
+          costRank(hintA?.cost_tier ?? "") - costRank(hintB?.cost_tier ?? "");
+        if (costDiff !== 0) return costDiff;
+        return a.pool.name.localeCompare(b.pool.name);
+      }),
+    [pools, hints, role],
+  );
+
   return (
     <label className="block">
       <div className="text-xs text-slate-500 mb-1">{label}</div>
@@ -242,7 +258,7 @@ function PoolPicker({
         className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 text-xs"
       >
         <option value="">(any compatible)</option>
-        {pools.map((row) => {
+        {sortedPools.map((row) => {
           const hint = hints[row.pool.id] ?? null;
           const suffix = fitOptionSuffix(hint, role);
           return (
