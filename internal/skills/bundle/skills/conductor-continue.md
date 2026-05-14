@@ -47,7 +47,7 @@ These steps are mandatory and must run in this order.
    (understand what was being built).
 3. Read `.prismconductor/answers/<issue>-rev<N>.json` (user's question answers,
    if any — optional).
-4. Read repo conventions: `CLAUDE.md`, `.claude/rules/`.
+4. Read repo conventions: `AGENTS.md`, `CLAUDE.md`, `.codex/rules/`, `.claude/rules/`.
 
 ### 2. Branch hygiene (NON-NEGOTIABLE)
 

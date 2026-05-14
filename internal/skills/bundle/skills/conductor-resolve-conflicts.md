@@ -1,3 +1,8 @@
+---
+name: conductor-resolve-conflicts
+description: Resolves merge or rebase conflicts on a PrismConductor PR branch using the conductor-provided runbook, verifies the result, commits targeted conflict-resolution changes, and refuses unsafe dirty-worktree states.
+---
+
 # conductor-resolve-conflicts
 
 Bundled by PrismConductor (PRISMCONDUCTOR_PLAN.md §15.7).
@@ -52,7 +57,7 @@ For each conflicted file:
 
 ### 5. Verify
 
-Run the project's test and lint commands (from `CLAUDE.md` or `PRISMCONDUCTOR_BUILD_CMD` / `PRISMCONDUCTOR_TEST_CMD`):
+Run the project's test and lint commands (from repo agent instructions or `PRISMCONDUCTOR_BUILD_CMD` / `PRISMCONDUCTOR_TEST_CMD`):
 
 - Non-zero lint exit → `BLOCKED: lint failed after conflict resolution — <command> exited <code>`
 - Non-zero test exit → `BLOCKED: tests failed after conflict resolution — <N> failures`

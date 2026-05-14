@@ -33,7 +33,7 @@ These steps are mandatory and must run in this order. Do **not** edit any files 
 
 1. Read `.prismconductor/plans/<issue>-rev<N>.json` (the approved plan).
 2. Read `.prismconductor/answers/<issue>-rev<N>.json` (the user's question answers, if any).
-3. Read repo conventions: `CLAUDE.md`, `.claude/rules/`, and any test/build/lint commands the conductor injected via env (`PRISMCONDUCTOR_TEST_CMD`, `PRISMCONDUCTOR_LINT_CMD`, `PRISMCONDUCTOR_BUILD_CMD`).
+3. Read repo conventions: `AGENTS.md`, `CLAUDE.md`, `.codex/rules/`, `.claude/rules/`, and any test/build/lint commands the conductor injected via env (`PRISMCONDUCTOR_TEST_CMD`, `PRISMCONDUCTOR_LINT_CMD`, `PRISMCONDUCTOR_BUILD_CMD`).
 
 ### 2. Branch hygiene (NON-NEGOTIABLE)
 
@@ -77,7 +77,7 @@ If `wails dev` or the built binary is launched as part of verification (smoke sp
 9. **Lint / typecheck** every changed surface:
    - Go files touched → `go vet ./...` (or the project's `PRISMCONDUCTOR_LINT_CMD` if set).
    - TypeScript files touched → `npx tsc --noEmit` from the relevant frontend dir.
-   - Other languages → run the project-conventional linter from `CLAUDE.md`.
+   - Other languages → run the project-conventional linter from the repo's agent instructions.
    Any non-zero exit → `BLOCKED: lint failed — <command> exited <code>` and exit.
 10. **Build** the project:
     - For a Wails project: `wails build` from repo root.

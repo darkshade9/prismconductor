@@ -1,6 +1,6 @@
-# PrismConductor - Codex Dev Rules
+# PrismConductor - Agent Dev Rules
 
-This file is the Codex entry point for the same project guidance that was previously provided to Claude in `CLAUDE.md`. Keep both files in sync while Claude compatibility is still needed.
+This file is the agent entry point for the same project guidance that was previously provided in `CLAUDE.md`. Keep both files in sync while legacy agent compatibility is still needed.
 
 The product spec lives in `PRISMCONDUCTOR_PLAN.md`. Treat it as the source of truth for data model, schemas, and phase boundaries. When implementation diverges from the plan, update the plan.
 

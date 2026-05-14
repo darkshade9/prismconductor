@@ -116,19 +116,19 @@ type RateLimitHandler func([]types.PoolUsage)
 type FanoutWrittenHandler func(sess types.Session, path string)
 
 type Manager struct {
-	bus            *eventbus.Bus
-	emit           LineHandler
-	transcriptDir  string
-	store          Persister
-	onStateChange    StateChangeHandler
-	onPlanReady      PlanReadyHandler
-	onPROpened       PROpenedHandler
-	onNeedsPR        NeedsPRHandler
-	onActivity       ActivityHandler
-	onRateLimit      RateLimitHandler
-	onFanoutWritten  FanoutWrittenHandler
-	providers      *llm.Registry
-	poolReg        PoolRehydrator
+	bus             *eventbus.Bus
+	emit            LineHandler
+	transcriptDir   string
+	store           Persister
+	onStateChange   StateChangeHandler
+	onPlanReady     PlanReadyHandler
+	onPROpened      PROpenedHandler
+	onNeedsPR       NeedsPRHandler
+	onActivity      ActivityHandler
+	onRateLimit     RateLimitHandler
+	onFanoutWritten FanoutWrittenHandler
+	providers       *llm.Registry
+	poolReg         PoolRehydrator
 
 	mu       sync.RWMutex
 	sessions map[string]*runtimeSession
@@ -357,11 +357,11 @@ func (m *Manager) SpawnPlan(ws types.Workspace, issue types.Issue, pool types.Po
 	// Phase 2 (issue #197): pre-fetch the issue body to a known path so the
 	// plan worker can read it without an extra GitHub API call.
 	writeIssuePayload(ws.RepoPath, issue)
-	args, prompt, err := m.buildPlanCommand(ws, issue, pool)
+	skillMarkdown, skillPath, skillHash := loadSkillMarkdown(ws, types.StagePlan)
+	args, prompt, err := m.buildPlanCommand(ws, issue, pool, skillMarkdown)
 	if err != nil {
 		return nil, err
 	}
-	skillMarkdown, skillPath, skillHash := loadSkillMarkdown(ws, types.StagePlan)
 	return m.spawn(ws, issue, types.ModePlan, args, prompt, pool, skillMarkdown, skillPath, skillHash)
 }
 
@@ -436,12 +436,12 @@ func (m *Manager) SpawnExecute(ws types.Workspace, issue types.Issue, plan types
 		return nil, fmt.Errorf("mirror plan artifacts: %w", err)
 	}
 
-	args, prompt, err := m.buildExecuteCommand(ws, issue, plan, pool)
+	skillMarkdown, skillPath, skillHash := loadSkillMarkdown(ws, types.StageExecute)
+	args, prompt, err := m.buildExecuteCommand(ws, issue, plan, pool, skillMarkdown)
 	if err != nil {
 		_ = pcgit.Remove(ws.RepoPath, worktreeDir)
 		return nil, err
 	}
-	skillMarkdown, skillPath, skillHash := loadSkillMarkdown(ws, types.StageExecute)
 	sess, err := m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool, skillMarkdown, skillPath, skillHash)
 	if err != nil {
 		_ = pcgit.Remove(ws.RepoPath, worktreeDir)
@@ -471,11 +471,11 @@ func (m *Manager) SpawnExecuteResume(ws types.Workspace, issue types.Issue, plan
 	if _, err := os.Stat(worktreeDir); err != nil {
 		return nil, fmt.Errorf("resume worktree missing at %s: %w", worktreeDir, err)
 	}
-	args, prompt, err := m.buildExecuteResumeCommand(ws, issue, plan, pool, questionID)
+	skillMarkdown, skillPath, skillHash := loadSkillMarkdown(ws, types.StageExecute)
+	args, prompt, err := m.buildExecuteResumeCommand(ws, issue, plan, pool, questionID, skillMarkdown)
 	if err != nil {
 		return nil, err
 	}
-	skillMarkdown, skillPath, skillHash := loadSkillMarkdown(ws, types.StageContinue)
 	return m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool, skillMarkdown, skillPath, skillHash)
 }
 
@@ -503,11 +503,11 @@ func (m *Manager) SpawnExecuteContinue(ws types.Workspace, issue types.Issue, pl
 		return nil, fmt.Errorf("mirror continue note: %w", err)
 	}
 
-	args, prompt, err := m.buildExecuteContinueCommand(ws, issue, plan, pool)
+	skillMarkdown, skillPath, skillHash := loadSkillMarkdown(ws, types.StageContinue)
+	args, prompt, err := m.buildExecuteContinueCommand(ws, issue, plan, pool, skillMarkdown)
 	if err != nil {
 		return nil, err
 	}
-	skillMarkdown, skillPath, skillHash := loadSkillMarkdown(ws, types.StageContinue)
 	return m.spawnWithDir(ws, issue, types.ModeExecute, args, prompt, worktreeDir, branch, pool, skillMarkdown, skillPath, skillHash)
 }
 
@@ -530,8 +530,9 @@ func mirrorContinueNote(repoPath, worktreeDir string, num int) error {
 	return os.WriteFile(dst, b, 0o644)
 }
 
-func (m *Manager) buildExecuteContinueCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool) ([]string, string, error) {
-	return m.providerArgs(pool, executeContinuePrompt(ws, issue, plan))
+func (m *Manager) buildExecuteContinueCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool, skillMarkdown string) ([]string, string, error) {
+	prompt := executeContinuePrompt(ws, issue, plan)
+	return m.providerArgs(pool, selfContainedSkillPrompt(skillMarkdown, prompt), prompt)
 }
 
 func executeContinuePrompt(ws types.Workspace, issue types.Issue, plan types.Plan) string {
@@ -662,7 +663,7 @@ func (m *Manager) SpawnArchitectAnswer(ws types.Workspace, _ types.Issue, questi
 	// skipped — see the guard in spawnWithDir for why 0 bypasses it.
 	archIssue := types.Issue{WorkspaceID: ws.ID, Number: 0}
 	prompt := architectAnswerPrompt(ws.RepoPath, questionID)
-	args, _, err := m.providerArgs(pool, prompt)
+	args, _, err := m.providerArgs(pool, prompt, prompt)
 	if err != nil {
 		return nil, err
 	}
@@ -702,7 +703,7 @@ func (m *Manager) SpawnFanout(ws types.Workspace, issueNumber, prNumber int, poo
 		fmt.Sprintf("%s-%d-pr%d.json", ws.ID, issueNumber, prNumber))
 	skillContent, skillPath, skillHash := fanoutSkillContent(ws.RepoPath)
 	prompt := fanoutPrompt(ws.RepoPath, issueNumber, prNumber, outputPath)
-	args, _, err := m.providerArgs(pool, prompt)
+	args, _, err := m.providerArgs(pool, selfContainedSkillPrompt(skillContent, prompt), prompt)
 	if err != nil {
 		return nil, err
 	}
@@ -1757,29 +1758,31 @@ func (m *Manager) FindActiveExecuteSession(workspaceID string, issueNumber int) 
 // --- §10.4 / §10.5 dispatch ---
 //
 // Worker argv is provided by the LLM provider registry: each pool's Provider
-// returns the argv via SpawnArgs(pool, prompt). Claude returns argv (the
-// session manager runs it as a subprocess); the four OpenAI-compat providers
-// return llm.ErrNotSupported (the session manager runs the in-process
-// harness loop). The prompt itself is mode-specific (plan / execute) and
-// shaped here. Both strategies share the same prompt — the harness uses it
-// as the user-message in its first chat turn.
+// returns the argv via SpawnArgs(pool, prompt). Subprocess-capable providers
+// receive a self-contained prompt that embeds the selected skill markdown.
+// Tool-chat providers return llm.ErrNotSupported from SpawnArgs; the session
+// manager then runs the in-process harness with the same skill markdown as
+// system context and a compact invocation as the user message.
 
-func (m *Manager) buildPlanCommand(ws types.Workspace, issue types.Issue, pool types.Pool) ([]string, string, error) {
+func (m *Manager) buildPlanCommand(ws types.Workspace, issue types.Issue, pool types.Pool, skillMarkdown string) ([]string, string, error) {
 	related, contextMD := m.collectionContext(ws.ID)
-	return m.providerArgs(pool, planPrompt(ws, issue, related, contextMD))
+	prompt := planPrompt(ws, issue, related, contextMD)
+	return m.providerArgs(pool, selfContainedSkillPrompt(skillMarkdown, prompt), prompt)
 }
 
-func (m *Manager) buildExecuteCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool) ([]string, string, error) {
+func (m *Manager) buildExecuteCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool, skillMarkdown string) ([]string, string, error) {
 	related, contextMD := m.collectionContext(ws.ID)
-	return m.providerArgs(pool, executePrompt(ws, issue, plan, related, contextMD))
+	prompt := executePrompt(ws, issue, plan, related, contextMD)
+	return m.providerArgs(pool, selfContainedSkillPrompt(skillMarkdown, prompt), prompt)
 }
 
 // buildExecuteResumeCommand mirrors buildExecuteCommand but appends the
 // `--resume-question <id>` flag so the conductor-execute skill knows to skip
 // branch creation and read the mid-run question's context sidecar (#17).
-func (m *Manager) buildExecuteResumeCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool, questionID string) ([]string, string, error) {
+func (m *Manager) buildExecuteResumeCommand(ws types.Workspace, issue types.Issue, plan types.Plan, pool types.Pool, questionID string, skillMarkdown string) ([]string, string, error) {
 	related, contextMD := m.collectionContext(ws.ID)
-	return m.providerArgs(pool, executeResumePrompt(ws, issue, plan, questionID, related, contextMD))
+	prompt := executeResumePrompt(ws, issue, plan, questionID, related, contextMD)
+	return m.providerArgs(pool, selfContainedSkillPrompt(skillMarkdown, prompt), prompt)
 }
 
 // collectionContext resolves the collection siblings and shared context markdown
@@ -1809,11 +1812,11 @@ func (m *Manager) collectionContext(wsID string) (siblings []string, contextMD s
 // providerArgs returns the spawn strategy for a (pool, prompt) pair:
 //   - argv non-nil, err nil       → subprocess strategy
 //   - argv nil, prompt non-empty  → harness strategy (provider returned
-//                                   llm.ErrNotSupported from SpawnArgs, which
-//                                   is the §10.5 signal to use the in-process
-//                                   loop)
+//     llm.ErrNotSupported from SpawnArgs, which
+//     is the §10.5 signal to use the in-process
+//     loop)
 //   - other error                 → bubbled to caller
-func (m *Manager) providerArgs(pool types.Pool, prompt string) ([]string, string, error) {
+func (m *Manager) providerArgs(pool types.Pool, subprocessPrompt, harnessPrompt string) ([]string, string, error) {
 	if m.providers == nil {
 		return nil, "", fmt.Errorf("session manager: provider registry not configured")
 	}
@@ -1821,14 +1824,21 @@ func (m *Manager) providerArgs(pool types.Pool, prompt string) ([]string, string
 	if !ok {
 		return nil, "", fmt.Errorf("session manager: unknown provider %q for pool %s", pool.Provider, pool.ID)
 	}
-	argv, err := prov.SpawnArgs(pool, prompt)
+	argv, err := prov.SpawnArgs(pool, subprocessPrompt)
 	if err == nil {
-		return argv, prompt, nil
+		return argv, subprocessPrompt, nil
 	}
 	if errors.Is(err, llm.ErrNotSupported) {
-		return nil, prompt, nil
+		return nil, harnessPrompt, nil
 	}
 	return nil, "", err
+}
+
+func selfContainedSkillPrompt(skillMarkdown, invocation string) string {
+	if strings.TrimSpace(skillMarkdown) == "" {
+		return invocation
+	}
+	return strings.TrimSpace(skillMarkdown) + "\n\n---\n\n## Invocation\n\n" + invocation + "\n\nFollow the skill contract above for this invocation."
 }
 
 func planPrompt(ws types.Workspace, issue types.Issue, related []string, contextMD string) string {

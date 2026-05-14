@@ -1,6 +1,6 @@
 ---
 name: conductor-plan
-description: Universal `/start-issue` analogue. Reads a GitHub issue, greps the repo, reads any CLAUDE.md and .claude/rules/ present, and emits a structured plan JSON to .prismconductor/plans/<issue>-rev<N>.json. Stops at the proposal gate. No code mutation.
+description: Universal planning skill. Reads a GitHub issue, greps the repo, reads repo agent instructions when present, and emits a structured plan JSON to .prismconductor/plans/<issue>-rev<N>.json. Stops at the proposal gate. No code mutation.
 ---
 
 # conductor-plan
@@ -32,7 +32,7 @@ If `--related-repos` is set: the listed paths are SIBLING repositories you may g
    `ready_to_execute: true` based on the issue title alone under any circumstances.
    The harness validator enforces this: any plan with `ready_to_execute: true` that
    contains phrases like "I couldn't fetch the issue" will be rejected at write time.
-2. Read `CLAUDE.md` and `.claude/rules/*.md` if present (silently skip if absent — see §15.8).
+2. Read repo agent instructions if present: `AGENTS.md`, `CLAUDE.md`, `.codex/rules/*.md`, and `.claude/rules/*.md` (silently skip missing files — see §15.8).
 3. Grep the repo for terms in the issue title and body that name files/symbols.
 4. Run `gh label list -R <owner>/<repo> --json name,color,description --limit 200` to see the
    repo's label vocabulary. Then classify the issue (NON-NEGOTIABLE):

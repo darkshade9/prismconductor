@@ -1,3 +1,8 @@
+---
+name: conductor-fanout
+description: Analyzes a review PR diff, identifies public cross-repo surface changes, searches sibling repositories in a PrismConductor collection, and writes proposed follow-up issue JSON for impacted repos.
+---
+
 # conductor-fanout
 
 Bundled skill invoked by PrismConductor to analyze a REVIEW PR's diff and propose coordinating follow-up issues on sibling repositories in the same collection.

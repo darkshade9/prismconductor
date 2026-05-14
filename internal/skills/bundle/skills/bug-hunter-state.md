@@ -102,19 +102,19 @@ q() {
 
 ### Rule 1 — orphan_subprocess
 
-Orphan: a claude/worker process whose cwd is inside the conductor's worktrees dir AND whose runtime exceeds 60 seconds AND that has no matching `sessions` row with `state='running'` and the same PID.
+Orphan: an agent/worker process whose cwd is inside the conductor's worktrees dir AND whose runtime exceeds 60 seconds AND that has no matching `sessions` row with `state='running'` and the same PID.
 
 Severity: **high** (orphan PIDs >1h), **medium** (orphan PIDs 1–60 min).
 
 ```bash
 # macOS: ps -eo pid,etime,command
-# Filter: command contains 'claude' or 'worker.sh'
+# Filter: command contains a supported agent executable name or 'worker.sh'
 # lsof -p PID -a -d cwd -Fn | grep '^n' to get cwd
 if ps -eo pid,etime,command &>/dev/null; then
   while IFS='|' read -r pid etime_raw cmd; do
     pid="${pid// /}"
-    # Only care about processes with claude or worker.sh in command line
-    if ! (echo "$cmd" | grep -qE 'claude|worker\.sh'); then continue; fi
+    # Only care about supported agent/worker processes.
+    if ! (echo "$cmd" | grep -qE 'claude|codex|worker\.sh'); then continue; fi
     # Parse etime: [[DD-]HH:]MM:SS
     etime="${etime_raw// /}"
     total_secs=0
@@ -475,7 +475,7 @@ echo "$REPORT_JSON"
     {
       "rule": "orphan_subprocess",
       "severity": "high",
-      "evidence": "PID 4426 (127 min elapsed): /path/to/claude ...",
+      "evidence": "PID 4426 (127 min elapsed): /path/to/agent ...",
       "suggested_fix": "kill 4426   # then verify the linked worktree is cleaned up"
     }
   ]
