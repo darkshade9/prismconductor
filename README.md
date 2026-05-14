@@ -5,9 +5,21 @@ A goal-driven, multi-workspace agent orchestration desktop app. Plan, execute, r
 [![build](https://github.com/darkshade9/prismconductor/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/darkshade9/prismconductor/actions/workflows/build.yml)
 [![smoke](https://github.com/darkshade9/prismconductor/actions/workflows/smoke.yml/badge.svg?branch=main)](https://github.com/darkshade9/prismconductor/actions/workflows/smoke.yml)
 
-> **Status: pre-1.0, actively under development.** Daily-driver-usable for the maintainer; some features in flight (remote workspaces, agent-terminal panel, three-tier signed-commit fallback). See [open issues](https://github.com/darkshade9/prismconductor/issues) for the roadmap.
+> **Status: pre-1.0, actively under development.** Daily-driver-usable for the maintainer; some features are still evolving. Remote workspaces are currently paused; local workspaces are the supported day-to-day path. See [open issues](https://github.com/darkshade9/prismconductor/issues) for the roadmap.
 
-See [`PRISMCONDUCTOR_PLAN.md`](PRISMCONDUCTOR_PLAN.md) for the full design spec.
+See [`docs/`](docs/README.md) for current user and contributor documentation. The original [`PRISMCONDUCTOR_PLAN.md`](PRISMCONDUCTOR_PLAN.md) is retained as a historical bootstrap plan.
+
+## Documentation
+
+| Audience | Start Here |
+|---|---|
+| Engineers using the product | [User Guide](docs/user-guide.md) |
+| PMs / leads reviewing plans and goals | [User Guide > PM Workflow](docs/user-guide.md#pm-workflow) |
+| Contributors | [Contributing Guide](docs/contributing.md) |
+| Architecture/current contracts | [Architecture](docs/architecture.md), [Data Contracts](docs/data-contracts.md) |
+| Skill authors | [Agent-Neutral Skills](docs/agent-neutral-skills.md) |
+| Roadmap | [Roadmap](docs/roadmap.md) |
+| Cost planning | [Cost Expectations](docs/cost-expectations.md) |
 
 ## Capabilities
 
@@ -18,7 +30,7 @@ PrismConductor turns GitHub issues into a kanban board where AI agents do the bu
 - **Multi-workspace board.** Aggregate issues across many repos into one TODO / PLAN / IN_PROGRESS / REVIEW / DONE pipeline. Filter by workspace chip, by active goal, by labels (AND / OR), by title search.
 - **Goal-driven backlog ranking.** Define a Goal scoping which issues are in play; the orchestrator ranks the backlog by dependency-awareness so you always work the right thing next.
 - **Auto-pull from TODO.** Workers spawn into PLAN automatically when a slot frees and an unblocked top-of-backlog issue is waiting.
-- **Plan / execute / close pipeline.** Each card moves through a configurable pipeline of skills: `conductor-plan` → `conductor-execute` → `conductor-close`, with optional adversarial-review and conflict-resolver steps.
+- **Plan / execute / close pipeline.** Each card moves through a configurable pipeline of agent-neutral skills: `conductor-plan` → `conductor-execute` → `conductor-close`, with optional adversarial-review and conflict-resolver steps.
 - **Per-pool worker pools.** Configure many LLM providers / models / capacities per workspace. Plan, work, and orchestrator roles route to dedicated pools. Drag-to-reorder preference, per-pool budgets, per-pool temperature overrides.
 - **Mid-run questions.** A worker that needs clarification mid-execute pauses and asks the user via a structured question form; answer flows back to the worker and resumes.
 - **Continue Work.** Re-engage on a REVIEW-column PR with reviewer feedback or a free-form note; the worker picks up on the same branch with the same context.
@@ -38,7 +50,7 @@ PrismConductor turns GitHub issues into a kanban board where AI agents do the bu
 - **Auto-heal on test failure** — when CI fails on a REVIEW PR, the conductor can auto-spawn a self-heal session up to N times.
 - **Resolve Conflicts button** — surface a card-level red badge with the actually-conflicting file list and one-click rebase + merge worker.
 - **Auto-cancel zombie workers** when a PR merges/closes/opens, so workers don't keep burning tokens after the deliverable is shipped.
-- **Bundled mode** — a bare repo with no `.claude/` or `CLAUDE.md` works on day one. No setup tax for new repos.
+- **Bundled mode** — a bare repo with no agent-specific instructions works on day one. No setup tax for new repos.
 
 **Cost and observability**
 
@@ -46,9 +58,9 @@ PrismConductor turns GitHub issues into a kanban board where AI agents do the bu
 - Per-pool / per-workspace / per-goal spend rollups, today and this week.
 - Live activity strip on every running card showing the agent's most recent tool calls and a Stop button.
 
-**In flight (see open issues)**
+**In flight / paused (see open issues)**
 
-- **Remote workspaces** — execute on Cloudflare Workers instead of your laptop, so big runs aren't gated by your local CPU. Pending worker-auth security work before merge.
+- **Remote workspaces** — Cloudflare Worker execution is paused in local spawn paths while the auth and execution model is hardened. Use local workspaces for now.
 - **Agent terminal panel** — embedded PTY for chatting directly with `claude` / `aider` / `gemini` from inside the conductor.
 - **Three-tier signed-commit fallback** — GitHub-API commits → local signing → NEEDS_PR with prepared push command.
 - **Theming + customizable glow colors.**
@@ -119,13 +131,15 @@ cd tests && npm install && npm run smoke:install && npm run smoke   # Playwright
 
 ## Setup
 
+For the complete product walkthrough, use the [User Guide](docs/user-guide.md). The short path is:
+
 On first launch:
 
 1. **Add a workspace.** Click `+ Add Workspace`. Provide a name, a local repo path (must be a clone of a GitHub repo), the GitHub owner, the GitHub repo, and a workspace color. The conductor's `gh` CLI auth handles GitHub access; you don't paste tokens for local workspaces.
 
 2. **Add at least one work pool.** Settings → Pools → `+ Add Pool`. Provide:
    - Name (free-form, e.g. `claude-sonnet-4-6`)
-   - Provider (`Claude`, `OpenAI`, `Gemini`, `Ollama`, `LMStudio`, `LiteLLM`)
+   - Provider (`Claude`, `Codex`, `OpenAI`, `Gemini`, `Ollama`, `LMStudio`, `LiteLLM`)
    - Model (auto-listed on `Test connection`)
    - Endpoint + API key (provider-specific)
    - Capacity (how many concurrent workers this pool can run)
@@ -172,7 +186,7 @@ internal/
   eventbus/         # in-process event bus
   git/              # worktree + merge-tree helpers
   github/           # poller + REST/GraphQL client
-  harness/          # in-process LLM agent loop (non-Claude providers)
+  harness/          # in-process LLM agent loop for tool-chat providers
   issueview/        # canonical IssueView assembler
   llm/              # provider-agnostic LLM client interface
   orchestrator/     # backlog ranking + auto-pull
@@ -180,7 +194,7 @@ internal/
   remoteworker/     # Cloudflare Workers execution backend (in flight)
   secretstore/      # OS-keychain wrapper
   session/          # session manager (subprocess + harness paths)
-  skills/bundle/    # bundled conductor-* skill markdown
+  skills/bundle/    # canonical agent-neutral conductor-* skill markdown
   store/            # SQLite persistence + migrations
   workerpool/       # role-keyed pool registry
 frontend/src/
@@ -190,7 +204,7 @@ worker/             # Cloudflare Worker bundle (in flight)
 scripts/restart.sh  # one-shot rebuild + relaunch
 ```
 
-## Hard rules (also see [`CLAUDE.md`](CLAUDE.md))
+## Hard rules (also see [`AGENTS.md`](AGENTS.md))
 
 - **Schemas are contracts.** §9.1 (plan JSON) and §6.4 (Question shape) are wire formats between worker, orchestrator, and UI. Don't change a field without updating all three.
 - **No polling inside the orchestrator.** The 5-min GitHub fetch is the only polling loop. Everything else is event-driven.
@@ -201,7 +215,7 @@ scripts/restart.sh  # one-shot rebuild + relaunch
 
 Open issues are tracked at [github.com/darkshade9/prismconductor/issues](https://github.com/darkshade9/prismconductor/issues). The conductor itself is dogfooded on its own development — many of those issues are filed by the conductor running on this repo.
 
-PRs welcome; please ensure `go test ./...` and `npx tsc --noEmit` pass.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/contributing.md](docs/contributing.md). PRs welcome; please ensure `go test ./...` and `cd frontend && npx tsc --noEmit` pass when applicable.
 
 ## Why the name "PrismConductor"?
 

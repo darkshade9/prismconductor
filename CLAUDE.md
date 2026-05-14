@@ -1,14 +1,14 @@
 # PrismConductor — Dev Rules
 
-The product spec lives in `PRISMCONDUCTOR_PLAN.md`. Treat it as the source of truth for data model, schemas, and phase boundaries. When implementation diverges from the plan, update the plan.
+Current product and contributor docs live in `docs/`. Treat `docs/architecture.md`, `docs/data-contracts.md`, and `docs/agent-neutral-skills.md` as the source of truth for current behavior and contracts. `PRISMCONDUCTOR_PLAN.md` is historical; update it only when preserving launch-plan context is useful.
 
 ## Hard rules
 
-- **Schemas are contracts.** §9.1 (plan JSON) and §6.4 (Question shape) are wire formats between the worker, the orchestrator, and the UI. Don't change a field name without updating all three plus this file.
+- **Schemas are contracts.** Plan JSON, Question shape, and session sentinels are wire formats between workers, backend, and UI. Don't change a field name or sentinel without updating code, bundled skills, and `docs/data-contracts.md`.
 - **No polling inside the orchestrator.** Orchestrator only runs in response to events (§7). The 5-min GitHub fetch is the only polling loop and it emits events on diffs.
-- **Bundled mode is the default.** A bare repo with no `.claude/` and no `CLAUDE.md` must work day-one (§15.8). Never add a warning or block on a missing repo enrichment.
-- **One active goal at a time.** Enforce in `Store.SetGoalActive` via SQL transaction (§15.4).
-- **PTY pattern matching is plain string contains, not regex** (§10.3). Patterns live in `internal/session/patterns.go` as constants.
+- **Bundled mode is the default.** A bare repo with no `.claude/`, no `.codex/`, no `CLAUDE.md`, and no `AGENTS.md` must work day-one. Never add a warning or block on a missing repo enrichment.
+- **One active goal at a time.** Enforce in `Store.SetGoalActive` via SQL transaction.
+- **PTY pattern matching is plain string contains, not regex.** Patterns live in `internal/session/patterns.go` as constants.
 
 ## Layout
 

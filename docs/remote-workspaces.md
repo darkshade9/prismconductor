@@ -1,5 +1,7 @@
 # Remote Workspaces
 
+> **Current status:** remote workspace execution is paused in the local app. Existing remote workspace configuration is preserved so users can convert or inspect it, but normal product usage should use local workspaces until the remote execution/auth model is re-enabled.
+
 Remote workspaces run agent tasks inside a Cloudflare Worker instead of on your local machine. This means tasks survive laptop sleep, run in parallel, and never consume your local CPU or memory during long builds.
 
 ## Choosing local vs remote

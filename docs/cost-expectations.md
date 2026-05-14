@@ -45,4 +45,4 @@ These thresholds can be adjusted in a future release.
 - Projections are observational only — they do not enforce a budget or stop sessions.
 - Token counts are measured from the LLM API response; costs are computed using the rates in Settings → Pools.
 - If no rate is configured for a model, the cost is shown as `—`.
-- Harness-mode sessions (non-Claude providers) use an estimated cost based on token counts and configured rates; actual billed amounts may differ.
+- Harness-mode sessions use an estimated cost based on token counts and configured rates; actual billed amounts may differ.

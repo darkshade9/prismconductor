@@ -2,7 +2,9 @@
 
 **A goal-driven, multi-workspace agent orchestration desktop app.**
 
-This document is the single source of truth for building PrismConductor. Hand it to an agent verbatim. Every section is intentionally specific. When in doubt, follow the schemas exactly — they are contracts, not suggestions.
+> **Historical status:** this was the launch/bootstrap plan that originally guided the repository. It is no longer the authoritative description of current behavior. Use the docs in [`docs/`](docs/README.md), especially [`docs/architecture.md`](docs/architecture.md), [`docs/data-contracts.md`](docs/data-contracts.md), and [`docs/roadmap.md`](docs/roadmap.md), for current product and contributor guidance. This file is retained as an architecture decision archive and for older section references in code comments.
+
+This document was the original build plan for PrismConductor. It is intentionally preserved with its historical assumptions, including sections that no longer match current implementation. Do not hand this file to an agent as current instructions; use the docs in `docs/` for that.
 
 ---
 
