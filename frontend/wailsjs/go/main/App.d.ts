@@ -68,6 +68,8 @@ export function DeployRemoteWorker(arg1:string,arg2:string,arg3:string):Promise<
 
 export function DiagnoseIssue(arg1:string,arg2:number):Promise<diagnose.IssueDiagnosis>;
 
+export function DisconnectSlack(arg1:string):Promise<void>;
+
 export function DiscoverWorkspaceSkills(arg1:string):Promise<Array<types.SkillRef>>;
 
 export function DismissFanoutProposal(arg1:string):Promise<void>;
@@ -111,6 +113,10 @@ export function GetRepoDefaultBranch(arg1:string,arg2:string,arg3:string):Promis
 export function GetRetryQueue(arg1:string):Promise<Array<retry.PendingRetry>>;
 
 export function GetSessionLedger(arg1:string,arg2:number):Promise<Array<types.SessionLedgerRow>>;
+
+export function GetSlackConfig(arg1:string):Promise<types.SlackConfig>;
+
+export function GetSlackStatus(arg1:string):Promise<main.SlackStatus>;
 
 export function GetWorkspaceCostProjection(arg1:string):Promise<Array<main.PoolCostProjection>>;
 
@@ -252,6 +258,10 @@ export function SavePool(arg1:types.Pool):Promise<void>;
 
 export function SaveProviderEntity(arg1:types.ProviderEntity):Promise<void>;
 
+export function SaveSlackConfig(arg1:string,arg2:types.SlackConfig):Promise<void>;
+
+export function SaveSlackCredentials(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function SaveWorkspacePipeline(arg1:string,arg2:types.WorkspacePipeline):Promise<void>;
 
 export function SelfHeal(arg1:string,arg2:number):Promise<void>;
@@ -269,6 +279,22 @@ export function SetLabelFilter(arg1:string,arg2:Array<string>,arg3:string):Promi
 export function SetNotifyPrefs(arg1:main.NotifyPrefs):Promise<void>;
 
 export function SetPollInterval(arg1:number):Promise<void>;
+
+export function SlackCommandApprove(arg1:string,arg2:number):Promise<void>;
+
+export function SlackCommandCancel(arg1:string,arg2:number):Promise<void>;
+
+export function SlackCommandCostThisWeek(arg1:string):Promise<string>;
+
+export function SlackCommandGoalStatus(arg1:string):Promise<string>;
+
+export function SlackCommandListWorkspaces():Promise<string>;
+
+export function SlackCommandPlan(arg1:string,arg2:number):Promise<void>;
+
+export function SlackCommandStatus(arg1:string):Promise<string>;
+
+export function SlackResolveWorkspaceByChannel(arg1:string):Promise<string|boolean>;
 
 export function SpawnPlanForIssue(arg1:string,arg2:number):Promise<types.Session>;
 

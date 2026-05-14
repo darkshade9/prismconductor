@@ -110,6 +110,10 @@ export function DiagnoseIssue(arg1, arg2) {
   return window['go']['main']['App']['DiagnoseIssue'](arg1, arg2);
 }
 
+export function DisconnectSlack(arg1) {
+  return window['go']['main']['App']['DisconnectSlack'](arg1);
+}
+
 export function DiscoverWorkspaceSkills(arg1) {
   return window['go']['main']['App']['DiscoverWorkspaceSkills'](arg1);
 }
@@ -196,6 +200,14 @@ export function GetRetryQueue(arg1) {
 
 export function GetSessionLedger(arg1, arg2) {
   return window['go']['main']['App']['GetSessionLedger'](arg1, arg2);
+}
+
+export function GetSlackConfig(arg1) {
+  return window['go']['main']['App']['GetSlackConfig'](arg1);
+}
+
+export function GetSlackStatus(arg1) {
+  return window['go']['main']['App']['GetSlackStatus'](arg1);
 }
 
 export function GetWorkspaceCostProjection(arg1) {
@@ -478,6 +490,14 @@ export function SaveProviderEntity(arg1) {
   return window['go']['main']['App']['SaveProviderEntity'](arg1);
 }
 
+export function SaveSlackConfig(arg1, arg2) {
+  return window['go']['main']['App']['SaveSlackConfig'](arg1, arg2);
+}
+
+export function SaveSlackCredentials(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SaveSlackCredentials'](arg1, arg2, arg3);
+}
+
 export function SaveWorkspacePipeline(arg1, arg2) {
   return window['go']['main']['App']['SaveWorkspacePipeline'](arg1, arg2);
 }
@@ -512,6 +532,38 @@ export function SetNotifyPrefs(arg1) {
 
 export function SetPollInterval(arg1) {
   return window['go']['main']['App']['SetPollInterval'](arg1);
+}
+
+export function SlackCommandApprove(arg1, arg2) {
+  return window['go']['main']['App']['SlackCommandApprove'](arg1, arg2);
+}
+
+export function SlackCommandCancel(arg1, arg2) {
+  return window['go']['main']['App']['SlackCommandCancel'](arg1, arg2);
+}
+
+export function SlackCommandCostThisWeek(arg1) {
+  return window['go']['main']['App']['SlackCommandCostThisWeek'](arg1);
+}
+
+export function SlackCommandGoalStatus(arg1) {
+  return window['go']['main']['App']['SlackCommandGoalStatus'](arg1);
+}
+
+export function SlackCommandListWorkspaces() {
+  return window['go']['main']['App']['SlackCommandListWorkspaces']();
+}
+
+export function SlackCommandPlan(arg1, arg2) {
+  return window['go']['main']['App']['SlackCommandPlan'](arg1, arg2);
+}
+
+export function SlackCommandStatus(arg1) {
+  return window['go']['main']['App']['SlackCommandStatus'](arg1);
+}
+
+export function SlackResolveWorkspaceByChannel(arg1) {
+  return window['go']['main']['App']['SlackResolveWorkspaceByChannel'](arg1);
 }
 
 export function SpawnPlanForIssue(arg1, arg2) {

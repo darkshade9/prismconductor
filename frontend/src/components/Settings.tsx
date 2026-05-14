@@ -4,6 +4,7 @@ import { BundledSkillsViewer } from "./BundledSkillsViewer";
 import { PoolsPanel } from "./PoolsPanel";
 import { ProvidersPanel } from "./ProvidersPanel";
 import { NotifyPanel } from "./NotifyPanel";
+import { SlackIntegrationPanel } from "./SlackIntegrationPanel";
 import { LogsPanel } from "./LogsPanel";
 import { AppearancePanel } from "./AppearancePanel";
 import { CollectionsPanel } from "./CollectionsPanel";
@@ -70,7 +71,7 @@ function AdvancedPanel({
   );
 }
 
-type Tab = "workspaces" | "collections" | "providers" | "pools" | "spending" | "skills" | "notify" | "appearance" | "logs" | "advanced" | "diagnostics";
+type Tab = "workspaces" | "collections" | "providers" | "pools" | "spending" | "skills" | "notify" | "slack" | "appearance" | "logs" | "advanced" | "diagnostics";
 
 export function Settings({
   open,
@@ -108,6 +109,7 @@ export function Settings({
                 ["spending", "Spending"],
                 ["skills", "Bundled skills"],
                 ["notify", "Notifications"],
+                ["slack", "Slack"],
                 ["appearance", "Appearance"],
                 ["logs", "Logs"],
                 ["advanced", "Advanced"],
@@ -134,6 +136,7 @@ export function Settings({
             {tab === "spending" && <SpendingPanel workspaceID={selectedWorkspaceID ?? ""} />}
             {tab === "skills" && <BundledSkillsViewer />}
             {tab === "notify" && <NotifyPanel />}
+            {tab === "slack" && <SlackIntegrationPanel />}
             {tab === "appearance" && <AppearancePanel />}
             {tab === "logs" && <LogsPanel />}
             {tab === "advanced" && (
