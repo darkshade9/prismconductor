@@ -122,6 +122,56 @@ type Workspace struct {
 	// TrackerConfig holds tracker-specific configuration as a JSON blob.
 	// For kind="jira" this is jira.JiraConfig. Nil for GitHub workspaces.
 	TrackerConfig json.RawMessage `json:"tracker_config,omitempty"`
+
+	// SlackConfig holds workspace-scoped Slack integration settings (issue #291).
+	// Nil means Slack is not configured for this workspace.
+	SlackConfig *SlackConfig `json:"slack_config,omitempty"`
+}
+
+// SlackConfig is workspace-scoped Slack integration configuration (issue #291).
+// All credential values are refs into the OS keyring, never raw tokens.
+type SlackConfig struct {
+	// Enabled gates the entire integration; false means no connection is attempted.
+	Enabled bool `json:"enabled"`
+
+	// BotTokenRef is the keyring key (not the value) for the bot OAuth token.
+	BotTokenRef string `json:"bot_token_ref,omitempty"`
+
+	// AppLevelTokenRef is the keyring key for the Socket Mode app-level token (xapp-).
+	AppLevelTokenRef string `json:"app_level_token_ref,omitempty"`
+
+	// AppID is the Slack App ID for display purposes only.
+	AppID string `json:"app_id,omitempty"`
+
+	// TeamID / TeamName identify the Slack workspace this bot is installed into.
+	TeamID   string `json:"team_id,omitempty"`
+	TeamName string `json:"team_name,omitempty"`
+
+	// DefaultChannel is the fallback notification channel (e.g. "#conductor").
+	DefaultChannel string `json:"default_channel,omitempty"`
+
+	// ChannelMap maps Slack channel IDs to conductor workspace IDs, enabling
+	// channel-to-workspace command resolution (issue #291 q3).
+	ChannelMap map[string]string `json:"channel_map,omitempty"`
+
+	// EventRouting controls which lifecycle events are posted to Slack.
+	EventRouting SlackEventRouting `json:"event_routing,omitempty"`
+
+	// UserMap maps Slack user IDs to permission levels ("full" or "read_only").
+	// Mutating commands (plan/approve/cancel) require "full" (issue #291 q4).
+	UserMap map[string]string `json:"user_map,omitempty"`
+
+	// Muted suspends all outbound Slack notifications for this workspace.
+	Muted bool `json:"muted,omitempty"`
+}
+
+// SlackEventRouting controls which conductor lifecycle events are posted to Slack.
+type SlackEventRouting struct {
+	PlanReady   bool `json:"plan_ready"`
+	Blocked     bool `json:"blocked"`
+	Completed   bool `json:"completed"`
+	BudgetAlert bool `json:"budget_alert"`
+	AutoArchive bool `json:"auto_archive"`
 }
 
 // WorkspacePipeline is the per-workspace pipeline configuration (issue #146).
