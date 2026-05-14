@@ -45,6 +45,17 @@ func CFTokenKey(workspaceID string) string {
 	return KeyPrefix + workspaceID + ".cf_api_token"
 }
 
+// SlackBotTokenKey returns the keyring key for a workspace's Slack bot token.
+func SlackBotTokenKey(workspaceID string) string {
+	return KeyPrefix + workspaceID + ".slack_bot_token"
+}
+
+// SlackAppLevelTokenKey returns the keyring key for a workspace's Slack app-level
+// Socket Mode token (xapp- prefix).
+func SlackAppLevelTokenKey(workspaceID string) string {
+	return KeyPrefix + workspaceID + ".slack_app_level_token"
+}
+
 // KeychainStore persists secrets in the OS-native keyring.
 type KeychainStore struct{}
 

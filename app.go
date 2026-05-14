@@ -52,6 +52,7 @@ import (
 	"prismconductor/internal/store"
 	pcjira "prismconductor/internal/tracker/jira"
 	"prismconductor/internal/types"
+	pcslack "prismconductor/internal/slack"
 	"prismconductor/internal/wailsbus"
 	"prismconductor/internal/workerpool"
 	"prismconductor/internal/workspace"
@@ -98,6 +99,13 @@ type App struct {
 
 	// Issue #221: auto-retry scheduler for transient execute failures.
 	retryScheduler *retry.Scheduler
+
+	// Issue #291: Slack integration — per-workspace Socket Mode managers,
+	// the shared auth registry, and the notification router.
+	slackMu      sync.RWMutex
+	slackMgrs    map[string]*pcslack.Manager // wsID → manager
+	slackAuthz   *pcslack.AuthRegistry
+	slackRouter  *pcslack.Router
 }
 
 type issueDetailEntry struct {
@@ -495,6 +503,18 @@ func (a *App) startup(ctx context.Context) {
 		a.jiraPoller = pcjira.NewPoller(a.bus, a.store, a.wsReg, jiraInterval)
 		go a.jiraPoller.Run(a.ctx)
 	}
+
+	// Issue #291: Slack integration — initialise per-workspace Socket Mode managers.
+	a.slackAuthz = pcslack.NewAuthRegistry()
+	a.slackMgrs = make(map[string]*pcslack.Manager)
+	if a.wsReg != nil {
+		for _, ws := range a.wsReg.List() {
+			if ws.SlackConfig == nil || !ws.SlackConfig.Enabled {
+				continue
+			}
+			go a.startSlackForWorkspace(ws)
+		}
+	}
 }
 
 // handleSessionStateChange runs on every session state transition. Fans the
@@ -619,6 +639,9 @@ func (a *App) handleSessionStateChange(sess types.Session, prev types.SessionSta
 			"issue_number": sess.IssueNumber,
 			"action":       "focus_card",
 		})
+
+		// Issue #291: fan out to Slack if the workspace has Slack configured.
+		a.routeSessionEventToSlack(sess)
 	}
 }
 
@@ -3188,6 +3211,15 @@ func (a *App) handlePlanReady(sess types.Session, relPath string) {
 			"issue_number": sess.IssueNumber,
 			"action":       "open_plan",
 		})
+
+	// Issue #291: notify Slack that a plan is ready for approval.
+	if a.slackRouter != nil {
+		issTitle := ""
+		if iss, err2 := a.store.LoadIssue(sess.WorkspaceID, sess.IssueNumber); err2 == nil {
+			issTitle = iss.Title
+		}
+		a.slackRouter.NotifyPlanReady(sess.WorkspaceID, ws.DisplayName, sess.IssueNumber, issTitle)
+	}
 }
 
 // pullNumberRegexp extracts the PR number from a github.com pull URL.
@@ -5768,4 +5800,386 @@ func (a *App) handleFanoutWritten(sess types.Session, path string) {
 		"workspace_id":  sess.WorkspaceID,
 		"count":         len(analysis.Proposals),
 	})
+}
+
+// --- Slack integration (issue #291) ---
+
+// SlackStatus describes the connection state of the Slack integration for one workspace.
+type SlackStatus struct {
+	Connected bool   `json:"connected"`
+	TeamName  string `json:"team_name,omitempty"`
+	BotUserID string `json:"bot_user_id,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// GetSlackConfig returns the Slack configuration for a workspace. Returns nil
+// when Slack is not configured. Credentials are refs only, never raw tokens.
+func (a *App) GetSlackConfig(workspaceID string) (*types.SlackConfig, error) {
+	if a.wsReg == nil {
+		return nil, fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return nil, fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	return ws.SlackConfig, nil
+}
+
+// SaveSlackConfig persists Slack configuration for a workspace and (re)starts
+// the Socket Mode connection when enabled=true.
+func (a *App) SaveSlackConfig(workspaceID string, cfg types.SlackConfig) error {
+	if a.wsReg == nil {
+		return fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	ws.SlackConfig = &cfg
+	if err := a.wsReg.Update(ws); err != nil {
+		return fmt.Errorf("save workspace: %w", err)
+	}
+
+	// Reload auth registry entries for this workspace.
+	if a.slackAuthz != nil && cfg.UserMap != nil {
+		a.slackAuthz.LoadWorkspace(workspaceID, cfg.UserMap)
+	}
+
+	// Stop any existing manager for this workspace.
+	a.stopSlackForWorkspace(workspaceID)
+
+	if cfg.Enabled {
+		go a.startSlackForWorkspace(ws)
+	}
+
+	wailsbus.EmitEvent(a.ctx, "slack.config_updated", map[string]any{"workspace_id": workspaceID})
+	return nil
+}
+
+// SaveSlackCredentials stores Slack tokens in the OS keyring and updates the
+// workspace config refs. The raw token values are never persisted in workspaces.json.
+func (a *App) SaveSlackCredentials(workspaceID, botToken, appLevelToken string) error {
+	if botToken == "" || appLevelToken == "" {
+		return fmt.Errorf("bot token and app-level token are required")
+	}
+
+	botKey := secretstore.SlackBotTokenKey(workspaceID)
+	appKey := secretstore.SlackAppLevelTokenKey(workspaceID)
+
+	if err := a.secretStore.Set(botKey, botToken); err != nil {
+		return fmt.Errorf("store bot token: %w", err)
+	}
+	if err := a.secretStore.Set(appKey, appLevelToken); err != nil {
+		return fmt.Errorf("store app-level token: %w", err)
+	}
+
+	if a.wsReg == nil {
+		return nil
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	if ws.SlackConfig == nil {
+		ws.SlackConfig = &types.SlackConfig{}
+	}
+	ws.SlackConfig.BotTokenRef = botKey
+	ws.SlackConfig.AppLevelTokenRef = appKey
+	return a.wsReg.Update(ws)
+}
+
+// DisconnectSlack stops the Slack integration for a workspace and clears
+// the credentials from the keyring.
+func (a *App) DisconnectSlack(workspaceID string) error {
+	a.stopSlackForWorkspace(workspaceID)
+
+	if a.wsReg == nil {
+		return fmt.Errorf("workspace registry unavailable")
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Errorf("unknown workspace %q", workspaceID)
+	}
+	if ws.SlackConfig != nil {
+		// Remove keyring entries.
+		_ = a.secretStore.Delete(ws.SlackConfig.BotTokenRef)
+		_ = a.secretStore.Delete(ws.SlackConfig.AppLevelTokenRef)
+		ws.SlackConfig = nil
+		if err := a.wsReg.Update(ws); err != nil {
+			return fmt.Errorf("save workspace: %w", err)
+		}
+	}
+	wailsbus.EmitEvent(a.ctx, "slack.config_updated", map[string]any{"workspace_id": workspaceID})
+	return nil
+}
+
+// GetSlackStatus returns the live connection status for a workspace's Slack bot.
+func (a *App) GetSlackStatus(workspaceID string) SlackStatus {
+	a.slackMu.RLock()
+	mgr, ok := a.slackMgrs[workspaceID]
+	a.slackMu.RUnlock()
+	if !ok || mgr == nil {
+		return SlackStatus{Connected: false}
+	}
+	return SlackStatus{
+		Connected: true,
+		BotUserID: mgr.BotUserID(),
+	}
+}
+
+// startSlackForWorkspace loads credentials from the keyring and starts a
+// Socket Mode manager for the workspace. Called from startup and SaveSlackConfig.
+func (a *App) startSlackForWorkspace(ws types.Workspace) {
+	if ws.SlackConfig == nil || !ws.SlackConfig.Enabled {
+		return
+	}
+	sc := ws.SlackConfig
+
+	botToken, err := a.secretStore.Get(sc.BotTokenRef)
+	if err != nil {
+		log.Printf("slack[%s]: load bot token: %v", ws.ID, err)
+		return
+	}
+	appToken, err := a.secretStore.Get(sc.AppLevelTokenRef)
+	if err != nil {
+		log.Printf("slack[%s]: load app-level token: %v", ws.ID, err)
+		return
+	}
+
+	// Populate auth registry from workspace user map.
+	if a.slackAuthz != nil && sc.UserMap != nil {
+		a.slackAuthz.LoadWorkspace(ws.ID, sc.UserMap)
+	}
+
+	mgr, err := pcslack.NewManager(pcslack.Config{
+		BotToken:      botToken,
+		AppLevelToken: appToken,
+		WorkspaceID:   ws.ID,
+	}, a, a.slackAuthz)
+	if err != nil {
+		log.Printf("slack[%s]: init manager: %v", ws.ID, err)
+		return
+	}
+
+	a.slackMu.Lock()
+	a.slackMgrs[ws.ID] = mgr
+	// Attach a router if one doesn't exist yet.
+	if a.slackRouter == nil {
+		a.slackRouter = pcslack.NewRouter(mgr)
+	}
+	a.slackMu.Unlock()
+
+	// Register notification routing for this workspace.
+	if a.slackRouter != nil {
+		channel := sc.DefaultChannel
+		routing := pcslack.EventRouting{
+			PlanReady:   sc.EventRouting.PlanReady,
+			Blocked:     sc.EventRouting.Blocked,
+			Completed:   sc.EventRouting.Completed,
+			BudgetAlert: sc.EventRouting.BudgetAlert,
+			AutoArchive: sc.EventRouting.AutoArchive,
+		}
+		// Default plan_ready and blocked to true for new configs.
+		if !sc.EventRouting.PlanReady && !sc.EventRouting.Blocked &&
+			!sc.EventRouting.Completed && !sc.EventRouting.BudgetAlert {
+			def := pcslack.DefaultEventRouting()
+			routing = def
+		}
+		a.slackRouter.SetWorkspaceRoute(ws.ID, pcslack.WorkspaceRoute{
+			Channel: channel,
+			Routing: routing,
+			Muted:   sc.Muted,
+		})
+	}
+
+	mgr.Start(a.ctx)
+	log.Printf("slack[%s]: socket mode started (bot=%s)", ws.ID, mgr.BotUserID())
+}
+
+// stopSlackForWorkspace stops and removes the manager for a workspace.
+func (a *App) stopSlackForWorkspace(workspaceID string) {
+	a.slackMu.Lock()
+	mgr, ok := a.slackMgrs[workspaceID]
+	if ok {
+		delete(a.slackMgrs, workspaceID)
+	}
+	a.slackMu.Unlock()
+
+	if ok && mgr != nil {
+		mgr.Stop()
+	}
+	if a.slackRouter != nil {
+		a.slackRouter.RemoveWorkspaceRoute(workspaceID)
+	}
+}
+
+// routeSessionEventToSlack fans a session state change to the Slack router.
+func (a *App) routeSessionEventToSlack(sess types.Session) {
+	if a.slackRouter == nil {
+		return
+	}
+	wsName := toastWorkspaceName(a.wsReg, sess.WorkspaceID)
+	switch sess.State {
+	case types.StateBlocked, types.StateFailed:
+		a.slackRouter.NotifyBlocked(sess.WorkspaceID, wsName, sess.IssueNumber, sess.BlockedReason)
+	case types.StateCompleted:
+		a.slackRouter.NotifyCompleted(sess.WorkspaceID, wsName, sess.IssueNumber)
+	}
+}
+
+// --- AppFacade implementation (pcslack.AppFacade interface) ---
+
+// SlackCommandListWorkspaces returns a formatted workspace list for Slack.
+func (a *App) SlackCommandListWorkspaces() string {
+	if a.wsReg == nil {
+		return "No workspaces configured."
+	}
+	workspaces := a.wsReg.List()
+	if len(workspaces) == 0 {
+		return "No workspaces configured."
+	}
+	var sb strings.Builder
+	sb.WriteString("*Workspaces*\n")
+	for _, ws := range workspaces {
+		if !ws.Enabled {
+			continue
+		}
+		cost := 0.0
+		if a.store != nil {
+			cost = a.WorkspaceSpendToday(ws.ID)
+		}
+		sb.WriteString(fmt.Sprintf("• *%s* (`%s`) — today: $%.2f\n", ws.DisplayName, ws.ID, cost))
+	}
+	return sb.String()
+}
+
+// SlackCommandStatus returns a workspace status summary for Slack.
+func (a *App) SlackCommandStatus(workspaceID string) string {
+	if a.wsReg == nil || a.store == nil {
+		return "Store unavailable."
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Sprintf("Unknown workspace `%s`.", workspaceID)
+	}
+	issues, err := a.store.ListIssues(workspaceID)
+	if err != nil {
+		return fmt.Sprintf("Error loading issues: %v", err)
+	}
+
+	var inProgress, inPlan, blocked int
+	for _, iss := range issues {
+		switch iss.Column {
+		case types.ColInProgress:
+			inProgress++
+		case types.ColPlan:
+			inPlan++
+		case types.ColBlocked:
+			blocked++
+		}
+	}
+
+	todayCost := a.WorkspaceSpendToday(workspaceID)
+	return fmt.Sprintf("*%s* status\n• In-progress: %d | Plan ready: %d | Blocked: %d\n• Cost today: $%.2f",
+		ws.DisplayName, inProgress, inPlan, blocked, todayCost)
+}
+
+// SlackCommandPlan spawns a planner for the given issue. Satisfies AppFacade.
+func (a *App) SlackCommandPlan(workspaceID string, issueNumber int) error {
+	_, err := a.SpawnPlanForIssue(workspaceID, issueNumber)
+	return err
+}
+
+// SlackCommandApprove approves the latest ready plan for a given issue.
+func (a *App) SlackCommandApprove(workspaceID string, issueNumber int) error {
+	if a.store == nil {
+		return fmt.Errorf("store unavailable")
+	}
+	plan, err := a.store.LatestPlan(workspaceID, issueNumber)
+	if err != nil || plan == nil {
+		return fmt.Errorf("no plan found for #%d", issueNumber)
+	}
+	return a.ApprovePlan(workspaceID, issueNumber, plan.Revision)
+}
+
+// SlackCommandCancel cancels the active session for a given issue.
+func (a *App) SlackCommandCancel(workspaceID string, issueNumber int) error {
+	if a.mgr == nil {
+		return fmt.Errorf("session manager unavailable")
+	}
+	for _, sess := range a.mgr.Snapshot() {
+		if sess.WorkspaceID == workspaceID && sess.IssueNumber == issueNumber {
+			switch sess.State {
+			case types.StateRunning, types.StateWaitingForInput, types.StatePausedForQuestion:
+				return a.CancelSession(sess.ID)
+			}
+		}
+	}
+	return fmt.Errorf("no active session found for #%d in workspace %s", issueNumber, workspaceID)
+}
+
+// SlackCommandCostThisWeek returns a this-week cost summary for Slack.
+func (a *App) SlackCommandCostThisWeek(workspaceID string) string {
+	if a.wsReg == nil {
+		return "Workspace registry unavailable."
+	}
+	ws, ok := a.wsReg.Get(workspaceID)
+	if !ok {
+		return fmt.Sprintf("Unknown workspace `%s`.", workspaceID)
+	}
+	if a.store == nil {
+		return "Store unavailable."
+	}
+	week := thisWeekUTC()
+	cents, err := a.store.WorkspaceSpendCents(workspaceID, week)
+	if err != nil {
+		return fmt.Sprintf("Error computing spend: %v", err)
+	}
+	return fmt.Sprintf("*%s* — spend this week: *$%.2f*", ws.DisplayName, cents/100)
+}
+
+// SlackCommandGoalStatus returns a goal status summary for Slack.
+func (a *App) SlackCommandGoalStatus(goalID string) string {
+	if a.store == nil {
+		return "Store unavailable."
+	}
+	goals, err := a.store.ListGoals()
+	if err != nil {
+		return fmt.Sprintf("Error loading goals: %v", err)
+	}
+	for _, g := range goals {
+		if g.ID == goalID || strings.EqualFold(g.Title, goalID) {
+			return fmt.Sprintf("*Goal: %s*\nStatus: %s\nIntent: %s",
+				g.Title, g.Status, g.Intent)
+		}
+	}
+	return fmt.Sprintf("Goal `%s` not found.", goalID)
+}
+
+// SlackResolveWorkspaceByChannel finds the conductor workspace mapped to a
+// Slack channel ID. It checks each workspace's SlackConfig.ChannelMap;
+// if only one workspace maps that channel it is returned directly.
+// Returns ok=false when ambiguous or no mapping exists.
+func (a *App) SlackResolveWorkspaceByChannel(channelID string) (string, bool) {
+	if a.wsReg == nil {
+		return "", false
+	}
+	var matches []string
+	for _, ws := range a.wsReg.List() {
+		if ws.SlackConfig == nil {
+			continue
+		}
+		if wsID, found := ws.SlackConfig.ChannelMap[channelID]; found {
+			matches = append(matches, wsID)
+			continue
+		}
+		// Fall back: default channel matches.
+		if ws.SlackConfig.DefaultChannel == channelID {
+			matches = append(matches, ws.ID)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], true
+	}
+	return "", false
 }

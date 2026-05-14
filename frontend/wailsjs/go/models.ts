@@ -1411,6 +1411,24 @@ export namespace main {
 	        this.color = source["color"];
 	    }
 	}
+	export class SlackStatus {
+	    connected: boolean;
+	    team_name?: string;
+	    bot_user_id?: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SlackStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.connected = source["connected"];
+	        this.team_name = source["team_name"];
+	        this.bot_user_id = source["bot_user_id"];
+	        this.error = source["error"];
+	    }
+	}
 	export class SpawnEstimate {
 	    tokens: number;
 	    cost_cents: number;
@@ -2642,6 +2660,77 @@ export namespace types {
 		}
 	}
 	
+	export class SlackEventRouting {
+	    plan_ready: boolean;
+	    blocked: boolean;
+	    completed: boolean;
+	    budget_alert: boolean;
+	    auto_archive: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SlackEventRouting(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.plan_ready = source["plan_ready"];
+	        this.blocked = source["blocked"];
+	        this.completed = source["completed"];
+	        this.budget_alert = source["budget_alert"];
+	        this.auto_archive = source["auto_archive"];
+	    }
+	}
+	export class SlackConfig {
+	    enabled: boolean;
+	    bot_token_ref?: string;
+	    app_level_token_ref?: string;
+	    app_id?: string;
+	    team_id?: string;
+	    team_name?: string;
+	    default_channel?: string;
+	    channel_map?: Record<string, string>;
+	    event_routing?: SlackEventRouting;
+	    user_map?: Record<string, string>;
+	    muted?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SlackConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.bot_token_ref = source["bot_token_ref"];
+	        this.app_level_token_ref = source["app_level_token_ref"];
+	        this.app_id = source["app_id"];
+	        this.team_id = source["team_id"];
+	        this.team_name = source["team_name"];
+	        this.default_channel = source["default_channel"];
+	        this.channel_map = source["channel_map"];
+	        this.event_routing = this.convertValues(source["event_routing"], SlackEventRouting);
+	        this.user_map = source["user_map"];
+	        this.muted = source["muted"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	
 	export class WorkspacePipeline {
 	    steps: PipelineStep[];
@@ -2699,6 +2788,7 @@ export namespace types {
 	    complexity_scale?: string;
 	    tracker_kind?: string;
 	    tracker_config?: number[];
+	    slack_config?: SlackConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new Workspace(source);
@@ -2728,6 +2818,7 @@ export namespace types {
 	        this.complexity_scale = source["complexity_scale"];
 	        this.tracker_kind = source["tracker_kind"];
 	        this.tracker_config = source["tracker_config"];
+	        this.slack_config = this.convertValues(source["slack_config"], SlackConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
