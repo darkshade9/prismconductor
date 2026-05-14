@@ -337,6 +337,35 @@ func LookupHint(provider, modelID string) *ModelHint {
 		}
 	}
 
+	// 5. Cross-provider basename match for OpenRouter / LiteLLM "vendor/model"
+	//    IDs (e.g. "google/gemini-2.5-flash" routed through an openai-compatible
+	//    proxy). Strip the vendor segment and try the basename against every
+	//    bundled and external entry; the underlying model's capability profile
+	//    applies regardless of the proxy provider kind.
+	if idx := strings.LastIndex(mid, "/"); idx >= 0 {
+		base := mid[idx+1:]
+		for key, h := range hintIndex {
+			_, modelPart, ok := strings.Cut(key, ":")
+			if !ok {
+				continue
+			}
+			if modelPart == base || strings.HasPrefix(base, modelPart) {
+				copy := *h
+				return &copy
+			}
+		}
+		for key, h := range externalIndex {
+			_, modelPart, ok := strings.Cut(key, ":")
+			if !ok {
+				continue
+			}
+			if modelPart == base || strings.HasPrefix(base, modelPart) {
+				copy := *h
+				return &copy
+			}
+		}
+	}
+
 	return nil
 }
 

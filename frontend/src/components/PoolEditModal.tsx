@@ -164,6 +164,7 @@ export function PoolEditModal({
     initial?.provider ?? fallbackProvider,
   );
   const [name, setName] = useState<string>(initial?.name ?? "");
+  const userEditedName = useRef(false);
   const [endpoint, setEndpoint] = useState<string>(initial?.endpoint ?? "");
   const [apiKey, setApiKey] = useState<string>(initial?.api_key ?? "");
   const [model, setModel] = useState<string>(initial?.model ?? "");
@@ -243,10 +244,11 @@ export function PoolEditModal({
   }, [providerInfo, initial]);
 
   useEffect(() => {
-    if (!name && model) {
-      setName(`${providerKind}-${modelTail(model)}`);
-    }
-  }, [model, providerKind]);
+    if (initial) return;
+    if (userEditedName.current) return;
+    if (!model) return;
+    setName(modelTail(model));
+  }, [model, initial]);
 
   // Auto-probe when provider changes.
   useEffect(() => {
@@ -326,12 +328,11 @@ export function PoolEditModal({
     try {
       invalidateModels(providerKind, resolvedEndpoint);
       const list = await fetchModels(providerKind, resolvedEndpoint, apiKey);
-      const sample = list.slice(0, 3).join(", ");
       setTestResult({
         ok: true,
         msg: list.length === 0
           ? "Connected (no models reported)."
-          : `Loaded ${list.length} model${list.length === 1 ? "" : "s"}${sample ? `: ${sample}` : ""}`,
+          : `Loaded ${list.length} model${list.length === 1 ? "" : "s"}.`,
       });
     } catch (err: any) {
       setTestResult({ ok: false, msg: String(err?.message ?? err ?? "probe failed") });
@@ -344,7 +345,7 @@ export function PoolEditModal({
     setBusy(true);
     setSaveErr("");
     try {
-      const finalName = name.trim() || `${providerKind}-${modelTail(model) || "pool"}`;
+      const finalName = name.trim() || modelTail(model) || "pool";
       // Orchestrator runs are per-call HTTP, capacity is irrelevant. Persist 1.
       const finalCapacity = role === "orchestrator" || role === "architect" ? 1 : capacity;
       const parsedTemp = temperatureStr.trim() === "" ? undefined : parseFloat(temperatureStr);
@@ -588,8 +589,11 @@ export function PoolEditModal({
             <input
               {...noAutoCorrect}
               value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={`${providerKind}-${modelTail(model) || "pool"}`}
+              onChange={(e) => {
+                userEditedName.current = true;
+                setName(e.target.value);
+              }}
+              placeholder={modelTail(model) || "pool"}
               className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono text-xs"
             />
           </div>

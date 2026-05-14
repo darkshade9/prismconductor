@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go get *)",
+      "Bash(npm install *)",
+      "Bash(go build *)",
+      "Bash(wails generate *)",
+      "Bash(npx tsc *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(wails build *)",
+      "Bash(gh issue *)",
+      "Bash(git fetch *)",
+      "Bash(gh api *)",
+      "Bash(git switch *)",
+      "Bash(go test *)",
+      "Bash(gh pr *)",
+      "Bash(git merge *)",
+      "Bash(git checkout *)",
+      "Bash(npm --version)",
+      "Bash(go run *)",
+      "Bash(sqlite3 '__TRACKED_VAR__/Library/Application Support/prismconductor/conductor.db' 'SELECT COUNT\\(*\\) FROM collections; SELECT COUNT\\(*\\) FROM collection_members;')",
+      "Bash(sqlite3 '__TRACKED_VAR__/Library/Application Support/prismconductor/conductor.db' 'SELECT name FROM sqlite_master WHERE type='\\\\''table'\\\\'' ORDER BY name;')",
+      "WebFetch(domain:developers.cloudflare.com)",
+      "WebFetch(domain:blog.cloudflare.com)",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}
