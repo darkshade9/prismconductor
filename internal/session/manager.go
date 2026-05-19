@@ -344,15 +344,12 @@ func (m *Manager) SetProviders(r *llm.Registry) { m.providers = r }
 // determines the spawn strategy: Claude returns argv (subprocess), the four
 // OpenAI-compat providers return llm.ErrNotSupported (harness, §10.5).
 //
-// Issue #191: when ws.ExecutionTarget is "remote", delegates to spawnRemotePlan
-// instead of running a local subprocess. Returns ErrRemoteNotReady immediately
-// if the remote endpoint is not configured so the caller can surface an error.
-//
-// Issue #254: remote execution is paused. All remote workspaces return
-// ErrRemoteWorkspacePaused immediately so no session is created.
+// Issue #284 (Phase 1): when ws.ExecutionTarget is "remote", delegates to
+// spawnRemotePlan which runs the plan in the Cloudflare Sandbox Worker.
+// Returns ErrRemoteNotReady if the remote endpoint is not configured.
 func (m *Manager) SpawnPlan(ws types.Workspace, issue types.Issue, pool types.Pool) (*types.Session, error) {
 	if ws.ExecutionTarget == types.ExecutionTargetRemote {
-		return nil, ErrRemoteWorkspacePaused
+		return m.spawnRemotePlan(ws, issue, pool)
 	}
 	// Phase 2 (issue #197): pre-fetch the issue body to a known path so the
 	// plan worker can read it without an extra GitHub API call.

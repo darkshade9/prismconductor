@@ -1388,6 +1388,7 @@ export namespace main {
 	export class RemoteWorkspaceForm {
 	    cf_token: string;
 	    github_pat: string;
+	    anthropic_api_key: string;
 	    workspace_id: string;
 	    display_name: string;
 	    github_owner: string;
@@ -1403,6 +1404,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.cf_token = source["cf_token"];
 	        this.github_pat = source["github_pat"];
+	        this.anthropic_api_key = source["anthropic_api_key"];
 	        this.workspace_id = source["workspace_id"];
 	        this.display_name = source["display_name"];
 	        this.github_owner = source["github_owner"];

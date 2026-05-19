@@ -1,0 +1,283 @@
+/**
+ * PrismConductor Sandbox Worker — pre-built bundle (issue #284)
+ * Source: worker/sandbox-deploy/src/index.ts
+ * Build: cd worker/sandbox-deploy && npx esbuild src/index.ts --bundle --format=esm --outfile=dist/worker.js
+ * Phase 1: Anthropic API plan execution (plan mode only)
+ * Phase 2: Cloudflare container-based CLI execution (see PHASE-2 comments in source)
+ */
+
+function timingSafeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+function requireAuth(request, env) {
+  const expected = env.CONDUCTOR_API_KEY;
+  if (!expected) return null;
+  const auth = request.headers.get("Authorization") ?? "";
+  const provided = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  if (!timingSafeEqual(expected, provided)) {
+    return new Response("unauthorized", { status: 401 });
+  }
+  return null;
+}
+
+async function handleSpawn(request, env) {
+  const params = await request.json();
+
+  if (!params.mode || params.mode !== "plan") {
+    return Response.json(
+      { error: "only mode=plan is supported in Phase 1 sandbox worker" },
+      { status: 400 }
+    );
+  }
+
+  const id = env.SESSIONS.newUniqueId();
+  const stub = env.SESSIONS.get(id);
+
+  const initResp = await stub.fetch("https://do-internal/init", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...params,
+      session_id: id.toString(),
+      anthropic_api_key: env.ANTHROPIC_API_KEY,
+      github_pat: env.GITHUB_PAT,
+    }),
+  });
+
+  if (!initResp.ok) {
+    const errText = await initResp.text();
+    return Response.json({ error: `session init failed: ${errText}` }, { status: 500 });
+  }
+
+  return Response.json({ session_id: id.toString() }, { status: 201 });
+}
+
+async function forwardToDO(env, sessionID, request, action) {
+  try {
+    const id = env.SESSIONS.idFromString(sessionID);
+    const stub = env.SESSIONS.get(id);
+    return stub.fetch(`https://do-internal/${action}`, {
+      method: request.method,
+      headers: request.headers,
+    });
+  } catch {
+    return new Response("session not found", { status: 404 });
+  }
+}
+
+function buildPlanSystemPrompt(params) {
+  return [
+    "You are the PrismConductor planner running remotely inside a Cloudflare Sandbox Worker.",
+    `Repository: ${params.github_owner}/${params.github_repo} (branch: ${params.default_branch})`,
+    `Issue: #${params.issue_number}`,
+    "Your job: read the GitHub issue, analyse the codebase, and emit a structured plan JSON.",
+    "Follow the conductor-plan skill instructions exactly.",
+    "Emit plan JSON wrapped in ```json fences so the conductor can parse it.",
+  ].join("\n");
+}
+
+// SandboxSession — Durable Object owning one plan session
+class SandboxSession {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+    this.transcript = [];
+    this.abortController = new AbortController();
+    this.sseWriter = null;
+    this.enc = new TextEncoder();
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    switch (url.pathname) {
+      case "/init":
+        return this.handleInit(request);
+      case "/stream":
+        return this.handleStream(request);
+      case "/kill":
+        return this.handleKill();
+      default:
+        return new Response("not found", { status: 404 });
+    }
+  }
+
+  async handleInit(request) {
+    const params = await request.json();
+    // PHASE-2: Replace this.runPlan() with this.spawnContainer() for real CLI execution.
+    this.state.waitUntil(this.runPlan(params));
+    return Response.json({ ok: true });
+  }
+
+  handleStream(request) {
+    const lastID = parseInt(request.headers.get("Last-Event-ID") ?? "0", 10) || 0;
+    const backlog = this.transcript.slice(lastID);
+
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+
+    this.state.waitUntil(
+      (async () => {
+        let idx = lastID;
+        for (const line of backlog) {
+          await writer.write(this.enc.encode(`id:${idx}\ndata:${line}\n\n`));
+          idx++;
+        }
+        this.sseWriter = writer;
+
+        await new Promise((resolve) => {
+          request.signal.addEventListener("abort", resolve);
+          this.abortController.signal.addEventListener("abort", resolve);
+        });
+        writer.close().catch(() => {});
+        this.sseWriter = null;
+      })()
+    );
+
+    return new Response(readable, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
+  handleKill() {
+    this.abortController.abort();
+    this.emit("[sandbox] session killed");
+    return Response.json({ ok: true });
+  }
+
+  emit(line) {
+    const idx = this.transcript.length;
+    this.transcript.push(line);
+    if (this.sseWriter) {
+      this.sseWriter
+        .write(this.enc.encode(`id:${idx}\ndata:${line}\n\n`))
+        .catch(() => {});
+    }
+  }
+
+  async runPlan(params) {
+    try {
+      const apiKey = params.anthropic_api_key;
+      if (!apiKey) {
+        this.emit(
+          "BLOCKED: ANTHROPIC_API_KEY not configured — API-key auth is required for sandbox execution"
+        );
+        this.abortController.abort();
+        return;
+      }
+
+      this.emit(
+        `[sandbox] starting plan session ${params.session_id} for ${params.github_owner}/${params.github_repo}#${params.issue_number}`
+      );
+
+      const model = params.pool_model ?? "claude-sonnet-4-5";
+      this.emit(`[sandbox] calling ${model}`);
+
+      const systemPrompt = buildPlanSystemPrompt(params);
+
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        signal: this.abortController.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 8192,
+          system: systemPrompt,
+          messages: [{ role: "user", content: "Begin." }],
+          stream: true,
+        }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.text();
+        this.emit(`BLOCKED: Anthropic API error ${resp.status}: ${err}`);
+        return;
+      }
+
+      if (!resp.body) {
+        this.emit("BLOCKED: Anthropic API returned no body");
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const payload = line.slice(6).trim();
+          if (payload === "[DONE]") continue;
+          try {
+            const evt = JSON.parse(payload);
+            if (
+              evt.type === "content_block_delta" &&
+              evt.delta?.type === "text_delta"
+            ) {
+              this.emit(evt.delta.text.replace(/\n/g, "\\n"));
+            }
+          } catch {
+            // skip malformed SSE lines
+          }
+        }
+      }
+
+      this.emit("Work complete.");
+    } catch (err) {
+      if (this.abortController.signal.aborted) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      this.emit(`BLOCKED: sandbox plan error — ${msg}`);
+    } finally {
+      this.abortController.abort();
+    }
+  }
+}
+
+var src_default = {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+
+    if (request.method === "GET" && url.pathname === "/health") {
+      return Response.json({ ok: true, mode: "sandbox", phase: 1 });
+    }
+
+    const authErr = requireAuth(request, env);
+    if (authErr) return authErr;
+
+    if (request.method === "POST" && url.pathname === "/sessions") {
+      return handleSpawn(request, env);
+    }
+
+    const streamMatch = url.pathname.match(/^\/sessions\/([^/]+)\/stream$/);
+    if (request.method === "GET" && streamMatch) {
+      return forwardToDO(env, streamMatch[1], request, "stream");
+    }
+
+    const deleteMatch = url.pathname.match(/^\/sessions\/([^/]+)$/);
+    if (request.method === "DELETE" && deleteMatch) {
+      return forwardToDO(env, deleteMatch[1], request, "kill");
+    }
+
+    return new Response("not found", { status: 404 });
+  },
+};
+
+export { SandboxSession, src_default as default };

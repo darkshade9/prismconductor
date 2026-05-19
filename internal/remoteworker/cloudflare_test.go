@@ -435,6 +435,93 @@ func TestDeployWorker_noSubdomainReturnsError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Tests for DeploySandboxWorker (issue #284)
+// ---------------------------------------------------------------------------
+
+// TestDeploySandboxWorker_hasDurableObjectBindings verifies that the metadata
+// sent to CF includes the Durable Object binding for SandboxSession.
+func TestDeploySandboxWorker_hasDurableObjectBindings(t *testing.T) {
+	var capturedMeta map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/workers/subdomain") && r.Method == "GET":
+			json.NewEncoder(w).Encode(cfResponse{Success: true, Result: json.RawMessage(`{"subdomain":"testacct"}`)})
+		case strings.Contains(r.URL.Path, "/subdomain") && r.Method == "POST":
+			json.NewEncoder(w).Encode(cfResponse{Success: true, Result: json.RawMessage(`{}`)})
+		case r.URL.Path == "/health" || r.URL.Path == "":
+			w.WriteHeader(http.StatusOK)
+		default:
+			ct := r.Header.Get("Content-Type")
+			mediaType, params, err := mime.ParseMediaType(ct)
+			if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
+				http.Error(w, "expected multipart", http.StatusBadRequest)
+				return
+			}
+			mr := multipart.NewReader(r.Body, params["boundary"])
+			for {
+				part, err := mr.NextPart()
+				if err != nil {
+					break
+				}
+				if part.FormName() == "metadata" {
+					if err := json.NewDecoder(part).Decode(&capturedMeta); err != nil {
+						http.Error(w, "bad metadata json", http.StatusBadRequest)
+						return
+					}
+				}
+			}
+			json.NewEncoder(w).Encode(cfResponse{
+				Success: true,
+				Result:  json.RawMessage(`{"etag":"v1"}`),
+			})
+		}
+	}))
+	defer srv.Close()
+
+	replaceHTTPClient(t, &http.Client{Transport: &rewriteTransport{base: srv.URL}})
+	origHealth := healthClient
+	healthClient = &http.Client{Transport: &rewriteTransport{base: srv.URL}}
+	t.Cleanup(func() { healthClient = origHealth })
+
+	_, err := DeploySandboxWorker("acct123", "tok", "ws1", []byte("export default {}"))
+	if err != nil {
+		t.Fatalf("DeploySandboxWorker: %v", err)
+	}
+	if capturedMeta == nil {
+		t.Fatal("metadata part not captured")
+	}
+
+	doRaw, ok := capturedMeta["durable_objects"]
+	if !ok {
+		t.Fatal("metadata must contain 'durable_objects' binding for SandboxSession")
+	}
+	doMap, ok := doRaw.(map[string]any)
+	if !ok {
+		t.Fatalf("durable_objects is not an object: %T", doRaw)
+	}
+	bindings, ok := doMap["bindings"].([]any)
+	if !ok || len(bindings) == 0 {
+		t.Fatal("durable_objects.bindings must be a non-empty array")
+	}
+	first, ok := bindings[0].(map[string]any)
+	if !ok {
+		t.Fatalf("bindings[0] is not an object: %T", bindings[0])
+	}
+	if first["name"] != "SESSIONS" {
+		t.Errorf("binding name = %q, want SESSIONS", first["name"])
+	}
+	if first["class_name"] != "SandboxSession" {
+		t.Errorf("class_name = %q, want SandboxSession", first["class_name"])
+	}
+
+	if _, ok := capturedMeta["migrations"]; !ok {
+		t.Error("metadata must contain 'migrations' for the SandboxSession DO class")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Test helpers: transports that rewrite the scheme+host to a test server
 // ---------------------------------------------------------------------------
 

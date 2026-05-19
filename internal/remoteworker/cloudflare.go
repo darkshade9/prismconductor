@@ -356,6 +356,93 @@ func DeleteWorker(accountID, token, workerName string) error {
 	return nil
 }
 
+// DeploySandboxWorker uploads the sandbox worker bundle (issue #284) to the
+// user's CF account. Unlike DeployWorker, it includes Durable Object bindings
+// in the upload metadata so the SandboxSession class is registered.
+//
+// Returns the same DeployResult shape as DeployWorker.
+func DeploySandboxWorker(accountID, token, workspaceID string, workerScript []byte) (DeployResult, error) {
+	workerName := workerNamePfx + "-" + sanitizeID(workspaceID)
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+
+	// Include the Durable Object class binding and initial migration so CF
+	// registers the SandboxSession class.
+	meta := map[string]any{
+		"main_module":        "worker.js",
+		"compatibility_date": "2024-09-23",
+		"durable_objects": map[string]any{
+			"bindings": []map[string]string{
+				{"name": "SESSIONS", "class_name": "SandboxSession"},
+			},
+		},
+		"migrations": []map[string]any{
+			{"tag": "v1", "new_classes": []string{"SandboxSession"}},
+		},
+	}
+	metaJSON, _ := json.Marshal(meta)
+	mPart, err := mw.CreatePart(map[string][]string{
+		"Content-Disposition": {`form-data; name="metadata"`},
+		"Content-Type":        {"application/json"},
+	})
+	if err != nil {
+		return DeployResult{}, err
+	}
+	if _, err := mPart.Write(metaJSON); err != nil {
+		return DeployResult{}, err
+	}
+
+	sPart, err := mw.CreatePart(map[string][]string{
+		"Content-Disposition": {`form-data; name="worker.js"; filename="worker.js"`},
+		"Content-Type":        {"application/javascript+module"},
+	})
+	if err != nil {
+		return DeployResult{}, err
+	}
+	if _, err := sPart.Write(workerScript); err != nil {
+		return DeployResult{}, err
+	}
+	_ = mw.Close()
+
+	url := fmt.Sprintf("%s/accounts/%s/workers/scripts/%s", cfAPIBase, accountID, workerName)
+	raw, err := cfDo("PUT", url, token, &buf, mw.FormDataContentType())
+	if err != nil {
+		return DeployResult{}, fmt.Errorf("deploy sandbox worker: %w", err)
+	}
+
+	var script struct {
+		Etag string `json:"etag"`
+	}
+	_ = json.Unmarshal(raw, &script)
+
+	subdomain, err := getAccountSubdomain(accountID, token)
+	if err != nil {
+		return DeployResult{}, fmt.Errorf("get account subdomain: %w", err)
+	}
+	if subdomain == "" {
+		return DeployResult{}, fmt.Errorf("This Cloudflare account has no Workers subdomain configured. " +
+			"Visit the Cloudflare dashboard → Workers & Pages and click 'Choose a subdomain' first, then retry deployment.")
+	}
+
+	if err := enableScriptSubdomain(accountID, workerName, token); err != nil {
+		return DeployResult{}, fmt.Errorf("enable workers.dev for sandbox script: %w", err)
+	}
+
+	endpointURL := fmt.Sprintf("https://%s.%s.workers.dev", workerName, subdomain)
+
+	if err := probeWorkerEndpoint(endpointURL); err != nil {
+		return DeployResult{}, fmt.Errorf("Sandbox worker deployed but the resulting URL %s did not respond. "+
+			"Check that the workers.dev subdomain is enabled for this script in the Cloudflare dashboard: %w", endpointURL, err)
+	}
+
+	return DeployResult{
+		WorkerName:          workerName,
+		CFWorkerEndpointURL: endpointURL,
+		DeploymentVersion:   script.Etag,
+	}, nil
+}
+
 // sanitizeID converts a workspace ID to a CF-safe script name component
 // (lowercase alphanumeric + hyphens, max 30 chars).
 func sanitizeID(id string) string {

@@ -1,0 +1,18 @@
+name = "prismconductor-sandbox"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+
+# Durable Objects for per-session state
+[durable_objects]
+bindings = [
+  { name = "SESSIONS", class_name = "SandboxSession" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["SandboxSession"]
+
+# Required secrets — set via `wrangler secret put` or CF Dashboard, never here:
+#   CONDUCTOR_API_KEY  — shared secret for request auth
+#   GITHUB_PAT         — fine-grained PAT with Contents+PRs read/write
+#   ANTHROPIC_API_KEY  — Anthropic API key (Phase 1; replaced by container env in Phase 2)

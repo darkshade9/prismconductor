@@ -1349,8 +1349,11 @@ func (a *App) GetRepoDefaultBranch(pat, owner, repo string) (string, error) {
 // required to provision a remote workspace end-to-end in a single call.
 type RemoteWorkspaceForm struct {
 	// Credentials (never stored locally)
-	CFToken   string `json:"cf_token"`
-	GitHubPAT string `json:"github_pat"`
+	CFToken        string `json:"cf_token"`
+	GitHubPAT      string `json:"github_pat"`
+	// AnthropicAPIKey is required for sandbox execution (issue #284 Phase 1).
+	// Stored as a CF Secret; never persisted in the conductor DB or keychain.
+	AnthropicAPIKey string `json:"anthropic_api_key"`
 	// Workspace identity
 	WorkspaceID   string `json:"workspace_id"`
 	DisplayName   string `json:"display_name"`
@@ -1384,8 +1387,8 @@ func (a *App) CreateRemoteWorkspace(form RemoteWorkspaceForm) (RemoteDeployResul
 		return RemoteDeployResult{}, fmt.Errorf("GitHub PAT invalid: %w", err)
 	}
 
-	// Deploy the worker bundle. From here on, failures should attempt cleanup.
-	deploy, err := remoteworker.DeployWorker(accountID, form.CFToken, form.WorkspaceID, remoteworker.WorkerBundle)
+	// Deploy the sandbox worker bundle (issue #284). From here on, failures should attempt cleanup.
+	deploy, err := remoteworker.DeploySandboxWorker(accountID, form.CFToken, form.WorkspaceID, remoteworker.SandboxWorkerBundle)
 	if err != nil {
 		return RemoteDeployResult{}, fmt.Errorf("deploy worker: %w", err)
 	}
@@ -1403,6 +1406,16 @@ func (a *App) CreateRemoteWorkspace(form RemoteWorkspaceForm) (RemoteDeployResul
 	if err := remoteworker.UpsertSecret(accountID, form.CFToken, deploy.WorkerName, "GITHUB_PAT", form.GitHubPAT); err != nil {
 		bestEffortCleanup("github_pat_secret_fail")
 		return RemoteDeployResult{}, fmt.Errorf("store GitHub PAT secret: %w", err)
+	}
+
+	// Store Anthropic API key as a CF Secret (required for sandbox execution, issue #284).
+	if form.AnthropicAPIKey == "" {
+		bestEffortCleanup("anthropic_key_missing")
+		return RemoteDeployResult{}, fmt.Errorf("Anthropic API key required for sandbox execution — provide an API key (subscription/OAuth auth is not supported in remote mode)")
+	}
+	if err := remoteworker.UpsertSecret(accountID, form.CFToken, deploy.WorkerName, "ANTHROPIC_API_KEY", form.AnthropicAPIKey); err != nil {
+		bestEffortCleanup("anthropic_key_secret_fail")
+		return RemoteDeployResult{}, fmt.Errorf("store Anthropic API key secret: %w", err)
 	}
 
 	// Persist the CF API token in the OS keyring.
@@ -1520,8 +1533,8 @@ func (a *App) DeployRemoteWorker(workspaceID, cfToken, githubPAT string) (Remote
 	}
 	accountID := tkRes.AccountID
 
-	// Deploy the worker bundle.
-	deploy, err := remoteworker.DeployWorker(accountID, cfToken, workspaceID, remoteworker.WorkerBundle)
+	// Deploy the sandbox worker bundle (issue #284).
+	deploy, err := remoteworker.DeploySandboxWorker(accountID, cfToken, workspaceID, remoteworker.SandboxWorkerBundle)
 	if err != nil {
 		return RemoteDeployResult{}, fmt.Errorf("deploy worker: %w", err)
 	}

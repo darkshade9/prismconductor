@@ -456,10 +456,10 @@ function ConvertToLocalPanel({ workspaceID, onDone }: { workspaceID: string; onD
   }
 
   return (
-    <div className="rounded border border-amber-800 bg-amber-950/30 p-3 space-y-2">
-      <div className="text-xs text-amber-300 font-medium">Remote execution paused</div>
+    <div className="rounded border border-slate-700 bg-slate-900/40 p-3 space-y-2">
+      <div className="text-xs text-slate-300 font-medium">Convert to local workspace</div>
       <div className="text-xs text-slate-400">
-        New sessions cannot start on this workspace. Provide a local repo path to convert it to a local workspace.
+        Provide a local repo path to run sessions on this machine instead of Cloudflare Sandbox.
       </div>
       <div className="flex items-center gap-2">
         <input
@@ -555,8 +555,8 @@ export function WorkspacesPanel() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className="text-sm text-slate-200">{ws.display_name || ws.id}</span>
-                      {ws.execution_target === "remote" && (
-                        <span className="text-[10px] bg-amber-900 text-amber-300 px-1.5 py-0.5 rounded" title="Remote execution is paused — convert to local to resume">Paused</span>
+                      {ws.execution_target === "remote" && !ws.remote_config?.token_expired && !ws.remote_config?.remote_unreachable && (
+                        <span className="text-[10px] bg-sky-900 text-sky-300 px-1.5 py-0.5 rounded" title="Plan sessions run in Cloudflare Sandbox — execute paths open in Phase 2">Remote ☁</span>
                       )}
                       {ws.remote_config?.token_expired && (
                         <span className="text-[10px] bg-amber-900 text-amber-300 px-1.5 py-0.5 rounded">TOKEN EXPIRED</span>
