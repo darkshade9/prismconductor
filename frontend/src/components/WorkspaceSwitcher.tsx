@@ -75,7 +75,7 @@ export function WorkspaceSwitcher({
       <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: w.color || "#64748b" }} />
       {w.display_name || w.id}
       {w.execution_target === "remote" && (
-        <span className="text-[9px] bg-amber-900 text-amber-300 px-1 py-0 rounded leading-tight" title="Remote execution is paused — convert to local in Settings">Paused</span>
+        <span className="text-[9px] bg-sky-900 text-sky-300 px-1 py-0 rounded leading-tight" title="Plan sessions run in Cloudflare Sandbox (Phase 1)">Remote ☁</span>
       )}
     </button>
   );

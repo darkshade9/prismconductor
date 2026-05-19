@@ -5,13 +5,14 @@ import { useWorkspaceStore } from "../stores/workspaceStore";
 import { noAutoCorrect } from "../lib/inputs";
 import { deriveWorkspaceID, parseRepoURL } from "../lib/parseRepoURL";
 
-type Step = "cf-token" | "github-pat" | "repo" | "deploy" | "done";
+type Step = "cf-token" | "github-pat" | "anthropic-key" | "repo" | "deploy" | "done";
 
 export const COLOR_PALETTE = ["#22c55e", "#06b6d4", "#a855f7", "#f59e0b", "#ef4444", "#ec4899", "#14b8a6", "#eab308"];
 
 export const STEPS: { id: Step; label: string }[] = [
   { id: "cf-token", label: "CF Token" },
   { id: "github-pat", label: "GitHub PAT" },
+  { id: "anthropic-key", label: "Anthropic Key" },
   { id: "repo", label: "Repository" },
   { id: "deploy", label: "Deploy" },
   { id: "done", label: "Done" },
@@ -44,7 +45,10 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
   // Step 2 — GitHub PAT
   const [githubPAT, setGitHubPAT] = useState("");
 
-  // Step 3 — repo identity (derived from a single URL input)
+  // Step 3 — Anthropic API key
+  const [anthropicAPIKey, setAnthropicAPIKey] = useState("");
+
+  // Step 4 — repo identity (derived from a single URL input)
   const [repoURL, setRepoURL] = useState("");
   const [urlError, setURLError] = useState<string | null>(null);
   const [owner, setOwner] = useState("");
@@ -117,7 +121,7 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
 
   async function testGitHubPAT() {
     setError(null);
-    setStep("repo");
+    setStep("anthropic-key");
   }
 
   async function testPATWithRepo() {
@@ -156,6 +160,7 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
       const dr = await CreateRemoteWorkspace(new main.RemoteWorkspaceForm({
         cf_token: cfToken.trim(),
         github_pat: githubPAT.trim(),
+        anthropic_api_key: anthropicAPIKey.trim(),
         workspace_id: wsID,
         display_name: displayName || wsID,
         github_owner: owner,
@@ -313,6 +318,50 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
         </div>
       )}
 
+      {step === "anthropic-key" && (
+        <div className="space-y-3">
+          <div className="text-xs text-slate-400">
+            Enter an Anthropic API key. It will be stored as a Cloudflare Secret (
+            <code className="bg-slate-700 px-0.5 rounded text-[11px]">ANTHROPIC_API_KEY</code>
+            ) — never saved locally. Subscription/OAuth auth is not supported for remote sandbox execution.
+          </div>
+          <label className="block">
+            <FieldLabel
+              label="Anthropic API Key"
+              tip={
+                <div className="space-y-2">
+                  <p>Create an API key at console.anthropic.com → API Keys.</p>
+                  <p className="text-slate-400 text-[11px]">
+                    Required for Phase 1 sandbox execution. The key is stored exclusively in your Cloudflare account as a Secret.
+                  </p>
+                </div>
+              }
+            />
+            <input
+              {...noAutoCorrect}
+              type="password"
+              value={anthropicAPIKey}
+              onChange={(e) => setAnthropicAPIKey(e.target.value)}
+              placeholder="sk-ant-..."
+              className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-slate-200 font-mono text-xs"
+            />
+          </label>
+          {error && <div className="text-red-400 text-xs">{error}</div>}
+          <div className="flex justify-between pt-1">
+            <button onClick={() => setStep("github-pat")} className="text-xs text-slate-500 hover:text-slate-300">
+              ← Back
+            </button>
+            <button
+              onClick={() => { setError(null); setStep("repo"); }}
+              disabled={!anthropicAPIKey.trim() || busy}
+              className="px-3 py-1 bg-sky-700 hover:bg-sky-600 rounded text-xs disabled:opacity-40"
+            >
+              Continue →
+            </button>
+          </div>
+        </div>
+      )}
+
       {step === "repo" && (
         <div className="space-y-3">
           <div className="text-xs text-slate-400">
@@ -439,7 +488,8 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
             <div><span className="text-slate-300">Repo:</span> {owner}/{repo} @ {defaultBranch}</div>
             <div><span className="text-slate-300">Worker name:</span> prismconductor-{wsID.slice(0, 30).toLowerCase().replace(/[^a-z0-9]/g, "-")}</div>
             <div className="text-slate-500 mt-1">
-              The worker bundle will be uploaded to your CF account. The GitHub PAT will be stored as a CF Secret (GITHUB_PAT) — never saved locally.
+              The sandbox worker bundle will be uploaded to your CF account. GitHub PAT and Anthropic API key will be stored as CF Secrets — never saved locally.
+              Phase 1: plan sessions only. Execute paths open in Phase 2.
             </div>
           </div>
           {error && (
@@ -497,7 +547,7 @@ export function RemoteWorkspaceSetup({ onDone }: { onDone: () => void }) {
             </div>
           </div>
           <div className="text-xs text-slate-500">
-            Agent work for this workspace will now run inside the Cloudflare Worker. To update tokens later, go to Settings → Workspaces → Auth.
+            Plan sessions for this workspace will now run in the Cloudflare Sandbox Worker (Phase 1). To update tokens or re-deploy, go to Settings → Workspaces → Auth.
           </div>
           <div className="flex justify-end pt-1">
             <button onClick={onDone} className="px-3 py-1 bg-emerald-700 hover:bg-emerald-600 rounded text-xs">
