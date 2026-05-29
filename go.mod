@@ -7,7 +7,7 @@ require (
 	github.com/google/go-github/v62 v62.0.0
 	github.com/google/uuid v1.6.0
 	github.com/mozilla-ai/any-llm-go v0.9.0
-	github.com/slack-go/slack v0.23.1
+	github.com/slack-go/slack v0.24.0
 	github.com/wailsapp/wails/v2 v2.12.0
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/tools v0.45.0
