@@ -8,7 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/mozilla-ai/any-llm-go v0.9.0
 	github.com/slack-go/slack v0.27.0
-	github.com/wailsapp/wails/v2 v2.13.0
+	github.com/wailsapp/wails/v2 v2.14.0
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/tools v0.48.0
 	modernc.org/sqlite v1.54.0
