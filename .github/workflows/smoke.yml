@@ -37,7 +37,7 @@ jobs:
           fi
       - uses: actions/setup-go@v6
         with: { go-version: "1.25" }
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with: { node-version: "20" }
       # Wails on Linux links against GTK3 + WebKit2GTK at build time AND
       # initializes GTK at runtime to open a desktop window — even in
