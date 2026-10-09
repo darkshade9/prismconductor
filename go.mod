@@ -10,7 +10,7 @@ require (
 	github.com/slack-go/slack v0.29.0
 	github.com/wailsapp/wails/v2 v2.16.0
 	github.com/zalando/go-keyring v0.2.8
-	golang.org/x/tools v0.50.0
+	golang.org/x/tools v0.51.0
 	modernc.org/sqlite v1.60.1
 )
 
